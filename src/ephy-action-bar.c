@@ -179,7 +179,7 @@ history_row_released_cb (GtkGesture    *gesture,
   root = gtk_widget_get_root (GTK_WIDGET (action_bar));
   embed = ephy_embed_container_get_active_child (EPHY_EMBED_CONTAINER (root));
 
-  item = WEBKIT_BACK_FORWARD_LIST_ITEM (g_object_get_data (G_OBJECT (widget), HISTORY_ITEM_DATA_KEY));
+  item = EPHY_ENGINE_HISTORY_ITEM (g_object_get_data (G_OBJECT (widget), HISTORY_ITEM_DATA_KEY));
 
   if (button == GDK_BUTTON_MIDDLE) {
     middle_click_handle_on_history_menu_item (embed, item);

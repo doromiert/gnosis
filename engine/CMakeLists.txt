@@ -22,7 +22,7 @@ add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/resources.c"
   COMMAND "${GLIB_COMPILE_RESOURCES}" "${CMAKE_CURRENT_SOURCE_DIR}/data/engine.gresource.xml"
     "--sourcedir=${CMAKE_CURRENT_SOURCE_DIR}/data" --generate-source --c-name=jupiter_engine "--target=${CMAKE_CURRENT_BINARY_DIR}/resources.c"
   DEPENDS data/engine.gresource.xml data/clipboard.js data/extension-tabs.js)
-add_library(jupiter-engine STATIC ephy-engine-view.cpp ephy-engine-scheme.cpp select/browser.cpp select/clipboard.cpp select/cursor.cpp
+add_library(jupiter-engine STATIC ephy-engine-view.cpp ephy-engine-scheme.cpp ephy-engine-print.cpp select/browser.cpp select/clipboard.cpp select/cursor.cpp
   select/policy.cpp select/extensions.cpp select/extension-host.cpp select/application.cpp
   "${CMAKE_CURRENT_BINARY_DIR}/resources.c")
 target_include_directories(jupiter-engine SYSTEM PUBLIC "${CEF_ROOT}")

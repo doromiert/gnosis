@@ -605,3 +605,5 @@ EphyEngineView* ephy_engine_view_for_browser(int id) {
   for(auto* view:views) if(auto b=view->browser->cef_browser();b&&b->GetIdentifier()==id&&!view->disposed)return view->self;
   return nullptr;
 }
+
+CefRefPtr<CefBrowser> ephy_engine_view_browser(EphyEngineView* view) {return data(view)->browser->cef_browser();}

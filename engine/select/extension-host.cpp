@@ -152,8 +152,12 @@ void ExtensionHost::scan() {
   auto all = tabs ? tabs() : std::vector<ExtensionTab>{};
   for (auto& item : waiting) {
     int id = item.request->GetDictionary("args")->GetInt("tabId");
-    if (std::any_of(all.begin(), all.end(), [&](const auto& tab) { return tab.id == id; }) ||
-        g_get_monotonic_time() > item.deadline)
+    auto found = std::find_if(all.begin(), all.end(), [&](const auto& tab) { return tab.id == id; });
+    bool ready = found != all.end();
+    auto details = item.request->GetDictionary("args")->GetDictionary("details");
+    if (ready && details && details->HasKey("frameId") && details->GetInt("frameId") > 0)
+      ready = frame_ids_.contains({found->browser->GetIdentifier(), details->GetInt("frameId")});
+    if (ready || g_get_monotonic_time() > item.deadline)
       request(item.origin, item.request, false);
     else
       waiting_.push_back(std::move(item));
@@ -425,7 +429,9 @@ void ExtensionHost::css(const ExtensionTab& tab, CefRefPtr<CefDictionaryValue> d
   if (g_getenv("JUPITER_EXTENSION_DEBUG"))
     g_print("CSS adapter: tab=%d ext=%s url=%s bytes=%zu\n", tab.id, extension.c_str(),
             tab.info->GetString("url").ToString().c_str(), code.size());
-  auto key = std::to_string(tab.browser->GetIdentifier()) + ":" + extension + ":" + code;
+  auto frame_key = details->HasKey("frameId") ? std::to_string(details->GetInt("frameId"))
+                   : details->GetBool("allFrames") ? "all" : "0";
+  auto key = std::to_string(tab.browser->GetIdentifier()) + ":" + extension + ":" + frame_key + ":" + code;
   if (remove) {
     for (const auto& sheet : styles_[key]) {
       auto args = dict();

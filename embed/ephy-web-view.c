@@ -2591,7 +2591,10 @@ auth_password_query_finished_cb (GList              **records,
   } else {
     prepare_for_authentication_dialog (data->web_view, data->request);
     /* Hack: display WebKit's default auth dialog by invoking the default handler, which we previously canceled. */
-    WEBKIT_WEB_VIEW_GET_CLASS (data->web_view)->authenticate (EPHY_ENGINE_VIEW (data->web_view), data->request);
+    if (EPHY_ENGINE_VIEW_GET_CLASS (data->web_view)->authenticate)
+      EPHY_ENGINE_VIEW_GET_CLASS (data->web_view)->authenticate (EPHY_ENGINE_VIEW (data->web_view), data->request);
+    else
+      webkit_authentication_request_cancel (data->request);
   }
 
   authentication_data_free (data);
@@ -3613,58 +3616,35 @@ ephy_web_view_print_failed (EphyWebView *web_view,
 }
 
 static void
-print_operation_finished_cb (WebKitPrintOperation *operation,
-                             EphyWebView          *view)
+engine_print_finished_cb (EphyEngineView *engine,
+                          GAsyncResult   *result,
+                          EphyWebView    *view)
 {
-  ephy_embed_shell_set_page_setup (ephy_embed_shell_get_default (),
-                                   webkit_print_operation_get_page_setup (operation));
+  g_autoptr (GError) error = NULL;
+  GtkPrintSetup *setup = ephy_engine_web_view_print_finish (engine, result, &error);
+
+  if (setup) {
+    EphyEmbedShell *shell = ephy_embed_shell_get_default ();
+    ephy_embed_shell_set_page_setup (shell, gtk_print_setup_get_page_setup (setup));
+    ephy_embed_shell_set_print_settings (shell, gtk_print_setup_get_print_settings (setup));
+    gtk_print_setup_unref (setup);
+  } else if (gtk_widget_get_root (GTK_WIDGET (view)) &&
+             !g_error_matches (error, GTK_DIALOG_ERROR, GTK_DIALOG_ERROR_DISMISSED)) {
+    ephy_web_view_print_failed (view, error);
+  }
+  g_object_unref (view);
 }
 
-static void
-print_operation_failed_cb (WebKitPrintOperation *operation,
-                           GError               *error,
-                           EphyWebView          *view)
-{
-  g_signal_handlers_disconnect_by_func (operation, print_operation_finished_cb, view);
-  ephy_web_view_print_failed (view, error);
-}
-
-/**
- * ephy_web_view_print:
- * @view: an #EphyWebView
- *
- * Opens a dialog to print the specified view.
- *
- * Since: 2.30
- **/
 void
 ephy_web_view_print (EphyWebView *view)
 {
-  WebKitPrintOperation *operation;
-  EphyEmbedShell *shell;
-  GtkPrintSettings *settings;
+  EphyEmbedShell *shell = ephy_embed_shell_get_default ();
 
-  g_assert (EPHY_IS_WEB_VIEW (view));
-
-  shell = ephy_embed_shell_get_default ();
-
-  operation = webkit_print_operation_new (EPHY_ENGINE_VIEW (view));
-  g_signal_connect (operation, "finished",
-                    G_CALLBACK (print_operation_finished_cb),
-                    view);
-  g_signal_connect (operation, "failed",
-                    G_CALLBACK (print_operation_failed_cb),
-                    view);
-  webkit_print_operation_set_page_setup (operation, ephy_embed_shell_get_page_setup (shell));
-  settings = ephy_embed_shell_get_print_settings (shell);
-  gtk_print_settings_set (settings,
-                          GTK_PRINT_SETTINGS_OUTPUT_BASENAME,
-                          ephy_engine_web_view_get_title (EPHY_ENGINE_VIEW (view)));
-  webkit_print_operation_set_print_settings (operation, settings);
-  if (webkit_print_operation_run_dialog (operation, NULL) == WEBKIT_PRINT_OPERATION_RESPONSE_PRINT)
-    ephy_embed_shell_set_print_settings (shell, webkit_print_operation_get_print_settings (operation));
-
-  g_object_unref (operation);
+  ephy_engine_web_view_print (EPHY_ENGINE_VIEW (view),
+                              ephy_embed_shell_get_page_setup (shell),
+                              ephy_embed_shell_get_print_settings (shell),
+                              (GAsyncReadyCallback)engine_print_finished_cb,
+                              g_object_ref (view));
 }
 
 static void

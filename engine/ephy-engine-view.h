@@ -10,6 +10,8 @@ typedef struct _EphyEngineFind EphyEngineFind;
 typedef struct _EphyEngineInspector EphyEngineInspector;
 typedef struct _EphyEngineResource EphyEngineResource;
 typedef struct _EphyEngineSessionState EphyEngineSessionState;
+GType ephy_engine_history_item_get_type(void);
+#define EPHY_ENGINE_HISTORY_ITEM(obj) (G_TYPE_CHECK_INSTANCE_CAST((obj),ephy_engine_history_item_get_type(),EphyEngineHistoryItem))
 struct _EphyEngineViewClass {
     GtkWidgetClass parent;
 
@@ -361,4 +363,6 @@ ephy_engine_web_view_session_state_serialize (EphyEngineSessionState *state);
 int ephy_engine_execute_process(int argc, char** argv);
 gboolean ephy_engine_initialize(int argc, char** argv, const char* profile, gboolean self_test);
 void ephy_engine_shutdown(void);
+void ephy_engine_web_view_print(EphyEngineView*, GtkPageSetup*, GtkPrintSettings*, GAsyncReadyCallback, gpointer);
+GtkPrintSetup* ephy_engine_web_view_print_finish(EphyEngineView*, GAsyncResult*, GError**);
 G_END_DECLS

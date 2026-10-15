@@ -22,6 +22,7 @@
 
 #include "config.h"
 #include "ephy-engine-view.h"
+#include "include/cef_api_hash.h"
 
 #include <errno.h>
 #include <signal.h>
@@ -194,7 +195,12 @@ main (int   argc,
   gboolean engine_initialized = FALSE;
 
   {
-    int subprocess = ephy_engine_execute_process (argc, argv);
+    /* Keep CEF as a direct executable dependency: its libc interceptors use
+     * RTLD_NEXT and must be loaded before libc. */
+    int subprocess;
+    if (!cef_api_hash (CEF_API_VERSION, 0))
+      return EXIT_FAILURE;
+    subprocess = ephy_engine_execute_process (argc, argv);
     if (subprocess >= 0)
       return subprocess;
   }

@@ -153,7 +153,7 @@ libephymain = shared_library('ephymain',
   include_directories: libephymain_includes,
   install: true,
   install_dir: pkglibdir,
-  install_rpath: pkglibdir
+  install_rpath: pkglibdir + ':' + pkglibdir / 'cef'
 )
 
 ephymain_dep = declare_dependency(
@@ -169,7 +169,7 @@ ephy_profile_migrator = executable('ephy-profile-migrator',
   dependencies: ephymain_dep,
   install: true,
   install_dir: pkglibexecdir,
-  install_rpath: pkglibdir
+  install_rpath: pkglibdir + ':' + pkglibdir / 'cef'
 )
 
 
@@ -190,7 +190,7 @@ executable('epiphany-search-provider',
   dependencies: ephymain_dep,
   install: true,
   install_dir: libexecdir,
-  install_rpath: pkglibdir
+  install_rpath: pkglibdir + ':' + pkglibdir / 'cef'
 )
 
 webapp_codegen = gnome.gdbus_codegen('ephy-webapp-provider-generated',
@@ -210,7 +210,7 @@ executable('epiphany-webapp-provider',
   dependencies: ephymain_dep,
   install: true,
   install_dir: libexecdir,
-  install_rpath: pkglibdir
+  install_rpath: pkglibdir + ':' + pkglibdir / 'cef'
 )
 
 gresource_conf = configuration_data()
@@ -240,7 +240,9 @@ epiphany_sources = [
 
 epiphany = executable('jupiter',
   epiphany_sources,
-  dependencies: ephymain_dep,
+  include_directories: include_directories(get_option('cef_root')),
+  dependencies: [cef_dep, ephymain_dep],
+  build_rpath: meson.project_build_root() / 'engine',
   install: true,
-  install_rpath: pkglibdir
+  install_rpath: pkglibdir + ':' + pkglibdir / 'cef'
 )
