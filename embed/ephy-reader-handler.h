@@ -19,6 +19,7 @@
  */
 
 #pragma once
+#include "ephy-engine-scheme.h"
 
 #include <webkit/webkit.h>
 
@@ -33,5 +34,5 @@ G_DECLARE_FINAL_TYPE (EphyReaderHandler, ephy_reader_handler, EPHY, READER_HANDL
 EphyReaderHandler *ephy_reader_handler_new            (void);
 
 void               ephy_reader_handler_handle_request (EphyReaderHandler  *handler,
-                                                       WebKitURISchemeRequest *request);
+                                                       EphyEngineSchemeRequest *request);
 G_END_DECLS

@@ -19,6 +19,7 @@
  */
 
 #include "config.h"
+#include "ephy-engine-scheme.h"
 #include "ephy-engine-view.h"
 
 #include "ephy-view-source-handler.h"
@@ -43,7 +44,7 @@ G_DEFINE_FINAL_TYPE (EphyViewSourceHandler, ephy_view_source_handler, G_TYPE_OBJ
 
 typedef struct {
   EphyViewSourceHandler *source_handler;
-  WebKitURISchemeRequest *scheme_request;
+  EphyEngineSchemeRequest *scheme_request;
   EphyEngineView *web_view;
   GCancellable *cancellable;
   gulong load_changed_id;
@@ -51,7 +52,7 @@ typedef struct {
 
 static EphyViewSourceRequest *
 ephy_view_source_request_new (EphyViewSourceHandler  *handler,
-                              WebKitURISchemeRequest *request)
+                              EphyEngineSchemeRequest *request)
 {
   EphyViewSourceRequest *view_source_request;
 
@@ -92,11 +93,11 @@ finish_uri_scheme_request (EphyViewSourceRequest *request,
   g_assert ((data && !error) || (!data && error));
 
   if (error) {
-    webkit_uri_scheme_request_finish_error (request->scheme_request, error);
+    ephy_engine_uri_scheme_request_finish_error (request->scheme_request, error);
   } else {
     data_length = MIN (strlen (data), G_MAXSSIZE);
     stream = g_memory_input_stream_new_from_data (data, data_length, g_free);
-    webkit_uri_scheme_request_finish (request->scheme_request, stream, data_length, "text/html");
+    ephy_engine_uri_scheme_request_finish (request->scheme_request, stream, data_length, "text/html");
     g_object_unref (stream);
   }
 
@@ -249,7 +250,7 @@ ephy_view_source_request_start (EphyViewSourceRequest *request)
   const char *original_uri;
   EphyEngineView *web_view;
 
-  original_uri = webkit_uri_scheme_request_get_uri (request->scheme_request);
+  original_uri = ephy_engine_uri_scheme_request_get_uri (request->scheme_request);
 
   /* Convert e.g. view-source:https://gnome.org to https://gnome.org */
   converted_uri = original_uri + strlen (EPHY_VIEW_SOURCE_SCHEME) + 1;
@@ -316,7 +317,7 @@ ephy_view_source_handler_new (void)
 
 void
 ephy_view_source_handler_handle_request (EphyViewSourceHandler  *handler,
-                                         WebKitURISchemeRequest *scheme_request)
+                                         EphyEngineSchemeRequest *scheme_request)
 {
   EphyViewSourceRequest *view_source_request;
 

@@ -19,6 +19,7 @@
  */
 
 #include "config.h"
+#include "ephy-engine-scheme.h"
 #include "ephy-engine-view.h"
 
 #include "ephy-about-handler.h"
@@ -85,7 +86,7 @@ ephy_about_handler_get_smaps (EphyAboutHandler *handler)
 }
 
 static void
-ephy_about_handler_finish_request (WebKitURISchemeRequest *request,
+ephy_about_handler_finish_request (EphyEngineSchemeRequest *request,
                                    gchar                  *data,
                                    gssize                  data_length)
 {
@@ -93,14 +94,14 @@ ephy_about_handler_finish_request (WebKitURISchemeRequest *request,
 
   data_length = data_length != -1 ? data_length : (gssize)strlen (data);
   stream = g_memory_input_stream_new_from_data (data, data_length, g_free);
-  webkit_uri_scheme_request_finish (request, stream, data_length, "text/html");
+  ephy_engine_uri_scheme_request_finish (request, stream, data_length, "text/html");
   g_object_unref (stream);
 }
 
 static void
 handle_memory_finished_cb (EphyAboutHandler       *handler,
                            GAsyncResult           *result,
-                           WebKitURISchemeRequest *request)
+                           EphyEngineSchemeRequest *request)
 {
   GString *data_str;
   gsize data_length;
@@ -146,7 +147,7 @@ handle_memory_sync (GTask        *task,
 
 static gboolean
 ephy_about_handler_handle_memory (EphyAboutHandler       *handler,
-                                  WebKitURISchemeRequest *request)
+                                  EphyEngineSchemeRequest *request)
 {
   GTask *task;
 
@@ -162,7 +163,7 @@ ephy_about_handler_handle_memory (EphyAboutHandler       *handler,
 
 static gboolean
 ephy_about_handler_handle_about (EphyAboutHandler       *handler,
-                                 WebKitURISchemeRequest *request)
+                                 EphyEngineSchemeRequest *request)
 {
   char *data;
   char *version;
@@ -220,7 +221,7 @@ ephy_about_handler_handle_about (EphyAboutHandler       *handler,
 
 static gboolean
 ephy_about_handler_handle_epiphany (EphyAboutHandler       *handler,
-                                    WebKitURISchemeRequest *request)
+                                    EphyEngineSchemeRequest *request)
 {
   char *data;
 
@@ -246,14 +247,14 @@ ephy_about_handler_handle_epiphany (EphyAboutHandler       *handler,
 static void
 handle_applications_finished_cb (EphyAboutHandler       *handler,
                                  GAsyncResult           *result,
-                                 WebKitURISchemeRequest *request)
+                                 EphyEngineSchemeRequest *request)
 {
   EphyEngineView *view;
   GString *data_str;
   gsize data_length;
   GList *applications, *p;
 
-  view = webkit_uri_scheme_request_get_web_view (request);
+  view = ephy_engine_uri_scheme_request_get_web_view (request);
   ephy_web_view_register_message_handler (EPHY_WEB_VIEW (view), EPHY_WEB_VIEW_ABOUT_APPS_MESSAGE_HANDLER, EPHY_WEB_VIEW_REGISTER_MESSAGE_HANDLER_FOR_CURRENT_PAGE);
 
   data_str = g_string_new (NULL);
@@ -393,7 +394,7 @@ handle_applications_sync (GTask        *task,
 
 static gboolean
 ephy_about_handler_handle_applications (EphyAboutHandler       *handler,
-                                        WebKitURISchemeRequest *request)
+                                        EphyEngineSchemeRequest *request)
 {
   GTask *task;
 
@@ -410,9 +411,9 @@ ephy_about_handler_handle_applications (EphyAboutHandler       *handler,
 static void
 history_service_query_urls_cb (EphyHistoryService     *history,
                                GAsyncResult           *result,
-                               WebKitURISchemeRequest *request_param)
+                               EphyEngineSchemeRequest *request_param)
 {
-  g_autoptr (WebKitURISchemeRequest) request = request_param;
+  g_autoptr (EphyEngineSchemeRequest) request = request_param;
   EphySnapshotService *snapshot_service;
   EphyEmbedShell *shell;
   GString *data_str;
@@ -539,7 +540,7 @@ out:
 
 static gboolean
 ephy_about_handler_handle_newtab (EphyAboutHandler       *handler,
-                                  WebKitURISchemeRequest *request)
+                                  EphyEngineSchemeRequest *request)
 {
   char *data;
 
@@ -569,7 +570,7 @@ ephy_history_query_new_for_overview (void)
 
 static gboolean
 ephy_about_handler_handle_html_overview (EphyAboutHandler       *handler,
-                                         WebKitURISchemeRequest *request)
+                                         EphyEngineSchemeRequest *request)
 {
   EphyHistoryService *history;
   EphyHistoryQuery *query;
@@ -586,7 +587,7 @@ ephy_about_handler_handle_html_overview (EphyAboutHandler       *handler,
 
 static gboolean
 ephy_about_handler_handle_incognito (EphyAboutHandler       *handler,
-                                     WebKitURISchemeRequest *request)
+                                     EphyEngineSchemeRequest *request)
 {
   char *data;
 
@@ -630,7 +631,7 @@ ephy_about_handler_handle_incognito (EphyAboutHandler       *handler,
 
 static void
 ephy_about_handler_handle_blank (EphyAboutHandler       *handler,
-                                 WebKitURISchemeRequest *request)
+                                 EphyEngineSchemeRequest *request)
 {
   ephy_about_handler_finish_request (request, g_strdup ("<html></html>"), -1);
 }
@@ -643,12 +644,12 @@ ephy_about_handler_new (void)
 
 void
 ephy_about_handler_handle_request (EphyAboutHandler       *handler,
-                                   WebKitURISchemeRequest *request)
+                                   EphyEngineSchemeRequest *request)
 {
   const char *path;
   gboolean handled = FALSE;
 
-  path = webkit_uri_scheme_request_get_path (request);
+  path = ephy_engine_uri_scheme_request_get_path (request);
 
   if (g_strcmp0 (path, "memory") == 0)
     handled = ephy_about_handler_handle_memory (handler, request);

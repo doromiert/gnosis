@@ -19,7 +19,7 @@ engine_resource = gnome.compile_resources('jupiter-engine-resources',
   'data/engine.gresource.xml', c_name: 'jupiter_engine', source_dir: 'data')
 engine_includes = include_directories('.', 'select', cef_root)
 engine = static_library('jupiter-engine',
-  ['ephy-engine-view.cpp', 'select/application.cpp', 'select/browser.cpp', 'select/clipboard.cpp',
+  ['ephy-engine-view.cpp', 'ephy-engine-scheme.cpp', 'select/application.cpp', 'select/browser.cpp', 'select/clipboard.cpp',
    'select/cursor.cpp', 'select/policy.cpp', 'select/extensions.cpp', 'select/extension-host.cpp', engine_resource],
   include_directories: engine_includes,
   dependencies: [gtk_dep, libadwaita_dep, json_glib_dep, webkitgtk_dep, dependency('epoxy'), cef_dep, wrapper_dep],

@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 #include "ephy-engine-view.h"
+#include "ephy-engine-scheme.h"
 #include "select/application.hpp"
 #include "select/clipboard.hpp"
 #include "select/extension-runtime.hpp"
@@ -211,7 +212,7 @@ static void ephy_engine_web_view_class_init(EphyEngineViewClass* klass) {
   object_class->dispose = +[](GObject* object) {
     auto* d = data(EPHY_ENGINE_VIEW(object));
     if (d && !d->disposed) {
-      d->disposed = true; d->protocol->stop(); d->browser->detach_callbacks(); d->browser->close();
+      d->disposed = true; d->protocol->stop(); d->browser->detach_callbacks(); d->browser->close(); d->browser->host = nullptr;
       if (gtk_widget_get_parent(d->browser->widget())) gtk_widget_unparent(d->browser->widget());
     }
     G_OBJECT_CLASS(ephy_engine_web_view_parent_class)->dispose(object);
@@ -325,7 +326,8 @@ public:
     command->AppendSwitchWithValue("ozone-platform", g_getenv("WAYLAND_DISPLAY") ? "wayland" : "x11");
     command->AppendSwitchWithValue("use-angle", "gl-egl");
   }
-  void OnContextInitialized() override { enable_extension_developer_mode(); }
+  void OnRegisterCustomSchemes(CefRawPtr<CefSchemeRegistrar> registrar) override { ephy_engine_register_schemes(registrar); }
+  void OnContextInitialized() override { enable_extension_developer_mode(); ephy_engine_install_scheme_handlers(); }
 private:
   IMPLEMENT_REFCOUNTING(Engine);
 };
@@ -398,6 +400,7 @@ gboolean ephy_engine_initialize(int argc, char** argv, const char* profile, gboo
 void ephy_engine_shutdown() {
   if (pump) { g_source_remove(pump); pump = 0; }
   if (runtime) { runtime->extension_host->stop(); delete runtime; runtime = nullptr; CefShutdown(); }
+  ephy_engine_clear_scheme_handlers();
   engine = nullptr;
 }
 
@@ -597,3 +600,8 @@ WebKitUserMessage* ephy_engine_web_view_send_message_to_page_finish(EphyEngineVi
 void ephy_engine_web_view_set_cors_allowlist(EphyEngineView*,const gchar* const*) { /* Internal schemes enforce their own access policy. */ }
 gboolean ephy_engine_web_view_get_is_web_process_responsive(EphyEngineView* v) { return !data(v)->disposed; }
 void ephy_engine_web_view_terminate_web_process(EphyEngineView* v) { data(v)->protocol->send("Page.crash",nullptr); }
+
+EphyEngineView* ephy_engine_view_for_browser(int id) {
+  for(auto* view:views) if(auto b=view->browser->cef_browser();b&&b->GetIdentifier()==id&&!view->disposed)return view->self;
+  return nullptr;
+}

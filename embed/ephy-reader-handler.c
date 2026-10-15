@@ -19,6 +19,7 @@
  */
 
 #include "config.h"
+#include "ephy-engine-scheme.h"
 #include "ephy-engine-view.h"
 
 #include "ephy-reader-handler.h"
@@ -46,7 +47,7 @@ G_DEFINE_FINAL_TYPE (EphyReaderHandler, ephy_reader_handler, G_TYPE_OBJECT)
 
 typedef struct {
   EphyReaderHandler *source_handler;
-  WebKitURISchemeRequest *scheme_request;
+  EphyEngineSchemeRequest *scheme_request;
   EphyEngineView *web_view;
   GCancellable *cancellable;
   gulong load_changed_id;
@@ -54,7 +55,7 @@ typedef struct {
 
 static EphyReaderRequest *
 ephy_reader_request_new (EphyReaderHandler      *handler,
-                         WebKitURISchemeRequest *request)
+                         EphyEngineSchemeRequest *request)
 {
   EphyReaderRequest *reader_request;
 
@@ -95,11 +96,11 @@ finish_uri_scheme_request (EphyReaderRequest *request,
   g_assert ((data && !error) || (!data && error));
 
   if (error) {
-    webkit_uri_scheme_request_finish_error (request->scheme_request, error);
+    ephy_engine_uri_scheme_request_finish_error (request->scheme_request, error);
   } else {
     data_length = MIN (strlen (data), G_MAXSSIZE);
     stream = g_memory_input_stream_new_from_data (data, data_length, g_free);
-    webkit_uri_scheme_request_finish (request->scheme_request, stream, data_length, "text/html");
+    ephy_engine_uri_scheme_request_finish (request->scheme_request, stream, data_length, "text/html");
     g_object_unref (stream);
   }
 
@@ -307,7 +308,7 @@ ephy_reader_request_start (EphyReaderRequest *request)
   const char *original_uri;
   EphyEngineView *web_view;
 
-  original_uri = webkit_uri_scheme_request_get_uri (request->scheme_request);
+  original_uri = ephy_engine_uri_scheme_request_get_uri (request->scheme_request);
   uri = g_uri_parse (original_uri, G_URI_FLAGS_PARSE_RELAXED, NULL);
 
   if (!uri) {
@@ -320,7 +321,7 @@ ephy_reader_request_start (EphyReaderRequest *request)
     return;
   }
 
-  web_view = webkit_uri_scheme_request_get_web_view (request->scheme_request);
+  web_view = ephy_engine_uri_scheme_request_get_web_view (request->scheme_request);
   if (web_view) {
     gboolean entering_reader_mode;
 
@@ -383,7 +384,7 @@ ephy_reader_handler_new (void)
 
 void
 ephy_reader_handler_handle_request (EphyReaderHandler      *handler,
-                                    WebKitURISchemeRequest *scheme_request)
+                                    EphyEngineSchemeRequest *scheme_request)
 {
   EphyReaderRequest *reader_request;
 

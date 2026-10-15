@@ -288,7 +288,7 @@ void Browser::start() {
   CefBrowserSettings settings;
   settings.windowless_frame_rate = 60;
   settings.background_color = CefColorSetARGB(255, 255, 255, 255);
-  auto context = owner() ? owner()->context : nullptr;
+  auto context = host ? host->context : nullptr;
   if (!CefBrowserHost::CreateBrowser(info, this, "", settings, nullptr, context)) {
     creating_ = false;
     loaded = false;
@@ -309,12 +309,12 @@ void Browser::OnAfterCreated(CefRefPtr<CefBrowser> browser) {
   browser_id_ = browser->GetIdentifier();
   loaded = true;
   ++active_count;
-  if (owner()) {
-    held_app_ = G_APPLICATION(g_object_ref(owner()->app.gtk_app));
+  if (host) {
+    held_app_ = G_APPLICATION(g_object_ref(host->app.gtk_app));
     g_application_hold(held_app_);
   }
-  if (owner() && !owner()->private_mode) {
-    attached_host_ = owner()->app.extension_host;
+  if (host && !host->private_mode) {
+    attached_host_ = host->app.extension_host;
     attached_host_->attach(browser);
   }
   if (closing) {

@@ -19,6 +19,7 @@
  */
 
 #pragma once
+#include "ephy-engine-scheme.h"
 
 #include <webkit/webkit.h>
 
@@ -33,5 +34,5 @@ G_DECLARE_FINAL_TYPE (EphyViewSourceHandler, ephy_view_source_handler, EPHY, VIE
 EphyViewSourceHandler *ephy_view_source_handler_new            (void);
 
 void                   ephy_view_source_handler_handle_request (EphyViewSourceHandler  *handler,
-                                                                WebKitURISchemeRequest *request);
+                                                                EphyEngineSchemeRequest *request);
 G_END_DECLS

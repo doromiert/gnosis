@@ -1,3 +1,4 @@
+#include "ephy-engine-scheme.h"
 /* -*- Mode: C; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /*
  *  Copyright © 2000-2003 Marco Pesenti Gritti
@@ -653,7 +654,7 @@ ephy_embed_shell_restored_window (EphyEmbedShell *shell)
 }
 
 static void
-about_request_cb (WebKitURISchemeRequest *request,
+about_request_cb (EphyEngineSchemeRequest *request,
                   EphyEmbedShell         *shell)
 {
   EphyEmbedShellPrivate *priv = ephy_embed_shell_get_instance_private (shell);
@@ -662,7 +663,7 @@ about_request_cb (WebKitURISchemeRequest *request,
 }
 
 static void
-source_request_cb (WebKitURISchemeRequest *request,
+source_request_cb (EphyEngineSchemeRequest *request,
                    EphyEmbedShell         *shell)
 {
   EphyEmbedShellPrivate *priv = ephy_embed_shell_get_instance_private (shell);
@@ -671,7 +672,7 @@ source_request_cb (WebKitURISchemeRequest *request,
 }
 
 static void
-reader_request_cb (WebKitURISchemeRequest *request,
+reader_request_cb (EphyEngineSchemeRequest *request,
                    EphyEmbedShell         *shell)
 {
   EphyEmbedShellPrivate *priv = ephy_embed_shell_get_instance_private (shell);
@@ -680,7 +681,7 @@ reader_request_cb (WebKitURISchemeRequest *request,
 }
 
 static void
-ephy_resource_request_cb (WebKitURISchemeRequest *request)
+ephy_resource_request_cb (EphyEngineSchemeRequest *request)
 {
   const char *path;
   gsize size;
@@ -689,13 +690,13 @@ ephy_resource_request_cb (WebKitURISchemeRequest *request)
   g_autoptr (GInputStream) stream = NULL;
   g_autoptr (GError) error = NULL;
 
-  path = webkit_uri_scheme_request_get_path (request);
+  path = ephy_engine_uri_scheme_request_get_path (request);
   if (!g_resources_get_info (path, 0, &size, NULL, &error)) {
-    webkit_uri_scheme_request_finish_error (request, error);
+    ephy_engine_uri_scheme_request_finish_error (request, error);
     return;
   }
 
-  request_view = webkit_uri_scheme_request_get_web_view (request);
+  request_view = ephy_engine_uri_scheme_request_get_web_view (request);
   uri = ephy_engine_web_view_get_uri (request_view);
 
   /* ephy-resource:// requests bypass CORS in order to allow custom schemes to
@@ -712,16 +713,16 @@ ephy_resource_request_cb (WebKitURISchemeRequest *request)
       (g_str_has_prefix (uri, EPHY_VIEW_SOURCE_SCHEME ":") && g_str_has_prefix (path, "/org/gnome/epiphany/highlightjs/"))) {
     stream = g_resources_open_stream (path, 0, &error);
     if (stream)
-      webkit_uri_scheme_request_finish (request, stream, size, NULL);
+      ephy_engine_uri_scheme_request_finish (request, stream, size, NULL);
     else
-      webkit_uri_scheme_request_finish_error (request, error);
+      ephy_engine_uri_scheme_request_finish_error (request, error);
     return;
   }
 
   error = g_error_new (WEBKIT_NETWORK_ERROR, WEBKIT_NETWORK_ERROR_FAILED,
                        _("URI %s not authorized to access Epiphany resource %s"),
                        uri, path);
-  webkit_uri_scheme_request_finish_error (request, error);
+  ephy_engine_uri_scheme_request_finish_error (request, error);
 }
 
 static gboolean
@@ -908,9 +909,9 @@ ephy_embed_shell_startup (GApplication *application)
 
   /* about: URIs handler */
   priv->about_handler = ephy_about_handler_new ();
-  webkit_web_context_register_uri_scheme (priv->web_context,
+  ephy_engine_context_register_uri_scheme (priv->web_context,
                                           EPHY_ABOUT_SCHEME,
-                                          (WebKitURISchemeRequestCallback)about_request_cb,
+                                          (EphyEngineSchemeRequestCallback)about_request_cb,
                                           shell, NULL);
   webkit_security_manager_register_uri_scheme_as_display_isolated (security_manager, EPHY_ABOUT_SCHEME);
   /* Register about scheme as local so that it can contain file resources */
@@ -918,21 +919,21 @@ ephy_embed_shell_startup (GApplication *application)
 
   /* view source handler */
   priv->source_handler = ephy_view_source_handler_new ();
-  webkit_web_context_register_uri_scheme (priv->web_context, EPHY_VIEW_SOURCE_SCHEME,
-                                          (WebKitURISchemeRequestCallback)source_request_cb,
+  ephy_engine_context_register_uri_scheme (priv->web_context, EPHY_VIEW_SOURCE_SCHEME,
+                                          (EphyEngineSchemeRequestCallback)source_request_cb,
                                           shell, NULL);
   webkit_security_manager_register_uri_scheme_as_display_isolated (security_manager, EPHY_VIEW_SOURCE_SCHEME);
 
   /* reader mode handler */
   priv->reader_handler = ephy_reader_handler_new ();
-  webkit_web_context_register_uri_scheme (priv->web_context, EPHY_READER_SCHEME,
-                                          (WebKitURISchemeRequestCallback)reader_request_cb,
+  ephy_engine_context_register_uri_scheme (priv->web_context, EPHY_READER_SCHEME,
+                                          (EphyEngineSchemeRequestCallback)reader_request_cb,
                                           shell, NULL);
   webkit_security_manager_register_uri_scheme_as_display_isolated (security_manager, EPHY_READER_SCHEME);
 
   /* ephy-resource handler */
-  webkit_web_context_register_uri_scheme (priv->web_context, "ephy-resource",
-                                          (WebKitURISchemeRequestCallback)ephy_resource_request_cb,
+  ephy_engine_context_register_uri_scheme (priv->web_context, "ephy-resource",
+                                          (EphyEngineSchemeRequestCallback)ephy_resource_request_cb,
                                           NULL, NULL);
   webkit_security_manager_register_uri_scheme_as_secure (webkit_web_context_get_security_manager (priv->web_context),
                                                          "ephy-resource");

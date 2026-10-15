@@ -14,7 +14,8 @@ bool Policy::navigable(const std::string& s) {
   if (!scheme)
     return false;
   bool ok = !g_ascii_strcasecmp(scheme, "http") || !g_ascii_strcasecmp(scheme, "https") ||
-            !g_ascii_strcasecmp(scheme, "file") || !g_ascii_strcasecmp(scheme, "about") ||
+            !g_ascii_strcasecmp(scheme, "ephy-about") || !g_ascii_strcasecmp(scheme, "ephy-reader") ||
+            !g_ascii_strcasecmp(scheme, "ephy-resource") || !g_ascii_strcasecmp(scheme, "file") || !g_ascii_strcasecmp(scheme, "about") ||
             !g_ascii_strcasecmp(scheme, "chrome-extension") || !g_ascii_strcasecmp(scheme, "blob") ||
             !g_ascii_strcasecmp(scheme, "data");
   g_free(scheme);
