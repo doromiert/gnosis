@@ -198,11 +198,11 @@ icon_loaded_cb (GObject      *source,
                 GAsyncResult *result,
                 gpointer      user_data)
 {
-  WebKitFaviconDatabase *database = WEBKIT_FAVICON_DATABASE (source);
+  EphyEngineFaviconDatabase *database = EPHY_ENGINE_FAVICON_DATABASE (source);
   g_autoptr (GtkWidget) image = user_data;
   g_autoptr (GIcon) favicon = NULL;
   g_autoptr (GError) error = NULL;
-  g_autoptr (GdkTexture) icon_texture = webkit_favicon_database_get_favicon_finish (database, result, &error);
+  g_autoptr (GdkTexture) icon_texture = ephy_engine_favicon_database_get_favicon_finish (database, result, &error);
   int scale;
 
   if (error) {
@@ -229,7 +229,7 @@ build_history_row (EphyActionBar             *action_bar,
   EphyEmbedShell *shell = ephy_embed_shell_get_default ();
   const char *uri;
   g_autofree char *title = NULL;
-  WebKitFaviconDatabase *database;
+  EphyEngineFaviconDatabase *database;
   GtkWidget *row, *box, *icon, *label;
   GtkEventController *controller;
   GtkGesture *gesture;
@@ -263,7 +263,7 @@ build_history_row (EphyActionBar             *action_bar,
     gtk_label_set_label (GTK_LABEL (label), uri);
 
   database = ephy_embed_shell_get_favicon_database (shell);
-  webkit_favicon_database_get_favicon (database, uri,
+  ephy_engine_favicon_database_get_favicon (database, uri,
                                        action_bar->cancellable,
                                        (GAsyncReadyCallback)icon_loaded_cb,
                                        g_object_ref (icon));

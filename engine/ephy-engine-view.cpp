@@ -138,6 +138,13 @@ struct ViewData {
     editor = WEBKIT_EDITOR_STATE(g_object_new(WEBKIT_TYPE_EDITOR_STATE, nullptr));
     ucm = webkit_user_content_manager_new();
     browser->on_changed = [this] { changed(); };
+    browser->on_favicon = [this](const std::string& page, const std::string& icon, GdkTexture* texture) {
+      if (disposed) return;
+      if (texture && !host.private_mode)
+        ephy_engine_favicon_database_store(ephy_engine_favicon_database_get_default(), page.c_str(), icon.c_str(), texture);
+      if (page == browser->url && g_set_object(&favicon, texture))
+        g_object_notify(G_OBJECT(self), "favicon");
+    };
     browser->on_closed = [this] { gboolean handled = FALSE; g_signal_emit_by_name(self, "close", &handled); };
     browser->on_load_start = [this] { g_signal_emit_by_name(self, "load-changed", WEBKIT_LOAD_STARTED); };
     browser->on_load_end = [this](int) {

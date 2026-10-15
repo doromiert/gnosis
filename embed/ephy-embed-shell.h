@@ -20,6 +20,7 @@
  */
 
 #pragma once
+#include "ephy-engine-favicon.h"
 
 #include <adwaita.h>
 #include <webkit/webkit.h>
@@ -83,7 +84,7 @@ EphyDownloadsManager     *ephy_embed_shell_get_downloads_manager    (EphyEmbedSh
 EphyPermissionsManager   *ephy_embed_shell_get_permissions_manager  (EphyEmbedShell *shell);
 EphySearchEngineManager  *ephy_embed_shell_get_search_engine_manager (EphyEmbedShell *shell);
 EphyPasswordManager      *ephy_embed_shell_get_password_manager      (EphyEmbedShell *shell);
-WebKitFaviconDatabase    *ephy_embed_shell_get_favicon_database      (EphyEmbedShell *shell);
+EphyEngineFaviconDatabase    *ephy_embed_shell_get_favicon_database      (EphyEmbedShell *shell);
 
 void                     ephy_embed_shell_register_ucm (EphyEmbedShell           *shell,
                                                         WebKitUserContentManager *ucm);

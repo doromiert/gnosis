@@ -34,7 +34,7 @@ struct _SyncedTabsDialog {
   AdwWindow parent_instance;
 
   EphyOpenTabsManager *manager;
-  WebKitFaviconDatabase *database;
+  EphyEngineFaviconDatabase *database;
   GtkWidget *list_box;
   GCancellable *cancellable;
 };
@@ -97,13 +97,13 @@ favicon_loaded_cb (GObject      *source,
                    GAsyncResult *result,
                    gpointer      user_data)
 {
-  WebKitFaviconDatabase *database = WEBKIT_FAVICON_DATABASE (source);
+  EphyEngineFaviconDatabase *database = EPHY_ENGINE_FAVICON_DATABASE (source);
   FaviconAsyncData *data = user_data;
   g_autoptr (GdkTexture) texture = NULL;
   g_autoptr (GIcon) favicon = NULL;
   g_autoptr (GError) error = NULL;
 
-  texture = webkit_favicon_database_get_favicon_finish (database, result, &error);
+  texture = ephy_engine_favicon_database_get_favicon_finish (database, result, &error);
   if (!texture && g_error_matches (error, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
     favicon_async_data_free (data);
     return;
@@ -165,7 +165,7 @@ synced_tabs_dialog_populate_from_record (SyncedTabsDialog   *dialog,
                         G_CALLBACK (tab_row_activated_cb), dialog);
 
     /* Load favicon asynchronously. */
-    webkit_favicon_database_get_favicon (dialog->database, url,
+    ephy_engine_favicon_database_get_favicon (dialog->database, url,
                                          dialog->cancellable,
                                          favicon_loaded_cb,
                                          favicon_async_data_new (tab_row, url));

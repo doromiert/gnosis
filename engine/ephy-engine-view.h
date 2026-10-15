@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 #pragma once
 #include <webkit/webkit.h>
+#include "ephy-engine-favicon.h"
 G_BEGIN_DECLS
 #define EPHY_TYPE_ENGINE_VIEW (ephy_engine_web_view_get_type())
 G_DECLARE_DERIVABLE_TYPE(EphyEngineView, ephy_engine_web_view, EPHY, ENGINE_VIEW, GtkWidget)

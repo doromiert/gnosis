@@ -28,7 +28,7 @@
 
 #define G_SETTINGS_ENABLE_BACKEND 1
 #include <gio/gsettingsbackend.h>
-#include <webkit/webkit.h>
+#include "ephy-engine-origin.h"
 
 #include "ephy-file-helpers.h"
 #include "ephy-string.h"
@@ -71,7 +71,7 @@ free_cached_origin_list (gpointer key,
                          gpointer value,
                          gpointer user_data)
 {
-  g_list_free_full ((GList *)value, (GDestroyNotify)webkit_security_origin_unref);
+  g_list_free_full ((GList *)value, (GDestroyNotify)ephy_engine_origin_unref);
 }
 
 static void
@@ -112,7 +112,7 @@ ephy_permissions_manager_get_settings_for_origin (EphyPermissionsManager *manage
   char *origin_path;
   char *trimmed_protocol;
   GSettings *settings;
-  WebKitSecurityOrigin *security_origin;
+  EphyEngineOrigin *security_origin;
   char *pos;
 
   g_assert (origin);
@@ -122,21 +122,23 @@ ephy_permissions_manager_get_settings_for_origin (EphyPermissionsManager *manage
     return settings;
 
   /* Cannot contain consecutive slashes in GSettings path... */
-  security_origin = webkit_security_origin_new_for_uri (origin);
-  trimmed_protocol = g_strdup (webkit_security_origin_get_protocol (security_origin));
+  security_origin = ephy_engine_origin_new_for_uri (origin);
+  if (!security_origin)
+    return NULL;
+  trimmed_protocol = g_strdup (ephy_engine_origin_get_protocol (security_origin));
   pos = strchr (trimmed_protocol, '/');
   if (pos)
     *pos = '\0';
 
   origin_path = g_strdup_printf ("/org/gnome/epiphany/permissions/%s/%s/%u/",
                                  trimmed_protocol,
-                                 webkit_security_origin_get_host (security_origin),
-                                 webkit_security_origin_get_port (security_origin));
+                                 ephy_engine_origin_get_host (security_origin),
+                                 ephy_engine_origin_get_port (security_origin));
 
   settings = g_settings_new_with_backend_and_path ("io.github.doromiert.Jupiter.permissions", manager->backend, origin_path);
   g_free (trimmed_protocol);
   g_free (origin_path);
-  webkit_security_origin_unref (security_origin);
+  ephy_engine_origin_unref (security_origin);
 
   /* Note that settings is owned only by the first hash table! */
   g_hash_table_insert (manager->origins_mapping, g_strdup (origin), settings);
@@ -208,20 +210,20 @@ ephy_permissions_manager_get_permission (EphyPermissionsManager *manager,
   g_assert (ephy_permission_is_stored_by_permissions_manager (type));
 
   settings = ephy_permissions_manager_get_settings_for_origin (manager, origin);
-  return g_settings_get_enum (settings, permission_type_to_string (type));
+  return settings ? g_settings_get_enum (settings, permission_type_to_string (type)) : EPHY_PERMISSION_UNDECIDED;
 }
 
 static gint
-webkit_security_origin_compare (WebKitSecurityOrigin *a,
-                                WebKitSecurityOrigin *b)
+ephy_engine_origin_compare (EphyEngineOrigin *a,
+                                EphyEngineOrigin *b)
 {
   const char *protocol_a, *protocol_b;
   const char *host_a, *host_b;
 
-  protocol_a = webkit_security_origin_get_protocol (a);
-  protocol_b = webkit_security_origin_get_protocol (b);
-  host_a = webkit_security_origin_get_host (a);
-  host_b = webkit_security_origin_get_host (b);
+  protocol_a = ephy_engine_origin_get_protocol (a);
+  protocol_b = ephy_engine_origin_get_protocol (b);
+  host_a = ephy_engine_origin_get_host (a);
+  host_b = ephy_engine_origin_get_host (b);
 
   /* Security origins objects with NULL protocol or host do not represent the
    * same origin as others with NULL protocol or host. That is, they're not
@@ -234,13 +236,13 @@ webkit_security_origin_compare (WebKitSecurityOrigin *a,
   g_assert (host_b);
 
   return strcmp (protocol_a, protocol_b) || strcmp (host_a, host_b) ||
-         webkit_security_origin_get_port (b) - webkit_security_origin_get_port (a);
+         ephy_engine_origin_get_port (b) - ephy_engine_origin_get_port (a);
 }
 
 static void
 maybe_add_origin_to_permission_type_cache (GHashTable           *permissions,
                                            EphyPermissionType    type,
-                                           WebKitSecurityOrigin *origin)
+                                           EphyEngineOrigin *origin)
 {
   GList *origins;
   GList *l;
@@ -249,9 +251,9 @@ maybe_add_origin_to_permission_type_cache (GHashTable           *permissions,
    * exists, and (b) it does not already contain origin. */
   origins = g_hash_table_lookup (permissions, GINT_TO_POINTER (type));
   if (origins) {
-    l = g_list_find_custom (origins, origin, (GCompareFunc)webkit_security_origin_compare);
+    l = g_list_find_custom (origins, origin, (GCompareFunc)ephy_engine_origin_compare);
     if (!l) {
-      origins = g_list_prepend (origins, webkit_security_origin_ref (origin));
+      origins = g_list_prepend (origins, ephy_engine_origin_ref (origin));
       g_hash_table_replace (permissions, GINT_TO_POINTER (type), origins);
     }
   }
@@ -260,7 +262,7 @@ maybe_add_origin_to_permission_type_cache (GHashTable           *permissions,
 static void
 maybe_remove_origin_from_permission_type_cache (GHashTable           *permissions,
                                                 EphyPermissionType    type,
-                                                WebKitSecurityOrigin *origin)
+                                                EphyEngineOrigin *origin)
 {
   GList *origins;
   GList *l;
@@ -269,9 +271,9 @@ maybe_remove_origin_from_permission_type_cache (GHashTable           *permission
    * exists, and (b) it contains origin. */
   origins = g_hash_table_lookup (permissions, GINT_TO_POINTER (type));
   if (origins) {
-    l = g_list_find_custom (origins, origin, (GCompareFunc)webkit_security_origin_compare);
+    l = g_list_find_custom (origins, origin, (GCompareFunc)ephy_engine_origin_compare);
     if (l) {
-      webkit_security_origin_unref (l->data);
+      ephy_engine_origin_unref (l->data);
       origins = g_list_remove_link (origins, l);
       g_hash_table_replace (permissions, GINT_TO_POINTER (type), origins);
     }
@@ -284,13 +286,13 @@ ephy_permissions_manager_set_permission (EphyPermissionsManager *manager,
                                          const char             *origin,
                                          EphyPermission          permission)
 {
-  WebKitSecurityOrigin *webkit_origin;
+  EphyEngineOrigin *engine_origin;
   GSettings *settings;
 
   g_assert (ephy_permission_is_stored_by_permissions_manager (type));
 
-  webkit_origin = webkit_security_origin_new_for_uri (origin);
-  if (!webkit_origin)
+  engine_origin = ephy_engine_origin_new_for_uri (origin);
+  if (!engine_origin)
     return;
 
   settings = ephy_permissions_manager_get_settings_for_origin (manager, origin);
@@ -298,41 +300,44 @@ ephy_permissions_manager_set_permission (EphyPermissionsManager *manager,
 
   switch (permission) {
     case EPHY_PERMISSION_UNDECIDED:
-      maybe_remove_origin_from_permission_type_cache (manager->permission_type_permitted_origins, type, webkit_origin);
-      maybe_remove_origin_from_permission_type_cache (manager->permission_type_denied_origins, type, webkit_origin);
+      maybe_remove_origin_from_permission_type_cache (manager->permission_type_permitted_origins, type, engine_origin);
+      maybe_remove_origin_from_permission_type_cache (manager->permission_type_denied_origins, type, engine_origin);
       break;
     case EPHY_PERMISSION_DENY:
-      maybe_remove_origin_from_permission_type_cache (manager->permission_type_permitted_origins, type, webkit_origin);
-      maybe_add_origin_to_permission_type_cache (manager->permission_type_denied_origins, type, webkit_origin);
+      maybe_remove_origin_from_permission_type_cache (manager->permission_type_permitted_origins, type, engine_origin);
+      maybe_add_origin_to_permission_type_cache (manager->permission_type_denied_origins, type, engine_origin);
       break;
     case EPHY_PERMISSION_PERMIT:
-      maybe_add_origin_to_permission_type_cache (manager->permission_type_permitted_origins, type, webkit_origin);
-      maybe_remove_origin_from_permission_type_cache (manager->permission_type_denied_origins, type, webkit_origin);
+      maybe_add_origin_to_permission_type_cache (manager->permission_type_permitted_origins, type, engine_origin);
+      maybe_remove_origin_from_permission_type_cache (manager->permission_type_denied_origins, type, engine_origin);
       break;
     default:
       g_assert_not_reached ();
   }
 
-  webkit_security_origin_unref (webkit_origin);
+  ephy_engine_origin_unref (engine_origin);
 }
 
-static WebKitSecurityOrigin *
+static EphyEngineOrigin *
 group_name_to_security_origin (const char *group)
 {
   char **tokens;
-  WebKitSecurityOrigin *origin = NULL;
+  EphyEngineOrigin *origin = NULL;
 
   /* Should be of form org/gnome/epiphany/permissions/http/example.com/0 */
   tokens = g_strsplit (group, "/", -1);
-  if (g_strv_length (tokens) == 7 && tokens[4] && tokens[5] && tokens[6])
-    origin = webkit_security_origin_new (tokens[4], tokens[5], atoi (tokens[6]));
+  if (g_strv_length (tokens) == 7 && tokens[4] && tokens[5] && tokens[6]) {
+    guint64 port;
+    if (g_ascii_string_to_unsigned (tokens[6], 10, 0, G_MAXUINT16, &port, NULL))
+      origin = ephy_engine_origin_new (tokens[4], tokens[5], port);
+  }
 
   g_strfreev (tokens);
 
   return origin;
 }
 
-static WebKitSecurityOrigin *
+static EphyEngineOrigin *
 origin_for_keyfile_key (GKeyFile           *file,
                         const char         *filename,
                         const char         *group,
@@ -340,7 +345,7 @@ origin_for_keyfile_key (GKeyFile           *file,
                         EphyPermissionType  type,
                         gboolean            permit)
 {
-  WebKitSecurityOrigin *origin = NULL;
+  EphyEngineOrigin *origin = NULL;
 
   if (strcmp (permission_type_to_string (type), key) == 0) {
     g_autoptr (GError) error = NULL;
@@ -380,7 +385,7 @@ origins_for_keyfile_group (GKeyFile           *file,
   }
 
   for (guint i = 0; i < keys_length; i++) {
-    WebKitSecurityOrigin *origin;
+    EphyEngineOrigin *origin;
 
     origin = origin_for_keyfile_key (file, filename, group, keys[i], type, permit);
     if (origin)

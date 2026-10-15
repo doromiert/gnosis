@@ -63,6 +63,7 @@ public:
   std::function<void()> on_load_start;
   std::function<void()> on_changed;
   std::function<void()> on_closed;
+  std::function<void(const std::string&, const std::string&, GdkTexture*)> on_favicon;
   std::function<void()> on_close_cancelled;
   static unsigned active_count;
 
@@ -93,6 +94,7 @@ public:
                      const CefString&, cef_window_open_disposition_t, bool user_gesture,
                      const CefPopupFeatures&, CefWindowInfo& window_info, CefRefPtr<CefClient>& client,
                      CefBrowserSettings&, CefRefPtr<CefDictionaryValue>&, bool*) override;
+  void OnFaviconURLChange(CefRefPtr<CefBrowser>, const std::vector<CefString>&) override;
   void OnTitleChange(CefRefPtr<CefBrowser>, const CefString& title) override;
   void OnAddressChange(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame> frame, const CefString& address) override;
   void OnLoadingProgressChange(CefRefPtr<CefBrowser>, double) override;

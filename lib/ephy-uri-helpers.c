@@ -27,6 +27,7 @@
 
 #include <glib.h>
 #include <webkit/webkit.h>
+#include "ephy-engine-origin.h"
 
 /* Use this function to format a URI for display. The URIs used
  * internally by WebKit may contain percent-encoded characters or
@@ -63,13 +64,13 @@ ephy_uri_normalize (const char *uri_string)
 char *
 ephy_uri_to_security_origin (const char *uri_string)
 {
-  WebKitSecurityOrigin *origin;
+  EphyEngineOrigin *origin;
   char *result;
 
   /* Convert to URI containing only protocol, host, and port. */
-  origin = webkit_security_origin_new_for_uri (uri_string);
-  result = webkit_security_origin_to_string (origin);
-  webkit_security_origin_unref (origin);
+  origin = ephy_engine_origin_new_for_uri (uri_string);
+  result = ephy_engine_origin_to_string (origin);
+  ephy_engine_origin_unref (origin);
 
   /* May be NULL. */
   return result;

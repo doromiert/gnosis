@@ -49,6 +49,7 @@
 #include "ephy-snapshot-service.h"
 #include "ephy-tabs-catalog.h"
 #include "ephy-uri-helpers.h"
+#include "ephy-engine-origin.h"
 #include "ephy-view-source-handler.h"
 #include "ephy-web-app-utils.h"
 
@@ -138,7 +139,7 @@ ephy_embed_shell_get_view_for_page_id (EphyEmbedShell *self,
 static GList *
 tabs_catalog_get_tabs_info (EphyTabsCatalog *catalog)
 {
-  WebKitFaviconDatabase *database;
+  EphyEngineFaviconDatabase *database;
   GList *windows;
   g_autoptr (GList) tabs = NULL;
   GList *tabs_info = NULL;
@@ -162,7 +163,8 @@ tabs_catalog_get_tabs_info (EphyTabsCatalog *catalog)
         continue;
 
       url = ephy_web_view_get_display_address (ephy_embed_get_web_view (t->data));
-      favicon = webkit_favicon_database_get_favicon_uri (database, url);
+      g_free (favicon);
+      favicon = ephy_engine_favicon_database_get_favicon_uri (database, url);
 
       tabs_info = g_list_prepend (tabs_info,
                                   ephy_tab_info_new (title, url, favicon));
@@ -762,6 +764,19 @@ initialize_web_process_extensions (WebKitWebContext *web_context,
   webkit_web_context_set_web_process_extensions_initialization_user_data (web_context, g_steal_pointer (&user_data));
 }
 
+/* Temporary boundary for the remaining WebKit context; the permission store
+ * itself uses Chromium origins. Remove with the context migration. */
+static GList *
+notification_origins_for_webkit (GList *origins)
+{
+  GList *result = NULL;
+  for (GList *l = origins; l; l = l->next) {
+    g_autofree char *uri = ephy_engine_origin_to_string (l->data);
+    result = g_list_prepend (result, webkit_security_origin_new_for_uri (uri));
+  }
+  return result;
+}
+
 static void
 initialize_notification_permissions (WebKitWebContext *web_context,
                                      EphyEmbedShell   *shell)
@@ -774,7 +789,11 @@ initialize_notification_permissions (WebKitWebContext *web_context,
                                                                       EPHY_PERMISSION_TYPE_SHOW_NOTIFICATIONS);
   denied_origins = ephy_permissions_manager_get_denied_origins (priv->permissions_manager,
                                                                 EPHY_PERMISSION_TYPE_SHOW_NOTIFICATIONS);
+  permitted_origins = notification_origins_for_webkit (permitted_origins);
+  denied_origins = notification_origins_for_webkit (denied_origins);
   webkit_web_context_initialize_notification_permissions (web_context, permitted_origins, denied_origins);
+  g_list_free_full (permitted_origins, (GDestroyNotify)webkit_security_origin_unref);
+  g_list_free_full (denied_origins, (GDestroyNotify)webkit_security_origin_unref);
 }
 
 static void
@@ -877,7 +896,6 @@ ephy_embed_shell_startup (GApplication *application)
 {
   EphyEmbedShell *shell = EPHY_EMBED_SHELL (application);
   EphyEmbedShellPrivate *priv = ephy_embed_shell_get_instance_private (shell);
-  WebKitWebsiteDataManager *data_manager;
   WebKitCookieManager *cookie_manager;
   WebKitSecurityManager *security_manager;
   g_autofree char *filename = NULL;
@@ -902,8 +920,10 @@ ephy_embed_shell_startup (GApplication *application)
 
   priv->password_manager = ephy_password_manager_new ();
 
-  data_manager = webkit_network_session_get_website_data_manager (priv->network_session);
-  webkit_website_data_manager_set_favicons_enabled (data_manager, TRUE);
+  if (!webkit_network_session_is_ephemeral (priv->network_session)) {
+    g_autofree char *favicon_dir = g_build_filename (ephy_cache_dir (), "favicons", NULL);
+    ephy_engine_favicon_database_set_directory (ephy_engine_favicon_database_get_default (), favicon_dir);
+  }
 
   security_manager = webkit_web_context_get_security_manager (priv->web_context);
 
@@ -1363,14 +1383,10 @@ ephy_embed_shell_get_password_manager (EphyEmbedShell *shell)
   return priv->password_manager;
 }
 
-WebKitFaviconDatabase *
+EphyEngineFaviconDatabase *
 ephy_embed_shell_get_favicon_database (EphyEmbedShell *shell)
 {
-  EphyEmbedShellPrivate *priv = ephy_embed_shell_get_instance_private (shell);
-  WebKitWebsiteDataManager *manager;
-
-  manager = webkit_network_session_get_website_data_manager (priv->network_session);
-  return webkit_website_data_manager_get_favicon_database (manager);
+  return ephy_engine_favicon_database_get_default ();
 }
 
 void

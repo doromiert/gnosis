@@ -522,12 +522,12 @@ ephy_history_dialog_row_favicon_loaded_cb (GObject      *source,
                                            gpointer      user_data)
 {
   g_autoptr (GtkWidget) icon = user_data;
-  WebKitFaviconDatabase *database = WEBKIT_FAVICON_DATABASE (source);
+  EphyEngineFaviconDatabase *database = EPHY_ENGINE_FAVICON_DATABASE (source);
   g_autoptr (GdkTexture) icon_texture = NULL;
   g_autoptr (GIcon) favicon = NULL;
   int scale;
 
-  icon_texture = webkit_favicon_database_get_favicon_finish (database, result, NULL);
+  icon_texture = ephy_engine_favicon_database_get_favicon_finish (database, result, NULL);
   if (!icon_texture)
     return;
 
@@ -542,7 +542,7 @@ create_row (EphyHistoryDialog *self,
             EphyHistoryURL    *url)
 {
   EphyEmbedShell *shell = ephy_embed_shell_get_default ();
-  WebKitFaviconDatabase *database;
+  EphyEngineFaviconDatabase *database;
   GtkWidget *icon;
   GtkWidget *date;
   GtkWidget *row;
@@ -558,7 +558,7 @@ create_row (EphyHistoryDialog *self,
   adw_action_row_add_prefix (ADW_ACTION_ROW (row), icon);
 
   database = ephy_embed_shell_get_favicon_database (shell);
-  webkit_favicon_database_get_favicon (database,
+  ephy_engine_favicon_database_get_favicon (database,
                                        url->url,
                                        self->cancellable,
                                        (GAsyncReadyCallback)ephy_history_dialog_row_favicon_loaded_cb,

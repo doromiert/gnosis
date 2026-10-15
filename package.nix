@@ -55,6 +55,6 @@ let
     buildInputs = old.buildInputs ++ [ pkgs.libpwquality pkgs.libepoxy ] ++ chromiumLibraries;
     mesonFlags = [ "-Dgranite=disabled" "-Dunit_tests=enabled" "-Dman-pages=disabled" "-Dcef_root=${cefSdk}" "-Dublock_dir=${ublock}" ];
     passthru = (old.passthru or {}) // { inherit cefSdk ublock; };
-    meta = old.meta // { description = "Epiphany with Chromium, tab groups and extensions"; mainProgram = "jupiter"; };
+    meta = old.meta // { description = "GNOME Web shell being ported to Chromium Embedded Framework"; mainProgram = "jupiter"; };
   });
 in package

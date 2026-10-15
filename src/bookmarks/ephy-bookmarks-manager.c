@@ -228,7 +228,7 @@ ephy_bookmarks_manager_class_init (EphyBookmarksManagerClass *klass)
 }
 
 static void
-favicon_changed_cb (WebKitFaviconDatabase *database,
+favicon_changed_cb (EphyEngineFaviconDatabase *database,
                     const char            *page_uri,
                     const char            *favicon_uri,
                     EphyBookmarksManager  *self)
@@ -283,7 +283,7 @@ ephy_bookmarks_manager_init (EphyBookmarksManager *self)
                                NULL);
 
   if (shell) {
-    WebKitFaviconDatabase *database = ephy_embed_shell_get_favicon_database (shell);
+    EphyEngineFaviconDatabase *database = ephy_embed_shell_get_favicon_database (shell);
 
     if (database)
       g_signal_connect_object (database, "favicon-changed",

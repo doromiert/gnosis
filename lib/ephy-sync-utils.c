@@ -29,7 +29,7 @@
 
 #include <glib/gi18n.h>
 #include <json-glib/json-glib.h>
-#include <webkit/webkit.h>
+#include "ephy-engine-origin.h"
 
 #include "ephy-file-helpers.h"
 #include "ephy-settings.h"
@@ -214,9 +214,9 @@ ephy_sync_utils_generate_random_bytes (void   *random_ctx,
 char *
 ephy_sync_utils_get_audience (const char *url)
 {
-  g_autoptr (WebKitSecurityOrigin) origin = webkit_security_origin_new_for_uri (url);
+  g_autoptr (EphyEngineOrigin) origin = ephy_engine_origin_new_for_uri (url);
 
-  return webkit_security_origin_to_string (origin);
+  return ephy_engine_origin_to_string (origin);
 }
 
 char *

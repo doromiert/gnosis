@@ -250,14 +250,14 @@ icon_loaded_cb (GObject      *source,
                 GAsyncResult *result,
                 gpointer      user_data)
 {
-  WebKitFaviconDatabase *database = WEBKIT_FAVICON_DATABASE (source);
+  EphyEngineFaviconDatabase *database = EPHY_ENGINE_FAVICON_DATABASE (source);
   EphySuggestion *suggestion;
   g_autoptr (GdkTexture) texture = NULL;
   cairo_surface_t *favicon;
   gdouble x_scale, y_scale;
   int w, h;
 
-  texture = webkit_favicon_database_get_favicon_finish (database, result, NULL);
+  texture = ephy_engine_favicon_database_get_favicon_finish (database, result, NULL);
   if (!texture)
     return;
 
@@ -284,9 +284,9 @@ load_favicon (EphySuggestionModel *model,
               const char          *url)
 {
   EphyEmbedShell *shell = ephy_embed_shell_get_default ();
-  WebKitFaviconDatabase *database = ephy_embed_shell_get_favicon_database (shell);
+  EphyEngineFaviconDatabase *database = ephy_embed_shell_get_favicon_database (shell);
 
-  webkit_favicon_database_get_favicon (database,
+  ephy_engine_favicon_database_get_favicon (database,
                                        url,
                                        model->icon_cancellable,
                                        icon_loaded_cb,

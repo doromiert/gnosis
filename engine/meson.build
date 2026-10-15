@@ -31,7 +31,7 @@ engine_resource = gnome.compile_resources('jupiter-engine-resources',
 engine_includes = include_directories('.', 'select', cef_root)
 bridge_dir = developer_mode ? meson.current_source_dir() / 'data/tab-bridge' : pkgdatadir / 'tab-bridge'
 engine = static_library('jupiter-engine',
-  ['ephy-engine-view.cpp', 'ephy-engine-scheme.cpp', 'ephy-engine-print.cpp', 'select/application.cpp', 'select/browser.cpp', 'select/clipboard.cpp',
+  ['ephy-engine-origin.cpp', 'ephy-engine-favicon.c', 'ephy-engine-view.cpp', 'ephy-engine-scheme.cpp', 'ephy-engine-print.cpp', 'select/application.cpp', 'select/browser.cpp', 'select/clipboard.cpp',
    'select/cursor.cpp', 'select/policy.cpp', 'select/extensions.cpp', 'select/extension-host.cpp', engine_resource],
   include_directories: engine_includes,
   dependencies: [gtk_dep, libadwaita_dep, json_glib_dep, webkitgtk_dep, dependency('epoxy'), cef_dep, wrapper_dep],
@@ -43,3 +43,14 @@ ephyengine_dep = declare_dependency(link_with: engine, include_directories: incl
 install_subdir(cef_root / 'Resources', install_dir: pkglibdir / 'cef', strip_directory: true)
 install_subdir(cef_root / 'Release', install_dir: pkglibdir / 'cef', strip_directory: true)
 install_subdir('data/tab-bridge', install_dir: pkgdatadir)
+install_data(cef_root / 'LICENSE.txt', cef_root / 'CREDITS.html', install_dir: datadir / 'licenses/jupiter-cef')
+if get_option('unit_tests').enabled()
+  favicon_test = executable('engine-favicon-test', ['tests/favicon-test.c', 'ephy-engine-favicon.c'],
+    dependencies: gtk_dep, include_directories: include_directories('.'))
+  test('Engine favicon cache', favicon_test)
+  origin_test = executable('engine-origin-test', ['tests/origin-test.cpp', 'ephy-engine-origin.cpp'],
+    dependencies: [glib_dep, cef_dep, wrapper_dep], include_directories: engine_includes,
+    cpp_args: ['-DCEF_RESOURCE_DIR="' + cef_root / 'Resources' + '"'])
+  test('Engine Chromium origins', find_program('python3'),
+    args: [files('tools/check-native.py'), origin_test], timeout: 60)
+endif

@@ -350,19 +350,18 @@ favicon_loaded_cb (GObject      *source,
                    GAsyncResult *result,
                    gpointer      user_data)
 {
-  WebKitFaviconDatabase *database = WEBKIT_FAVICON_DATABASE (source);
+  EphyEngineFaviconDatabase *database = EPHY_ENGINE_FAVICON_DATABASE (source);
   g_autoptr (EphyBookmark) self = EPHY_BOOKMARK (user_data);
   g_autoptr (GError) error = NULL;
   g_autoptr (GdkTexture) icon_texture = NULL;
 
   g_clear_object (&self->icon_cancellable);
 
-  icon_texture = webkit_favicon_database_get_favicon_finish (database, result, &error);
+  icon_texture = ephy_engine_favicon_database_get_favicon_finish (database, result, &error);
   if (!icon_texture) {
     self->icon_loading_started = FALSE;
     if (!g_error_matches (error, G_IO_ERROR, G_IO_ERROR_CANCELLED) &&
-        !g_error_matches (error, WEBKIT_FAVICON_DATABASE_ERROR, WEBKIT_FAVICON_DATABASE_ERROR_FAVICON_NOT_FOUND) &&
-        !g_error_matches (error, WEBKIT_FAVICON_DATABASE_ERROR, WEBKIT_FAVICON_DATABASE_ERROR_FAVICON_UNKNOWN))
+        !g_error_matches (error, G_IO_ERROR, G_IO_ERROR_NOT_FOUND))
       g_warning ("Failed to load favicon for %s: %s", self->url, error->message);
     return;
   }
@@ -385,13 +384,13 @@ ephy_bookmark_start_loading_icon (EphyBookmark *self)
   if (self->url && !self->icon && !self->icon_loading_started &&
       ephy_embed_shell_get_mode (shell) != EPHY_EMBED_SHELL_MODE_SEARCH_PROVIDER) {
     EphyEmbedShell *shell = ephy_embed_shell_get_default ();
-    WebKitFaviconDatabase *database = ephy_embed_shell_get_favicon_database (shell);
+    EphyEngineFaviconDatabase *database = ephy_embed_shell_get_favicon_database (shell);
 
     self->icon_loading_started = TRUE;
     g_assert (!self->icon_cancellable);
     self->icon_cancellable = g_cancellable_new ();
 
-    webkit_favicon_database_get_favicon (database,
+    ephy_engine_favicon_database_get_favicon (database,
                                          self->url,
                                          self->icon_cancellable,
                                          favicon_loaded_cb,

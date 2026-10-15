@@ -355,6 +355,7 @@ void Browser::OnBeforeClose(CefRefPtr<CefBrowser> source) {
 }
 void Browser::detach_callbacks() {
   on_changed = nullptr;
+  on_favicon = nullptr;
   on_closed = nullptr;
   on_close_cancelled = nullptr;
   on_load_end = nullptr;
@@ -865,6 +866,44 @@ void Browser::OnTitleChange(CefRefPtr<CefBrowser> source, const CefString& title
   name = Policy::title(url, title);
   changed();
 }
+namespace {
+class FaviconDownload final : public CefDownloadImageCallback {
+public:
+  FaviconDownload(CefRefPtr<Browser> owner, const std::vector<CefString>& urls)
+    : owner_(owner), urls_(urls), page_(owner->url) {}
+  void next() {
+    if (owner_->closing || !owner_->cef_browser() || index_ >= urls_.size()) return;
+    owner_->cef_browser()->GetHost()->DownloadImage(urls_[index_++], true, 64, false, this);
+  }
+  void OnDownloadImageFinished(const CefString& uri, int status, CefRefPtr<CefImage> image) override {
+    if (!owner_->on_favicon || owner_->closing) return;
+    int width, height;
+    auto png = image && !image->IsEmpty() && (status == 0 || (status >= 200 && status < 300))
+      ? image->GetAsPNG(1.0f, true, width, height) : nullptr;
+    if (!png || png->GetSize() > 2 * 1024 * 1024) { next(); return; }
+    std::vector<unsigned char> buffer(png->GetSize());
+    png->GetData(buffer.data(), buffer.size(), 0);
+    GBytes* bytes = g_bytes_new(buffer.data(), buffer.size());
+    GdkTexture* texture = gdk_texture_new_from_bytes(bytes, nullptr);
+    g_bytes_unref(bytes);
+    if (!texture) { next(); return; }
+    auto callback = owner_->on_favicon;
+    if (callback) callback(page_, uri.ToString(), texture);
+    g_object_unref(texture);
+  }
+private:
+  CefRefPtr<Browser> owner_;
+  std::vector<CefString> urls_;
+  std::string page_;
+  size_t index_ = 0;
+  IMPLEMENT_REFCOUNTING(FaviconDownload);
+};
+}
+void Browser::OnFaviconURLChange(CefRefPtr<CefBrowser> source, const std::vector<CefString>& urls) {
+  if (!owns(source) || closing || urls.empty() || !on_favicon) return;
+  CefRefPtr<FaviconDownload> download = new FaviconDownload(this, urls);
+  download->next();
+}
 void Browser::OnAddressChange(CefRefPtr<CefBrowser> source, CefRefPtr<CefFrame> frame,
                               const CefString& address) {
   if (!owns(source) || !frame->IsMain() || (address == "about:blank" && url != "about:blank"))
@@ -872,7 +911,9 @@ void Browser::OnAddressChange(CefRefPtr<CefBrowser> source, CefRefPtr<CefFrame> 
   if (owner() && url != address.ToString())
     std::erase_if(owner()->app.extension_host->active_grants,
                   [&](const auto& grant) { return grant.second == native_tab_id; });
+  bool navigated = url != address.ToString();
   url = address;
+  if (navigated && on_favicon) on_favicon(url, "", nullptr);
   changed();
 }
 void Browser::OnLoadingProgressChange(CefRefPtr<CefBrowser> source, double value) {

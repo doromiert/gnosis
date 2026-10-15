@@ -16,13 +16,16 @@ else()
   add_subdirectory("${CEF_LIBCEF_DLL_WRAPPER_PATH}" libcef_dll_wrapper)
 endif()
 set(JUPITER_BRIDGE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/data/tab-bridge" CACHE PATH "Native extension tab bridge")
-set(UBLOCK_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../jupiter-prototype/.deps/uBlock0.chromium" CACHE PATH "Official full uBlock Origin")
+set(UBLOCK_DIR "$ENV{UBLOCK_DIR}" CACHE PATH "Official full uBlock Origin")
+if(NOT EXISTS "${UBLOCK_DIR}/manifest.json")
+  message(FATAL_ERROR "Set UBLOCK_DIR to official full uBlock Origin; nix develop supplies it.")
+endif()
 find_program(GLIB_COMPILE_RESOURCES glib-compile-resources REQUIRED)
 add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/resources.c"
   COMMAND "${GLIB_COMPILE_RESOURCES}" "${CMAKE_CURRENT_SOURCE_DIR}/data/engine.gresource.xml"
     "--sourcedir=${CMAKE_CURRENT_SOURCE_DIR}/data" --generate-source --c-name=jupiter_engine "--target=${CMAKE_CURRENT_BINARY_DIR}/resources.c"
   DEPENDS data/engine.gresource.xml data/clipboard.js data/extension-tabs.js)
-add_library(jupiter-engine STATIC ephy-engine-view.cpp ephy-engine-scheme.cpp ephy-engine-print.cpp select/browser.cpp select/clipboard.cpp select/cursor.cpp
+add_library(jupiter-engine STATIC ephy-engine-origin.cpp ephy-engine-favicon.c ephy-engine-view.cpp ephy-engine-scheme.cpp ephy-engine-print.cpp select/browser.cpp select/clipboard.cpp select/cursor.cpp
   select/policy.cpp select/extensions.cpp select/extension-host.cpp select/application.cpp
   "${CMAKE_CURRENT_BINARY_DIR}/resources.c")
 target_include_directories(jupiter-engine SYSTEM PUBLIC "${CEF_ROOT}")
