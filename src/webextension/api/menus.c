@@ -19,6 +19,7 @@
  */
 
 #include "config.h"
+#include "ephy-engine-view.h"
 
 #include "menus.h"
 
@@ -414,7 +415,7 @@ format_label (const char *label,
 
 static char *
 create_tabdata (EphyWebExtension *web_extension,
-                WebKitWebView    *web_view)
+                EphyEngineView    *web_view)
 {
   g_autoptr (JsonNode) tab_node = NULL;
 
@@ -455,7 +456,7 @@ builder_add_modifier_array (JsonBuilder     *builder,
 
 static char *
 create_onclickdata (EphyWebExtension    *web_extension,
-                    WebKitWebView       *web_view,
+                    EphyEngineView       *web_view,
                     WebKitContextMenu   *context_menu,
                     GdkModifierType      modifiers,
                     WebKitHitTestResult *hit_test_result,
@@ -502,7 +503,7 @@ create_onclickdata (EphyWebExtension    *web_extension,
   json_builder_set_member_name (builder, "editable");
   json_builder_add_boolean_value (builder, is_editable);
   json_builder_set_member_name (builder, "pageUrl");
-  json_builder_add_string_value (builder, webkit_web_view_get_uri (web_view));
+  json_builder_add_string_value (builder, ephy_engine_web_view_get_uri (web_view));
   json_builder_end_object (builder);
 
   root = json_builder_get_root (builder);
@@ -595,7 +596,7 @@ static WebKitContextMenuItem *
 create_context_menu_item (GHashTable          *menus,
                           const char          *name,
                           EphyWebExtension    *self,
-                          WebKitWebView       *web_view,
+                          EphyEngineView       *web_view,
                           GdkModifierType      modifiers,
                           WebKitContextMenu   *context_menu,
                           WebKitHitTestResult *hit_test_result,
@@ -675,7 +676,7 @@ create_context_menu_item (GHashTable          *menus,
 
 WebKitContextMenuItem *
 ephy_web_extension_api_menus_create_context_menu (EphyWebExtension    *self,
-                                                  WebKitWebView       *web_view,
+                                                  EphyEngineView       *web_view,
                                                   WebKitContextMenu   *context_menu,
                                                   WebKitHitTestResult *hit_test_result,
                                                   GdkModifierType      modifiers,
@@ -699,7 +700,7 @@ ephy_web_extension_api_menus_create_context_menu (EphyWebExtension    *self,
   action = g_action_map_lookup_action (G_ACTION_MAP (ephy_shell_get_default ()), "webextension-context-menu");
   g_assert (action);
 
-  document_uri = g_uri_parse (webkit_web_view_get_uri (web_view), G_URI_FLAGS_PARSE_RELAXED | G_URI_FLAGS_ENCODED_PATH | G_URI_FLAGS_ENCODED_QUERY | G_URI_FLAGS_SCHEME_NORMALIZE, NULL);
+  document_uri = g_uri_parse (ephy_engine_web_view_get_uri (web_view), G_URI_FLAGS_PARSE_RELAXED | G_URI_FLAGS_ENCODED_PATH | G_URI_FLAGS_ENCODED_QUERY | G_URI_FLAGS_SCHEME_NORMALIZE, NULL);
   if (webkit_hit_test_result_get_link_uri (hit_test_result))
     target_uri = g_uri_parse (webkit_hit_test_result_get_link_uri (hit_test_result), G_URI_FLAGS_PARSE_RELAXED | G_URI_FLAGS_ENCODED_PATH | G_URI_FLAGS_ENCODED_QUERY | G_URI_FLAGS_SCHEME_NORMALIZE, NULL);
 

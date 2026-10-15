@@ -33,3 +33,7 @@ option('man-pages',
   value: 'auto',
   description: 'Enable man page generation (requires rst2man)'
 )
+
+option('cef_root', type: 'string', value: '', description: 'Pinned CEF SDK')
+option('cef_wrapper', type: 'string', value: '', description: 'Optional prebuilt libcef_dll_wrapper archive for development')
+option('ublock_dir', type: 'string', value: '', description: 'Official unpacked full uBlock Origin')

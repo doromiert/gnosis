@@ -29,7 +29,7 @@
 #include <glib/gstdio.h>
 #include <gtk/gtk.h>
 #include <jsc/jsc.h>
-#include <webkit/webkit.h>
+#include "ephy-engine-view.h"
 
 #include "ephy-about-handler.h"
 #include "ephy-autofill-field.h"
@@ -76,7 +76,7 @@
 static guint64 web_view_uid = 1;
 
 struct _EphyWebView {
-  WebKitWebView parent_instance;
+  EphyEngineView parent_instance;
 
   EphySecurityLevel security_level;
   EphyWebViewDocumentType document_type;
@@ -169,7 +169,7 @@ enum {
 
 static guint signals[LAST_SIGNAL];
 
-G_DEFINE_FINAL_TYPE (EphyWebView, ephy_web_view, WEBKIT_TYPE_WEB_VIEW)
+G_DEFINE_FINAL_TYPE (EphyWebView, ephy_web_view, EPHY_TYPE_ENGINE_VIEW)
 
 static void
 open_dialog_cb (GtkFileDialog            *dialog,
@@ -227,7 +227,7 @@ open_dialog_cb (GtkFileDialog            *dialog,
 }
 
 static gboolean
-ephy_web_view_run_file_chooser (WebKitWebView            *web_view,
+ephy_web_view_run_file_chooser (EphyEngineView            *web_view,
                                 WebKitFileChooserRequest *request)
 {
   EphyWebView *ephy_web_view = EPHY_WEB_VIEW (web_view);
@@ -390,13 +390,13 @@ button_pressed_cb (GtkGesture  *gesture,
 
   /* Handle typical back/forward mouse buttons. */
   if (button == 8) {
-    webkit_web_view_go_back (WEBKIT_WEB_VIEW (web_view));
+    ephy_engine_web_view_go_back (EPHY_ENGINE_VIEW (web_view));
     gtk_gesture_set_state (gesture, GTK_EVENT_SEQUENCE_CLAIMED);
     return;
   }
 
   if (button == 9) {
-    webkit_web_view_go_forward (WEBKIT_WEB_VIEW (web_view));
+    ephy_engine_web_view_go_forward (EPHY_ENGINE_VIEW (web_view));
     gtk_gesture_set_state (gesture, GTK_EVENT_SEQUENCE_CLAIMED);
     return;
   }
@@ -405,14 +405,14 @@ button_pressed_cb (GtkGesture  *gesture,
 }
 
 static void
-update_navigation_flags (WebKitWebView *view)
+update_navigation_flags (EphyEngineView *view)
 {
   guint flags = 0;
 
-  if (webkit_web_view_can_go_back (view))
+  if (ephy_engine_web_view_can_go_back (view))
     flags |= EPHY_WEB_VIEW_NAV_BACK;
 
-  if (webkit_web_view_can_go_forward (view))
+  if (ephy_engine_web_view_can_go_forward (view))
     flags |= EPHY_WEB_VIEW_NAV_FORWARD;
 
   if (EPHY_WEB_VIEW (view)->nav_flags != (EphyWebViewNavigationFlags)flags) {
@@ -466,7 +466,7 @@ take_snapshot (EphyWebView *view)
 {
   EphySnapshotService *service = ephy_snapshot_service_get_default ();
 
-  ephy_snapshot_service_get_snapshot_path_async (service, WEBKIT_WEB_VIEW (view),
+  ephy_snapshot_service_get_snapshot_path_async (service, EPHY_ENGINE_VIEW (view),
                                                  view->cancellable,
                                                  (GAsyncReadyCallback)got_snapshot_path_cb,
                                                  g_strdup (view->pending_snapshot_uri));
@@ -490,7 +490,7 @@ history_service_query_urls_cb (EphyHistoryService *service,
     goto out;
   }
 
-  url = webkit_web_view_get_uri (WEBKIT_WEB_VIEW (view));
+  url = ephy_engine_web_view_get_uri (EPHY_ENGINE_VIEW (view));
 
   /* Have we already started a new load? */
   if (g_strcmp0 (url, view->pending_snapshot_uri) != 0)
@@ -545,7 +545,7 @@ _ephy_web_view_update_icon (EphyWebView *view)
   g_clear_object (&view->icon);
 
   if (view->address) {
-    GdkTexture *icon_texture = webkit_web_view_get_favicon (WEBKIT_WEB_VIEW (view));
+    GdkTexture *icon_texture = ephy_engine_web_view_get_favicon (EPHY_ENGINE_VIEW (view));
 
     if (icon_texture) {
       gint scale = gtk_widget_get_scale_factor (GTK_WIDGET (view));
@@ -579,7 +579,7 @@ ephy_web_view_autofill (EphyWebView            *view,
 {
   g_assert (EPHY_IS_WEB_VIEW (view));
 
-  webkit_web_view_send_message_to_page (WEBKIT_WEB_VIEW (view),
+  ephy_engine_web_view_send_message_to_page (EPHY_ENGINE_VIEW (view),
                                         webkit_user_message_new ("EphyAutofill.Fill", g_variant_new ("(tsi)", frame_id, selector, (gint32)fill_choice)),
                                         view->cancellable, NULL, NULL);
 }
@@ -594,7 +594,7 @@ password_form_focused_cb (EphyEmbedShell *shell,
 
   if (web_view->password_form_banner)
     return;
-  if (webkit_web_view_get_page_id (WEBKIT_WEB_VIEW (web_view)) != page_id)
+  if (ephy_engine_web_view_get_page_id (EPHY_ENGINE_VIEW (web_view)) != page_id)
     return;
   if (!insecure_form_action && ephy_security_level_is_secure (web_view->security_level))
     return;
@@ -632,7 +632,7 @@ readability_js_finish_cb (GObject      *object,
   g_autoptr (JSCValue) jsc_value = NULL;
   g_autoptr (GError) error = NULL;
 
-  jsc_value = webkit_web_view_evaluate_javascript_finish (WEBKIT_WEB_VIEW (object), result, &error);
+  jsc_value = ephy_engine_web_view_evaluate_javascript_finish (EPHY_ENGINE_VIEW (object), result, &error);
   if (!jsc_value) {
     if (!g_error_matches (error, G_IO_ERROR, G_IO_ERROR_CANCELLED))
       g_warning ("Error running javascript: %s", error->message);
@@ -663,7 +663,7 @@ run_readability_js_if_needed (gpointer data)
       const char *script;
 
       script = (const char *)g_bytes_get_data (bytes, &length);
-      webkit_web_view_evaluate_javascript (WEBKIT_WEB_VIEW (web_view),
+      ephy_engine_web_view_evaluate_javascript (EPHY_ENGINE_VIEW (web_view),
                                            script, length, NULL,
                                            "resource:///org/gnome/epiphany/readability/Readability-readerable.js",
                                            web_view->cancellable,
@@ -677,7 +677,7 @@ run_readability_js_if_needed (gpointer data)
 }
 
 static void
-title_changed_cb (WebKitWebView *web_view,
+title_changed_cb (EphyEngineView *web_view,
                   GParamSpec    *spec,
                   gpointer       data)
 {
@@ -687,8 +687,8 @@ title_changed_cb (WebKitWebView *web_view,
   EphyWebView *webview = EPHY_WEB_VIEW (web_view);
   EphyHistoryService *history = webview->history_service;
 
-  uri = webkit_web_view_get_uri (web_view);
-  title = webkit_web_view_get_title (web_view);
+  uri = ephy_engine_web_view_get_uri (web_view);
+  title = ephy_engine_web_view_get_title (web_view);
 
   if (!title && uri)
     title = title_from_address = ephy_embed_utils_get_title_from_address (uri);
@@ -742,13 +742,13 @@ ephy_web_view_set_address (EphyWebView *view,
 }
 
 static void
-uri_changed_cb (WebKitWebView *web_view,
+uri_changed_cb (EphyEngineView *web_view,
                 GParamSpec    *spec,
                 gpointer       data)
 {
   EphyWebView *view = EPHY_WEB_VIEW (web_view);
 
-  ephy_web_view_set_address (view, webkit_web_view_get_uri (web_view));
+  ephy_web_view_set_address (view, ephy_engine_web_view_get_uri (web_view));
   view->autofill_popup_enabled = TRUE;
 }
 
@@ -809,7 +809,7 @@ on_unresponsive_dialog_response (AdwAlertDialog *dialog,
                                  EphyWebView    *web_view)
 {
   if (strcmp (response, "stop") == 0)
-    webkit_web_view_terminate_web_process (WEBKIT_WEB_VIEW (web_view));
+    ephy_engine_web_view_terminate_web_process (EPHY_ENGINE_VIEW (web_view));
   else
     web_view->unresponsive_process_timeout_id = g_timeout_add_seconds_full (G_PRIORITY_HIGH,
                                                                             5,
@@ -853,7 +853,7 @@ is_web_process_responsive_changed_cb (EphyWebView *web_view,
 {
   g_clear_handle_id (&web_view->unresponsive_process_timeout_id, g_source_remove);
 
-  if (!webkit_web_view_get_is_web_process_responsive (WEBKIT_WEB_VIEW (web_view))) {
+  if (!ephy_engine_web_view_get_is_web_process_responsive (EPHY_ENGINE_VIEW (web_view))) {
     web_view->unresponsive_process_timeout_id = g_timeout_add_seconds_full (G_PRIORITY_HIGH,
                                                                             10,
                                                                             (GSourceFunc)unresponsive_process_timeout_cb,
@@ -886,7 +886,7 @@ ephy_web_view_set_document_type (EphyWebView *web_view,
 }
 
 static gboolean
-decide_policy_cb (WebKitWebView            *web_view,
+decide_policy_cb (EphyEngineView            *web_view,
                   WebKitPolicyDecision     *decision,
                   WebKitPolicyDecisionType  decision_type,
                   gpointer                  user_data)
@@ -936,7 +936,7 @@ decide_policy_cb (WebKitWebView            *web_view,
 }
 
 static gboolean
-permission_request_cb (WebKitWebView           *web_view,
+permission_request_cb (EphyEngineView           *web_view,
                        WebKitPermissionRequest *request)
 {
   const char *address;
@@ -1054,7 +1054,7 @@ get_host_for_url_cb (EphyHistoryService *service,
   if (!host)
     return;
 
-  current_zoom = webkit_web_view_get_zoom_level (WEBKIT_WEB_VIEW (view));
+  current_zoom = ephy_engine_web_view_get_zoom_level (EPHY_ENGINE_VIEW (view));
 
   /* Use default zoom level in case web page is
    *  - not visited before
@@ -1068,7 +1068,7 @@ get_host_for_url_cb (EphyHistoryService *service,
 
   if (set_zoom != current_zoom) {
     view->is_setting_zoom = TRUE;
-    webkit_web_view_set_zoom_level (WEBKIT_WEB_VIEW (view), set_zoom);
+    ephy_engine_web_view_set_zoom_level (EPHY_ENGINE_VIEW (view), set_zoom);
     view->is_setting_zoom = FALSE;
   }
 }
@@ -1193,7 +1193,7 @@ update_security_status_for_committed_load (EphyWebView *view,
   root = gtk_widget_get_root (GTK_WIDGET (view));
   if (EPHY_IS_EMBED_CONTAINER (root))
     embed = EPHY_GET_EMBED_FROM_EPHY_WEB_VIEW (view);
-  web_context = webkit_web_view_get_context (WEBKIT_WEB_VIEW (view));
+  web_context = ephy_engine_web_view_get_context (EPHY_ENGINE_VIEW (view));
   security_manager = webkit_web_context_get_security_manager (web_context);
   guri = g_uri_parse (uri, G_URI_FLAGS_PARSE_RELAXED, NULL);
 
@@ -1213,7 +1213,7 @@ update_security_status_for_committed_load (EphyWebView *view,
       webkit_security_manager_uri_scheme_is_local (security_manager, g_uri_get_scheme (guri)) ||
       webkit_security_manager_uri_scheme_is_empty_document (security_manager, g_uri_get_scheme (guri))) {
     security_level = EPHY_SECURITY_LEVEL_LOCAL_PAGE;
-  } else if (webkit_web_view_get_tls_info (WEBKIT_WEB_VIEW (view), &view->certificate, &view->tls_errors)) {
+  } else if (ephy_engine_web_view_get_tls_info (EPHY_ENGINE_VIEW (view), &view->certificate, &view->tls_errors)) {
     g_object_ref (view->certificate);
     security_level = view->tls_errors == 0 ?
                      EPHY_SECURITY_LEVEL_STRONG_SECURITY : EPHY_SECURITY_LEVEL_UNACCEPTABLE_CERTIFICATE;
@@ -1234,7 +1234,7 @@ tls_error_page_message_received_cb (WebKitUserContentManager *manager,
   guint64 page_id;
 
   page_id = jsc_value_to_double (message);
-  if (webkit_web_view_get_page_id (WEBKIT_WEB_VIEW (view)) != page_id)
+  if (ephy_engine_web_view_get_page_id (EPHY_ENGINE_VIEW (view)) != page_id)
     return;
 
   g_assert (G_IS_TLS_CERTIFICATE (view->certificate));
@@ -1253,20 +1253,20 @@ reload_page_message_received_cb (WebKitUserContentManager *ucm,
                                  EphyWebView              *view)
 {
   guint64 page_id = jsc_value_to_double (message);
-  if (webkit_web_view_get_page_id (WEBKIT_WEB_VIEW (view)) != page_id)
+  if (ephy_engine_web_view_get_page_id (EPHY_ENGINE_VIEW (view)) != page_id)
     return;
 
-  webkit_web_view_reload (WEBKIT_WEB_VIEW (view));
+  ephy_engine_web_view_reload (EPHY_ENGINE_VIEW (view));
 }
 
 
 typedef struct {
-  WebKitWebView *view;
+  EphyEngineView *view;
   char *app_id;
 } EphyWebApplicationDeleteData;
 
 static EphyWebApplicationDeleteData *
-ephy_web_application_delete_data_new (WebKitWebView *view,
+ephy_web_application_delete_data_new (EphyEngineView *view,
                                       char          *app_id)
 {
   EphyWebApplicationDeleteData *data = g_new (EphyWebApplicationDeleteData, 1);
@@ -1286,7 +1286,7 @@ static void
 web_application_delete_response_cb (EphyWebApplicationDeleteData *data)
 {
   if (ephy_web_application_delete (data->app_id, NULL)) {
-    webkit_web_view_reload (data->view);
+    ephy_engine_web_view_reload (data->view);
     ephy_web_application_delete_data_free (data);
   }
 }
@@ -1323,7 +1323,7 @@ about_apps_message_received_cb (WebKitUserContentManager *ucm,
     return;
 
   page_id = jsc_value_to_double (page_id_object);
-  if (webkit_web_view_get_page_id (WEBKIT_WEB_VIEW (view)) != page_id)
+  if (ephy_engine_web_view_get_page_id (EPHY_ENGINE_VIEW (view)) != page_id)
     return;
 
   app_id_object = jsc_value_object_get_property (message, "app");
@@ -1335,7 +1335,7 @@ about_apps_message_received_cb (WebKitUserContentManager *ucm,
   app_name = jsc_value_to_string (app_name_object);
 
   if (g_strcmp0 (action, "remove") == 0) {
-    data = ephy_web_application_delete_data_new (WEBKIT_WEB_VIEW (view), g_steal_pointer (&app_id));
+    data = ephy_web_application_delete_data_new (EPHY_ENGINE_VIEW (view), g_steal_pointer (&app_id));
 
     dialog = adw_alert_dialog_new (_("Delete Web App?"), NULL);
 
@@ -1367,7 +1367,7 @@ ephy_web_view_register_message_handler (EphyWebView                    *view,
                                         EphyWebViewMessageHandler       handler,
                                         EphyWebViewMessageHandlerScope  scope)
 {
-  WebKitUserContentManager *ucm = webkit_web_view_get_user_content_manager (WEBKIT_WEB_VIEW (view));
+  WebKitUserContentManager *ucm = ephy_engine_web_view_get_user_content_manager (EPHY_ENGINE_VIEW (view));
 
   /* Use this function to temporarily register message handlers in the main
    * script world so they are accessible to Epiphany's internal web content. Use
@@ -1421,7 +1421,7 @@ ephy_web_view_register_message_handler (EphyWebView                    *view,
 static void
 unregister_message_handlers (EphyWebView *view)
 {
-  WebKitUserContentManager *ucm = webkit_web_view_get_user_content_manager (WEBKIT_WEB_VIEW (view));
+  WebKitUserContentManager *ucm = ephy_engine_web_view_get_user_content_manager (EPHY_ENGINE_VIEW (view));
 
   if (view->message_handlers_to_unregister & EPHY_WEB_VIEW_TLS_ERROR_PAGE_MESSAGE_HANDLER) {
     webkit_user_content_manager_unregister_script_message_handler (ucm, "tlsErrorPage", NULL);
@@ -1470,7 +1470,7 @@ get_js_object_string_property (JSCValue   *js_value,
 }
 
 static void
-get_opensearch_links_cb (WebKitWebView *web_view,
+get_opensearch_links_cb (EphyEngineView *web_view,
                          GAsyncResult  *result,
                          gpointer       user_data)
 {
@@ -1481,10 +1481,10 @@ get_opensearch_links_cb (WebKitWebView *web_view,
   g_autoptr (GPtrArray) links_array = NULL;
   guint len;
 
-  js_array = webkit_web_view_evaluate_javascript_finish (web_view, result, &error);
+  js_array = ephy_engine_web_view_evaluate_javascript_finish (web_view, result, &error);
   if (error) {
     if (!g_error_matches (error, G_IO_ERROR, G_IO_ERROR_CANCELLED))
-      g_warning ("Couldn't run javascript to get list of OpenSearch Descriptions links: %s %s", webkit_web_view_get_uri (web_view), error->message);
+      g_warning ("Couldn't run javascript to get list of OpenSearch Descriptions links: %s %s", ephy_engine_web_view_get_uri (web_view), error->message);
     return;
   }
 
@@ -1524,7 +1524,7 @@ get_opensearch_links_cb (WebKitWebView *web_view,
                  name);
       continue;
     }
-    resolved_url = g_uri_resolve_relative (webkit_web_view_get_uri (web_view),
+    resolved_url = g_uri_resolve_relative (ephy_engine_web_view_get_uri (web_view),
                                            href,
                                            G_URI_FLAGS_NONE,
                                            &error);
@@ -1564,7 +1564,7 @@ get_opensearch_links_cb (WebKitWebView *web_view,
 }
 
 static void
-on_document_loaded_cb (WebKitWebView *web_view)
+on_document_loaded_cb (EphyEngineView *web_view)
 {
   EphyWebView *view = EPHY_WEB_VIEW (web_view);
 
@@ -1574,7 +1574,7 @@ on_document_loaded_cb (WebKitWebView *web_view)
       !ephy_web_view_is_newtab (view) &&
       !ephy_web_view_is_overview (view)) {
     /* Update the list of autodiscovered OpenSearch engines. */
-    webkit_web_view_evaluate_javascript (web_view,
+    ephy_engine_web_view_evaluate_javascript (web_view,
                                          "Ephy.getOpenSearchLinks();", -1,
                                          ephy_embed_shell_get_guid (ephy_embed_shell_get_default ()),
                                          NULL, NULL,
@@ -1584,7 +1584,7 @@ on_document_loaded_cb (WebKitWebView *web_view)
 }
 
 static void
-load_changed_cb (WebKitWebView   *web_view,
+load_changed_cb (EphyEngineView   *web_view,
                  WebKitLoadEvent  load_event,
                  gpointer         user_data)
 {
@@ -1608,7 +1608,7 @@ load_changed_cb (WebKitWebView   *web_view,
 
       if (!view->address || view->address[0] == '\0') {
         /* We've probably never loaded any page before. */
-        ephy_web_view_set_address (view, webkit_web_view_get_uri (web_view));
+        ephy_web_view_set_address (view, ephy_engine_web_view_get_uri (web_view));
       }
 
       ephy_web_view_set_loading_message (view, NULL);
@@ -1626,7 +1626,7 @@ load_changed_cb (WebKitWebView   *web_view,
       view->ever_committed = TRUE;
 
       /* Title and location. */
-      uri = webkit_web_view_get_uri (web_view);
+      uri = ephy_engine_web_view_get_uri (web_view);
       ephy_web_view_set_committed_location (view, uri);
       update_security_status_for_committed_load (view, uri);
 
@@ -1675,7 +1675,7 @@ load_changed_cb (WebKitWebView   *web_view,
         view->entering_reader_mode = FALSE;
 
         view->is_setting_zoom = TRUE;
-        webkit_web_view_set_zoom_level (WEBKIT_WEB_VIEW (view), g_settings_get_double (EPHY_SETTINGS_WEB, EPHY_PREFS_WEB_READER_MODE_ZOOM_LEVEL));
+        ephy_engine_web_view_set_zoom_level (EPHY_ENGINE_VIEW (view), g_settings_get_double (EPHY_SETTINGS_WEB, EPHY_PREFS_WEB_READER_MODE_ZOOM_LEVEL));
         view->is_setting_zoom = FALSE;
 
         g_object_notify_by_pspec (G_OBJECT (web_view), obj_properties[PROP_ENTERING_READER_MODE]);
@@ -1692,7 +1692,7 @@ load_changed_cb (WebKitWebView   *web_view,
           view->snapshot_timeout_id = g_timeout_add_seconds_full (G_PRIORITY_LOW, 1,
                                                                   (GSourceFunc)maybe_take_snapshot,
                                                                   web_view, NULL);
-          g_set_str (&view->pending_snapshot_uri, webkit_web_view_get_uri (WEBKIT_WEB_VIEW (view)));
+          g_set_str (&view->pending_snapshot_uri, ephy_engine_web_view_get_uri (EPHY_ENGINE_VIEW (view)));
         }
       }
 
@@ -1744,7 +1744,7 @@ ephy_web_view_set_placeholder (EphyWebView *view,
   effective_uri = ephy_embed_utils_normalize_address (uri);
   html = g_markup_printf_escaped ("<head><title>%s</title></head>", title);
 
-  webkit_web_view_load_alternate_html (WEBKIT_WEB_VIEW (view), html, effective_uri, NULL);
+  ephy_engine_web_view_load_alternate_html (EPHY_ENGINE_VIEW (view), html, effective_uri, NULL);
 
   ephy_web_view_set_address (view, effective_uri);
 
@@ -1899,7 +1899,7 @@ format_network_error_page (EphyWebView  *view,
   /* The button on the network error page. DO NOT ADD MNEMONICS HERE. */
   *button_label = g_strdup (_("Reload"));
   *button_action = g_strdup_printf ("window.webkit.messageHandlers.reloadPage.postMessage(%" G_GUINT64_FORMAT ");",
-                                    webkit_web_view_get_page_id (WEBKIT_WEB_VIEW (view)));
+                                    ephy_engine_web_view_get_page_id (EPHY_ENGINE_VIEW (view)));
   /* Mnemonic for the Reload button on browser error pages. */
   *button_accesskey = C_("reload-access-key", "R");
 
@@ -1952,7 +1952,7 @@ format_crash_error_page (EphyWebView  *view,
   /* The button on the page crash error page. DO NOT ADD MNEMONICS HERE. */
   *button_label = g_strdup (_("Reload"));
   *button_action = g_strdup_printf ("window.webkit.messageHandlers.reloadPage.postMessage(%" G_GUINT64_FORMAT ");",
-                                    webkit_web_view_get_page_id (WEBKIT_WEB_VIEW (view)));
+                                    ephy_engine_web_view_get_page_id (EPHY_ENGINE_VIEW (view)));
   /* Mnemonic for the Reload button on browser error pages. */
   *button_accesskey = C_("reload-access-key", "R");
 
@@ -1988,7 +1988,7 @@ format_process_crash_error_page (EphyWebView  *view,
   /* The button on the process crash error page. DO NOT ADD MNEMONICS HERE. */
   *button_label = g_strdup (_("Reload"));
   *button_action = g_strdup_printf ("window.webkit.messageHandlers.reloadPage.postMessage(%" G_GUINT64_FORMAT ");",
-                                    webkit_web_view_get_page_id (WEBKIT_WEB_VIEW (view)));
+                                    ephy_engine_web_view_get_page_id (EPHY_ENGINE_VIEW (view)));
   /* Mnemonic for the Reload button on browser error pages. */
   *button_accesskey = C_("reload-access-key", "R");
 
@@ -2024,7 +2024,7 @@ format_unresponsive_process_error_page (EphyWebView  *view,
   /* The button on the unresponsive process error page. DO NOT ADD MNEMONICS HERE. */
   *button_label = g_strdup (_("Reload"));
   *button_action = g_strdup_printf ("window.webkit.messageHandlers.reloadPage.postMessage(%" G_GUINT64_FORMAT ");",
-                                    webkit_web_view_get_page_id (WEBKIT_WEB_VIEW (view)));
+                                    ephy_engine_web_view_get_page_id (EPHY_ENGINE_VIEW (view)));
   /* Mnemonic for the Reload button on browser error pages. */
   *button_accesskey = C_("reload-access-key", "R");
 
@@ -2079,7 +2079,7 @@ format_tls_error_page (EphyWebView  *view,
   /* The hidden button on the invalid TLS certificate error page. Do not add mnemonics here. */
   *hidden_button_label = g_strdup (_("Accept Risk and Proceed"));
   *hidden_button_action = g_strdup_printf ("window.webkit.messageHandlers.tlsErrorPage.postMessage(%"G_GUINT64_FORMAT ");",
-                                           webkit_web_view_get_page_id (WEBKIT_WEB_VIEW (view)));
+                                           ephy_engine_web_view_get_page_id (EPHY_ENGINE_VIEW (view)));
   /* Mnemonic for the Accept Risk and Proceed button on the invalid TLS certificate error page. */
   *hidden_button_accesskey = C_("proceed-anyway-access-key", "P");
 
@@ -2302,11 +2302,11 @@ ephy_web_view_load_error_page (EphyWebView          *view,
 
   /* Make our history backend ignore the next page load, since it will be an error page. */
   ephy_web_view_freeze_history (view);
-  webkit_web_view_load_alternate_html (WEBKIT_WEB_VIEW (view), html->str, uri, 0);
+  ephy_engine_web_view_load_alternate_html (EPHY_ENGINE_VIEW (view), html->str, uri, 0);
 }
 
 static gboolean
-load_failed_cb (WebKitWebView   *web_view,
+load_failed_cb (EphyEngineView   *web_view,
                 WebKitLoadEvent  load_event,
                 const char      *uri,
                 GError          *error,
@@ -2342,7 +2342,7 @@ load_failed_cb (WebKitWebView   *web_view,
       if (!view->typed_address) {
         const char *prev_uri;
 
-        prev_uri = webkit_web_view_get_uri (web_view);
+        prev_uri = ephy_engine_web_view_get_uri (web_view);
         ephy_web_view_set_address (view, prev_uri);
       }
     }
@@ -2363,7 +2363,7 @@ load_failed_cb (WebKitWebView   *web_view,
 }
 
 static gboolean
-load_failed_with_tls_error_cb (WebKitWebView        *web_view,
+load_failed_with_tls_error_cb (EphyEngineView        *web_view,
                                const char           *uri,
                                GTlsCertificate      *certificate,
                                GTlsCertificateFlags  errors,
@@ -2386,7 +2386,7 @@ load_failed_with_tls_error_cb (WebKitWebView        *web_view,
 }
 
 static void
-close_web_view_cb (WebKitWebView *web_view,
+close_web_view_cb (EphyEngineView *web_view,
                    gpointer       user_data)
 
 {
@@ -2403,14 +2403,14 @@ close_web_view_cb (WebKitWebView *web_view,
 
 
 static void
-zoom_changed_cb (WebKitWebView *web_view,
+zoom_changed_cb (EphyEngineView *web_view,
                  GParamSpec    *pspec,
                  gpointer       user_data)
 {
   const char *address;
   double zoom;
 
-  zoom = webkit_web_view_get_zoom_level (web_view);
+  zoom = ephy_engine_web_view_get_zoom_level (web_view);
 
   if (EPHY_WEB_VIEW (web_view)->is_setting_zoom)
     return;
@@ -2429,13 +2429,13 @@ zoom_changed_cb (WebKitWebView *web_view,
 }
 
 static gboolean
-script_dialog_cb (WebKitWebView      *web_view,
+script_dialog_cb (EphyEngineView      *web_view,
                   WebKitScriptDialog *dialog)
 {
   if (webkit_script_dialog_get_dialog_type (dialog) != WEBKIT_SCRIPT_DIALOG_BEFORE_UNLOAD_CONFIRM)
     return FALSE;
 
-  /* Ignore beforeunload events for now until we properly support webkit_web_view_try_close()
+  /* Ignore beforeunload events for now until we properly support ephy_engine_web_view_try_close()
    * See https://bugzilla.gnome.org/show_bug.cgi?id=722032.
    */
   webkit_script_dialog_confirm_set_confirmed (dialog, TRUE);
@@ -2487,7 +2487,7 @@ reader_setting_changed_cb (EphyWebView *web_view)
   js_snippet = g_strdup_printf ("document.body.className = '%s %s'",
                                 font_style,
                                 color_scheme);
-  webkit_web_view_evaluate_javascript (WEBKIT_WEB_VIEW (web_view),
+  ephy_engine_web_view_evaluate_javascript (EPHY_ENGINE_VIEW (web_view),
                                        js_snippet, -1,
                                        ephy_embed_shell_get_guid (ephy_embed_shell_get_default ()),
                                        NULL,
@@ -2591,14 +2591,14 @@ auth_password_query_finished_cb (GList              **records,
   } else {
     prepare_for_authentication_dialog (data->web_view, data->request);
     /* Hack: display WebKit's default auth dialog by invoking the default handler, which we previously canceled. */
-    WEBKIT_WEB_VIEW_GET_CLASS (data->web_view)->authenticate (WEBKIT_WEB_VIEW (data->web_view), data->request);
+    WEBKIT_WEB_VIEW_GET_CLASS (data->web_view)->authenticate (EPHY_ENGINE_VIEW (data->web_view), data->request);
   }
 
   authentication_data_free (data);
 }
 
 static gboolean
-authenticate_cb (WebKitWebView               *web_view,
+authenticate_cb (EphyEngineView               *web_view,
                  WebKitAuthenticationRequest *request,
                  gpointer                     user_data)
 {
@@ -2645,7 +2645,7 @@ authenticate_cb (WebKitWebView               *web_view,
 }
 
 typedef struct {
-  WebKitWebView *web_view;
+  EphyEngineView *web_view;
   char *origin;
   WebKitUserMessage *message;
 } PasswordManagerData;
@@ -2675,7 +2675,7 @@ password_manager_query_finished_cb (GList               **records,
   }
 
   g_variant_get (webkit_user_message_get_parameters (data->message), "(&s@sm@sm@sm@s)", &origin, NULL, NULL, NULL, NULL);
-  real_origin = ephy_uri_to_security_origin (webkit_web_view_get_uri (data->web_view));
+  real_origin = ephy_uri_to_security_origin (ephy_engine_web_view_get_uri (data->web_view));
   if (g_strcmp0 (real_origin, origin) != 0) {
     g_debug ("Extension's origin '%s' doesn't match real origin '%s'", origin, real_origin);
     password_manager_data_free (data);
@@ -2689,7 +2689,7 @@ password_manager_query_finished_cb (GList               **records,
 }
 
 static gboolean
-password_manager_handle_query_usernames_message (WebKitWebView     *web_view,
+password_manager_handle_query_usernames_message (EphyEngineView     *web_view,
                                                  WebKitUserMessage *message)
 {
   GVariant *parameters;
@@ -2704,7 +2704,7 @@ password_manager_handle_query_usernames_message (WebKitWebView     *web_view,
     return FALSE;
 
   g_variant_get (parameters, "&s", &origin);
-  real_origin = ephy_uri_to_security_origin (webkit_web_view_get_uri (web_view));
+  real_origin = ephy_uri_to_security_origin (ephy_engine_web_view_get_uri (web_view));
   if (g_strcmp0 (real_origin, origin) != 0) {
     g_debug ("Extension's origin '%s' doesn't match real origin '%s'", origin, real_origin);
     return FALSE;
@@ -2723,7 +2723,7 @@ password_manager_handle_query_usernames_message (WebKitWebView     *web_view,
 }
 
 static gboolean
-password_manager_handle_query_password_message (WebKitWebView     *web_view,
+password_manager_handle_query_password_message (EphyEngineView     *web_view,
                                                 WebKitUserMessage *message)
 {
   GVariant *parameters;
@@ -2787,7 +2787,7 @@ ephy_autofill_get_field_value_finished_cb (GObject      *source_object,
 }
 
 static gboolean
-ephy_autofill_get_field_value (WebKitWebView     *web_view,
+ephy_autofill_get_field_value (EphyEngineView     *web_view,
                                WebKitUserMessage *message)
 {
   EphyWebView *view = EPHY_WEB_VIEW (web_view);
@@ -2806,7 +2806,7 @@ ephy_autofill_get_field_value (WebKitWebView     *web_view,
 }
 
 static gboolean
-user_message_received_cb (WebKitWebView     *web_view,
+user_message_received_cb (EphyEngineView     *web_view,
                           WebKitUserMessage *message)
 {
   const char *name;
@@ -2908,7 +2908,7 @@ ephy_web_view_load_request (EphyWebView      *view,
   webkit_uri_request_set_uri (request, effective_url);
   g_free (effective_url);
 
-  webkit_web_view_load_request (WEBKIT_WEB_VIEW (view), request);
+  ephy_engine_web_view_load_request (EPHY_ENGINE_VIEW (view), request);
 }
 
 /**
@@ -2935,9 +2935,9 @@ ephy_web_view_load_url (EphyWebView *view,
 
     uri = g_uri_parse (effective_url, G_URI_FLAGS_PARSE_RELAXED, NULL);
     decoded_url = g_uri_to_string (uri);
-    webkit_web_view_evaluate_javascript (WEBKIT_WEB_VIEW (view), decoded_url, -1, NULL, NULL, NULL, NULL, NULL);
+    ephy_engine_web_view_evaluate_javascript (EPHY_ENGINE_VIEW (view), decoded_url, -1, NULL, NULL, NULL, NULL, NULL);
   } else
-    webkit_web_view_load_uri (WEBKIT_WEB_VIEW (view), effective_url);
+    ephy_engine_web_view_load_uri (EPHY_ENGINE_VIEW (view), effective_url);
 
   g_free (effective_url);
 }
@@ -3050,7 +3050,7 @@ ephy_web_view_get_opensearch_engines (EphyWebView *view)
 gboolean
 ephy_web_view_is_loading (EphyWebView *view)
 {
-  return webkit_web_view_is_loading (WEBKIT_WEB_VIEW (view));
+  return ephy_engine_web_view_is_loading (EPHY_ENGINE_VIEW (view));
 }
 
 /**
@@ -3267,7 +3267,7 @@ has_modified_forms_timeout_cb (gpointer user_data)
 }
 
 static void
-has_modified_forms_cb (WebKitWebView *view,
+has_modified_forms_cb (EphyEngineView *view,
                        GAsyncResult  *result,
                        GTask         *task)
 {
@@ -3276,7 +3276,7 @@ has_modified_forms_cb (WebKitWebView *view,
   GError *error = NULL;
   gulong id;
 
-  value = webkit_web_view_evaluate_javascript_finish (view, result, &error);
+  value = ephy_engine_web_view_evaluate_javascript_finish (view, result, &error);
 
   id = GPOINTER_TO_INT (g_task_get_task_data (task));
   if (id == 0) {
@@ -3326,7 +3326,7 @@ ephy_web_view_has_modified_forms (EphyWebView         *view,
 
   /* Set timeout to guard against web process hangs. Otherwise, a single
    * unresponsive web process would prevent the window from closing. Note that
-   * although webkit_web_view_evaluate_javascript() takes a cancellable,
+   * although ephy_engine_web_view_evaluate_javascript() takes a cancellable,
    * it's not *really* cancellable and attempting to cancel it just causes it to
    * return G_IO_ERROR_CANCELLED after however long it takes to finish, which
    * will be never if the web process is unresponsive, so we always fake
@@ -3335,7 +3335,7 @@ ephy_web_view_has_modified_forms (EphyWebView         *view,
   id = g_timeout_add_seconds_once (2, has_modified_forms_timeout_cb, task);
   g_task_set_task_data (task, GINT_TO_POINTER (id), NULL);
 
-  webkit_web_view_evaluate_javascript (WEBKIT_WEB_VIEW (view),
+  ephy_engine_web_view_evaluate_javascript (EPHY_ENGINE_VIEW (view),
                                        "Ephy.hasModifiedForms();", -1,
                                        ephy_embed_shell_get_guid (ephy_embed_shell_get_default ()),
                                        NULL,
@@ -3369,14 +3369,14 @@ get_best_web_app_icon_async_data_free (GetBestWebAppIconAsyncData *data)
 }
 
 static void
-get_best_web_app_icon_cb (WebKitWebView *view,
+get_best_web_app_icon_cb (EphyEngineView *view,
                           GAsyncResult  *result,
                           GTask         *task)
 {
   g_autoptr (JSCValue) js_value = NULL;
   GError *error = NULL;
 
-  js_value = webkit_web_view_evaluate_javascript_finish (view, result, &error);
+  js_value = ephy_engine_web_view_evaluate_javascript_finish (view, result, &error);
   if (js_value) {
     g_autoptr (JSCValue) js_uri = NULL;
     g_autoptr (JSCValue) js_color = NULL;
@@ -3404,19 +3404,19 @@ ephy_web_view_get_best_web_app_icon (EphyWebView         *view,
                                      GAsyncReadyCallback  callback,
                                      gpointer             user_data)
 {
-  WebKitWebView *wk_view;
+  EphyEngineView *wk_view;
   GTask *task;
   char *script;
   g_autofree char *encoded_url = NULL;
 
   g_assert (EPHY_IS_WEB_VIEW (view));
-  wk_view = WEBKIT_WEB_VIEW (view);
+  wk_view = EPHY_ENGINE_VIEW (view);
 
   task = g_task_new (view, cancellable, callback, user_data);
   g_task_set_source_tag (task, ephy_web_view_get_best_web_app_icon);
-  encoded_url = ephy_encode_for_js_quoted_data_value (webkit_web_view_get_uri (wk_view));
+  encoded_url = ephy_encode_for_js_quoted_data_value (ephy_engine_web_view_get_uri (wk_view));
   script = g_strdup_printf ("Ephy.getWebAppIcon(\"%s\");", encoded_url);
-  webkit_web_view_evaluate_javascript (wk_view,
+  ephy_engine_web_view_evaluate_javascript (wk_view,
                                        script, -1,
                                        ephy_embed_shell_get_guid (ephy_embed_shell_get_default ()),
                                        NULL,
@@ -3454,14 +3454,14 @@ ephy_web_view_get_best_web_app_icon_finish (EphyWebView   *view,
 }
 
 static void
-get_web_app_title_cb (WebKitWebView *view,
+get_web_app_title_cb (EphyEngineView *view,
                       GAsyncResult  *result,
                       GTask         *task)
 {
   g_autoptr (JSCValue) js_value = NULL;
   GError *error = NULL;
 
-  js_value = webkit_web_view_evaluate_javascript_finish (view, result, &error);
+  js_value = ephy_engine_web_view_evaluate_javascript_finish (view, result, &error);
   if (js_value) {
     char *retval = NULL;
 
@@ -3486,7 +3486,7 @@ ephy_web_view_get_web_app_title (EphyWebView         *view,
 
   task = g_task_new (view, cancellable, callback, user_data);
   g_task_set_source_tag (task, ephy_web_view_get_web_app_title);
-  webkit_web_view_evaluate_javascript (WEBKIT_WEB_VIEW (view),
+  ephy_engine_web_view_evaluate_javascript (EPHY_ENGINE_VIEW (view),
                                        "Ephy.getWebAppTitle();", -1,
                                        ephy_embed_shell_get_guid (ephy_embed_shell_get_default ()),
                                        NULL,
@@ -3506,14 +3506,14 @@ ephy_web_view_get_web_app_title_finish (EphyWebView   *view,
 }
 
 static void
-get_web_app_mobile_capable_cb (WebKitWebView *view,
+get_web_app_mobile_capable_cb (EphyEngineView *view,
                                GAsyncResult  *result,
                                GTask         *task)
 {
   g_autoptr (JSCValue) js_value = NULL;
   GError *error = NULL;
 
-  js_value = webkit_web_view_evaluate_javascript_finish (view, result, &error);
+  js_value = ephy_engine_web_view_evaluate_javascript_finish (view, result, &error);
   if (js_value) {
     gboolean retval = jsc_value_to_boolean (js_value);
 
@@ -3536,7 +3536,7 @@ ephy_web_view_get_web_app_mobile_capable (EphyWebView         *view,
 
   task = g_task_new (view, cancellable, callback, user_data);
   g_task_set_source_tag (task, ephy_web_view_get_web_app_mobile_capable);
-  webkit_web_view_evaluate_javascript (WEBKIT_WEB_VIEW (view),
+  ephy_engine_web_view_evaluate_javascript (EPHY_ENGINE_VIEW (view),
                                        "Ephy.getAppleMobileWebAppCapable();", -1,
                                        ephy_embed_shell_get_guid (ephy_embed_shell_get_default ()),
                                        NULL,
@@ -3648,7 +3648,7 @@ ephy_web_view_print (EphyWebView *view)
 
   shell = ephy_embed_shell_get_default ();
 
-  operation = webkit_print_operation_new (WEBKIT_WEB_VIEW (view));
+  operation = webkit_print_operation_new (EPHY_ENGINE_VIEW (view));
   g_signal_connect (operation, "finished",
                     G_CALLBACK (print_operation_finished_cb),
                     view);
@@ -3659,7 +3659,7 @@ ephy_web_view_print (EphyWebView *view)
   settings = ephy_embed_shell_get_print_settings (shell);
   gtk_print_settings_set (settings,
                           GTK_PRINT_SETTINGS_OUTPUT_BASENAME,
-                          webkit_web_view_get_title (WEBKIT_WEB_VIEW (view)));
+                          ephy_engine_web_view_get_title (EPHY_ENGINE_VIEW (view)));
   webkit_print_operation_set_print_settings (operation, settings);
   if (webkit_print_operation_run_dialog (operation, NULL) == WEBKIT_PRINT_OPERATION_RESPONSE_PRINT)
     ephy_embed_shell_set_print_settings (shell, webkit_print_operation_get_print_settings (operation));
@@ -3668,7 +3668,7 @@ ephy_web_view_print (EphyWebView *view)
 }
 
 static void
-web_resource_get_data_cb (WebKitWebResource *resource,
+web_resource_get_data_cb (EphyEngineResource *resource,
                           GAsyncResult      *result,
                           GOutputStream     *output_stream)
 {
@@ -3677,7 +3677,7 @@ web_resource_get_data_cb (WebKitWebResource *resource,
   GInputStream *input_stream;
   GError *error = NULL;
 
-  data = webkit_web_resource_get_data_finish (resource, result, &data_length, &error);
+  data = ephy_engine_web_resource_get_data_finish (resource, result, &data_length, &error);
   if (!data) {
     if (!g_error_matches (error, G_IO_ERROR, G_IO_ERROR_CANCELLED))
       g_warning ("Failed to save page: %s", error->message);
@@ -3698,10 +3698,10 @@ web_resource_get_data_cb (WebKitWebResource *resource,
 static void
 ephy_web_view_save_main_resource_cb (GFile         *file,
                                      GAsyncResult  *result,
-                                     WebKitWebView *view)
+                                     EphyEngineView *view)
 {
   GFileOutputStream *output_stream;
-  WebKitWebResource *resource;
+  EphyEngineResource *resource;
   GError *error = NULL;
 
   output_stream = g_file_replace_finish (file, result, &error);
@@ -3712,8 +3712,8 @@ ephy_web_view_save_main_resource_cb (GFile         *file,
     return;
   }
 
-  resource = webkit_web_view_get_main_resource (view);
-  webkit_web_resource_get_data (resource,
+  resource = ephy_engine_web_view_get_main_resource (view);
+  ephy_engine_web_resource_get_data (resource,
                                 EPHY_WEB_VIEW (view)->cancellable,
                                 (GAsyncReadyCallback)web_resource_get_data_cb,
                                 output_stream);
@@ -3737,7 +3737,7 @@ ephy_web_view_save (EphyWebView *view,
   file = g_file_new_for_uri (uri);
 
   if (g_str_has_suffix (uri, ".mhtml"))
-    webkit_web_view_save_to_file (WEBKIT_WEB_VIEW (view), file, WEBKIT_SAVE_MODE_MHTML,
+    ephy_engine_web_view_save_to_file (EPHY_ENGINE_VIEW (view), file, WEBKIT_SAVE_MODE_MHTML,
                                   NULL, NULL, NULL);
   else
     g_file_replace_async (file, NULL, FALSE,
@@ -3848,7 +3848,7 @@ void
 ephy_web_view_toggle_reader_mode (EphyWebView *view,
                                   gboolean     active)
 {
-  WebKitWebView *web_view = WEBKIT_WEB_VIEW (view);
+  EphyEngineView *web_view = EPHY_ENGINE_VIEW (view);
   char *reader_uri = NULL;
   const gchar *address;
   gboolean view_active = g_str_has_prefix (view->address, EPHY_READER_SCHEME);
@@ -3860,7 +3860,7 @@ ephy_web_view_toggle_reader_mode (EphyWebView *view,
 
   if (view_active) {
     ephy_web_view_freeze_history (view);
-    webkit_web_view_load_uri (web_view, address);
+    ephy_engine_web_view_load_uri (web_view, address);
     return;
   }
 
@@ -3872,7 +3872,7 @@ ephy_web_view_toggle_reader_mode (EphyWebView *view,
   view->entering_reader_mode = TRUE;
   g_object_notify_by_pspec (G_OBJECT (web_view), obj_properties[PROP_ENTERING_READER_MODE]);
 
-  webkit_web_view_load_uri (web_view, reader_uri);
+  ephy_engine_web_view_load_uri (web_view, reader_uri);
 }
 
 gboolean
@@ -3923,7 +3923,7 @@ static void
 ephy_web_view_finalize (GObject *object)
 {
   EphyWebView *view = EPHY_WEB_VIEW (object);
-  WebKitUserContentManager *ucm = webkit_web_view_get_user_content_manager (WEBKIT_WEB_VIEW (view));
+  WebKitUserContentManager *ucm = ephy_engine_web_view_get_user_content_manager (EPHY_ENGINE_VIEW (view));
 
   ephy_embed_prefs_unregister_ucm (ucm);
   ephy_embed_shell_unregister_ucm (ephy_embed_shell_get_default (), ucm);
@@ -3945,7 +3945,7 @@ ephy_web_view_constructed (GObject *object)
 {
   EphyWebView *web_view = EPHY_WEB_VIEW (object);
   EphyEmbedShell *shell = ephy_embed_shell_get_default ();
-  WebKitUserContentManager *ucm = webkit_web_view_get_user_content_manager (WEBKIT_WEB_VIEW (web_view));
+  WebKitUserContentManager *ucm = ephy_engine_web_view_get_user_content_manager (EPHY_ENGINE_VIEW (web_view));
   g_auto (GStrv) cors_allowlist = NULL;
 
   G_OBJECT_CLASS (ephy_web_view_parent_class)->constructed (object);
@@ -3957,13 +3957,13 @@ ephy_web_view_constructed (GObject *object)
 
   g_signal_connect (web_view, "web-process-terminated",
                     G_CALLBACK (process_terminated_cb), NULL);
-  g_signal_connect_swapped (webkit_web_view_get_back_forward_list (WEBKIT_WEB_VIEW (web_view)),
+  g_signal_connect_swapped (ephy_engine_web_view_get_back_forward_list (EPHY_ENGINE_VIEW (web_view)),
                             "changed", G_CALLBACK (update_navigation_flags), web_view);
 
   cors_allowlist = g_new (char *, 2);
   cors_allowlist[0] = g_strdup ("ephy-resource://*/*");
   cors_allowlist[1] = NULL;
-  webkit_web_view_set_cors_allowlist (WEBKIT_WEB_VIEW (web_view), (const char * const *)cors_allowlist);
+  ephy_engine_web_view_set_cors_allowlist (EPHY_ENGINE_VIEW (web_view), (const char * const *)cors_allowlist);
 }
 
 static void
@@ -4094,7 +4094,7 @@ static void
 ephy_web_view_class_init (EphyWebViewClass *klass)
 {
   GObjectClass *gobject_class = G_OBJECT_CLASS (klass);
-  WebKitWebViewClass *webkit_webview_class = WEBKIT_WEB_VIEW_CLASS (klass);
+  EphyEngineViewClass *webkit_webview_class = EPHY_ENGINE_VIEW_CLASS (klass);
 
   gobject_class->dispose = ephy_web_view_dispose;
   gobject_class->finalize = ephy_web_view_finalize;
@@ -4329,7 +4329,7 @@ ephy_web_view_new (void)
 }
 
 GtkWidget *
-ephy_web_view_new_with_related_view (WebKitWebView *related_view)
+ephy_web_view_new_with_related_view (EphyEngineView *related_view)
 {
   g_autoptr (WebKitUserContentManager) ucm = webkit_user_content_manager_new ();
 
@@ -4347,14 +4347,14 @@ ephy_web_view_get_uid (EphyWebView *web_view)
 }
 
 static void
-get_web_app_manifest_url_cb (WebKitWebView *view,
+get_web_app_manifest_url_cb (EphyEngineView *view,
                              GAsyncResult  *result,
                              GTask         *task)
 {
   g_autoptr (JSCValue) js_value = NULL;
   GError *error = NULL;
 
-  js_value = webkit_web_view_evaluate_javascript_finish (view, result, &error);
+  js_value = ephy_engine_web_view_evaluate_javascript_finish (view, result, &error);
   if (js_value) {
     char *retval = NULL;
 
@@ -4381,7 +4381,7 @@ ephy_web_view_get_web_app_manifest_url (EphyWebView         *view,
 
   task = g_task_new (view, cancellable, callback, user_data);
   g_task_set_source_tag (task, ephy_web_view_get_web_app_manifest_url);
-  webkit_web_view_evaluate_javascript (WEBKIT_WEB_VIEW (view),
+  ephy_engine_web_view_evaluate_javascript (EPHY_ENGINE_VIEW (view),
                                        "Ephy.getWebAppManifestURL();",
                                        -1,
                                        ephy_embed_shell_get_guid (ephy_embed_shell_get_default ()),

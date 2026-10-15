@@ -24,6 +24,7 @@
  */
 
 #include "config.h"
+#include "ephy-engine-view.h"
 
 #include "ephy-web-extension.h"
 
@@ -925,7 +926,7 @@ ephy_web_extension_init (EphyWebExtension *self)
   self->guid = g_uuid_string_random ();
 
   g_ptr_array_add (self->host_permissions, g_strdup_printf ("ephy-webextension://%s/*", self->guid));
-  /* This has to be NULL terminated as we pass it to webkit_web_view_set_cors_allowlist() directly. */
+  /* This has to be NULL terminated as we pass it to ephy_engine_web_view_set_cors_allowlist() directly. */
   g_ptr_array_add (self->host_permissions, NULL);
 }
 
@@ -1638,7 +1639,7 @@ ephy_web_extension_create_sender_object (EphyWebExtensionSender *sender)
 
   json_object_set_string_member (obj, "id", ephy_web_extension_get_guid (sender->extension));
   if (sender->view) {
-    json_object_set_string_member (obj, "url", webkit_web_view_get_uri (sender->view));
+    json_object_set_string_member (obj, "url", ephy_engine_web_view_get_uri (sender->view));
     json_object_set_int_member (obj, "frameId", sender->frame_id);
 
     /* For now these are always regular views and not extension views. */

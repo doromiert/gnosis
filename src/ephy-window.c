@@ -32,7 +32,7 @@
 #include <glib/gi18n.h>
 #include <gtk/gtk.h>
 #include <libportal-gtk4/portal-gtk4.h>
-#include <webkit/webkit.h>
+#include "ephy-engine-view.h"
 
 #include "context-menu-commands.h"
 #include "ephy-action-bar.h"
@@ -917,14 +917,14 @@ update_edit_actions_sensitivity (EphyWindow *window,
                ephy_location_entry_get_can_redo (EPHY_LOCATION_ENTRY (title_widget));
   } else {
     EphyEmbed *embed;
-    WebKitWebView *view;
+    EphyEngineView *view;
     WebKitEditorState *state;
 
     embed = window->active_embed;
     g_assert (embed);
 
     view = EPHY_GET_WEBKIT_WEB_VIEW_FROM_EMBED (embed);
-    state = webkit_web_view_get_editor_state (view);
+    state = ephy_engine_web_view_get_editor_state (view);
 
     can_cut = webkit_editor_state_is_cut_available (state);
     can_copy = webkit_editor_state_is_copy_available (state);
@@ -1297,7 +1297,7 @@ sync_tab_address (EphyWebView *view,
 }
 
 static void
-sync_tab_zoom (WebKitWebView *web_view,
+sync_tab_zoom (EphyEngineView *web_view,
                GParamSpec    *pspec,
                EphyWindow    *window)
 {
@@ -1311,7 +1311,7 @@ sync_tab_zoom (WebKitWebView *web_view,
   if (window->closing)
     return;
 
-  zoom = webkit_web_view_get_zoom_level (web_view);
+  zoom = ephy_engine_web_view_get_zoom_level (web_view);
   zoom_str = g_strdup_printf ("%.f%%", zoom * 100);
 
   title_widget = GTK_WIDGET (ephy_header_bar_get_title_widget (EPHY_HEADER_BAR (window->header_bar)));
@@ -1357,7 +1357,7 @@ sync_tab_document_type (EphyWebView *view,
     return;
 
   /* update zoom actions */
-  sync_tab_zoom (WEBKIT_WEB_VIEW (view), NULL, window);
+  sync_tab_zoom (EPHY_ENGINE_VIEW (view), NULL, window);
 
   type = ephy_web_view_get_document_type (view);
   can_find = (type != EPHY_WEB_VIEW_DOCUMENT_IMAGE);
@@ -1446,7 +1446,7 @@ sync_tab_page_action (EphyWebView *view,
 static void
 update_mute_action (EphyWindow    *window,
                     GParamSpec    *pspec,
-                    WebKitWebView *web_view)
+                    EphyEngineView *web_view)
 {
   GActionGroup *action_group;
   GAction *action;
@@ -1454,7 +1454,7 @@ update_mute_action (EphyWindow    *window,
   action_group = ephy_window_get_action_group (window, "tab");
 
   action = g_action_map_lookup_action (G_ACTION_MAP (action_group), "mute");
-  g_simple_action_set_enabled (G_SIMPLE_ACTION (action), webkit_web_view_is_playing_audio (web_view));
+  g_simple_action_set_enabled (G_SIMPLE_ACTION (action), ephy_engine_web_view_is_playing_audio (web_view));
 }
 
 static void
@@ -1489,7 +1489,7 @@ _ephy_window_unset_context_event (EphyWindow *window)
 }
 
 static void
-context_menu_dismissed_cb (WebKitWebView *webView,
+context_menu_dismissed_cb (EphyEngineView *webView,
                            EphyWindow    *window)
 {
   LOG ("Deactivating popup menu");
@@ -1644,11 +1644,11 @@ find_spelling_guess_context_menu_items (WebKitContextMenu *context_menu)
 }
 
 static gboolean
-should_show_copy_outside_editable (WebKitWebView *view)
+should_show_copy_outside_editable (EphyEngineView *view)
 {
   WebKitEditorState *state;
 
-  state = webkit_web_view_get_editor_state (view);
+  state = ephy_engine_web_view_get_editor_state (view);
 
   return webkit_editor_state_is_copy_available (state);
 }
@@ -1676,7 +1676,7 @@ parse_context_menu_user_data (WebKitContextMenu  *context_menu,
 }
 
 static gboolean
-populate_context_menu (WebKitWebView       *web_view,
+populate_context_menu (EphyEngineView       *web_view,
                        WebKitContextMenu   *context_menu,
                        WebKitHitTestResult *hit_test_result,
                        EphyWindow          *window)
@@ -2012,7 +2012,7 @@ populate_context_menu (WebKitWebView       *web_view,
     if (g_settings_get_boolean (EPHY_SETTINGS_WEB, EPHY_PREFS_WEB_SHOW_DEVELOPER_ACTIONS)) {
       webkit_context_menu_append (context_menu,
                                   webkit_context_menu_item_new_separator ());
-      uri = webkit_web_view_get_uri (web_view);
+      uri = ephy_engine_web_view_get_uri (web_view);
       if (uri && !strstr (uri, EPHY_VIEW_SOURCE_SCHEME)) {
         add_action_to_context_menu (context_menu, window_action_group,
                                     "page-source", window);
@@ -2036,7 +2036,7 @@ populate_context_menu (WebKitWebView       *web_view,
 
 static gboolean
 save_target_uri (EphyWindow    *window,
-                 WebKitWebView *view)
+                 EphyEngineView *view)
 {
   guint context;
   char *location = NULL;
@@ -2076,7 +2076,7 @@ save_target_uri (EphyWindow    *window,
 }
 
 static void
-ephy_window_mouse_target_changed_cb (WebKitWebView       *web_view,
+ephy_window_mouse_target_changed_cb (EphyEngineView       *web_view,
                                      WebKitHitTestResult *hit_test_result,
                                      guint                modifiers,
                                      EphyWindow          *window)
@@ -2118,13 +2118,13 @@ window_properties_geometry_changed (WebKitWindowProperties *properties,
 
 static void
 ephy_window_configure_for_view (EphyWindow    *window,
-                                WebKitWebView *web_view)
+                                EphyEngineView *web_view)
 {
   WebKitWindowProperties *properties;
   GdkRectangle geometry;
   EphyWindowChrome chrome = 0;
 
-  properties = webkit_web_view_get_window_properties (web_view);
+  properties = ephy_engine_web_view_get_window_properties (web_view);
 
   if (webkit_window_properties_get_toolbar_visible (properties))
     chrome |= EPHY_WINDOW_CHROME_HEADER_BAR;
@@ -2158,8 +2158,8 @@ ephy_window_configure_for_view (EphyWindow    *window,
 }
 
 static gboolean
-web_view_ready_cb (WebKitWebView *web_view,
-                   WebKitWebView *parent_web_view)
+web_view_ready_cb (EphyEngineView *web_view,
+                   EphyEngineView *parent_web_view)
 {
   EphyWindow *window, *parent_view_window;
   gboolean using_new_window;
@@ -2179,13 +2179,13 @@ web_view_ready_cb (WebKitWebView *web_view,
   return TRUE;
 }
 
-static WebKitWebView *
-create_web_view_cb (WebKitWebView          *web_view,
+static EphyEngineView *
+create_web_view_cb (EphyEngineView          *web_view,
                     WebKitNavigationAction *navigation_action,
                     EphyWindow             *window)
 {
   EphyEmbed *embed;
-  WebKitWebView *new_web_view;
+  EphyEngineView *new_web_view;
   EphyNewTabFlags flags;
   EphyWindow *target_window;
 
@@ -2221,14 +2221,14 @@ create_web_view_cb (WebKitWebView          *web_view,
 
 typedef struct {
   EphyWindow *window;
-  WebKitWebView *web_view;
+  EphyEngineView *web_view;
   WebKitPolicyDecision *decision;
   WebKitPolicyDecisionType decision_type;
 } VerifyUrlAsyncData;
 
 static inline VerifyUrlAsyncData *
 verify_url_async_data_new (EphyWindow               *window,
-                           WebKitWebView            *web_view,
+                           EphyEngineView            *web_view,
                            WebKitPolicyDecision     *decision,
                            WebKitPolicyDecisionType  decision_type)
 {
@@ -2253,7 +2253,7 @@ verify_url_async_data_free (VerifyUrlAsyncData *data)
 
 static gboolean
 accept_navigation_policy_decision (EphyWindow           *window,
-                                   WebKitWebView        *web_view,
+                                   EphyEngineView        *web_view,
                                    WebKitPolicyDecision *decision,
                                    const char           *uri)
 {
@@ -2276,7 +2276,7 @@ accept_navigation_policy_decision (EphyWindow           *window,
   }
 
   ephy_filters_manager_refresh_ucm_filters (ephy_embed_shell_get_filters_manager (shell),
-                                            webkit_web_view_get_user_content_manager (web_view),
+                                            ephy_engine_web_view_get_user_content_manager (web_view),
                                             adblock_permission == EPHY_PERMISSION_DENY || adblock_permission == EPHY_PERMISSION_UNDECIDED);
 
   switch (autoplay_permission) {
@@ -2460,7 +2460,7 @@ ask_for_permission (gpointer user_data)
 }
 
 static gboolean
-decide_navigation_policy (WebKitWebView            *web_view,
+decide_navigation_policy (EphyEngineView            *web_view,
                           WebKitPolicyDecision     *decision,
                           WebKitPolicyDecisionType  decision_type,
                           EphyWindow               *window)
@@ -2471,7 +2471,7 @@ decide_navigation_policy (WebKitWebView            *web_view,
   WebKitURIRequest *request;
   const char *request_uri;
 
-  g_assert (WEBKIT_IS_WEB_VIEW (web_view));
+  g_assert (EPHY_IS_ENGINE_VIEW (web_view));
   g_assert (WEBKIT_IS_NAVIGATION_POLICY_DECISION (decision));
   g_assert (decision_type != WEBKIT_POLICY_DECISION_TYPE_RESPONSE);
   g_assert (EPHY_IS_WINDOW (window));
@@ -2483,7 +2483,7 @@ decide_navigation_policy (WebKitWebView            *web_view,
 
   if (!ephy_embed_utils_address_has_web_scheme (request_uri)) {
     g_autofree char *opener_origin = NULL;
-    const char *view_uri = webkit_web_view_get_uri (web_view);
+    const char *view_uri = ephy_engine_web_view_get_uri (web_view);
 
     webkit_policy_decision_ignore (decision);
 
@@ -2600,11 +2600,11 @@ decide_navigation_policy (WebKitWebView            *web_view,
 
     new_view = ephy_embed_get_web_view (new_embed);
     if (inherit_session) {
-      WebKitWebViewSessionState *session_state;
+      EphyEngineSessionState *session_state;
 
-      session_state = webkit_web_view_get_session_state (web_view);
-      webkit_web_view_restore_session_state (WEBKIT_WEB_VIEW (new_view), session_state);
-      webkit_web_view_session_state_unref (session_state);
+      session_state = ephy_engine_web_view_get_session_state (web_view);
+      ephy_engine_web_view_restore_session_state (EPHY_ENGINE_VIEW (new_view), session_state);
+      ephy_engine_web_view_session_state_unref (session_state);
 
       if (button == GDK_BUTTON_PRIMARY)
         ephy_embed_container_set_active_child (EPHY_EMBED_CONTAINER (window), new_embed);
@@ -2640,7 +2640,7 @@ filters_initialized_cb (EphyFiltersManager *filters_manager,
 }
 
 static gboolean
-decide_policy_cb (WebKitWebView            *web_view,
+decide_policy_cb (EphyEngineView            *web_view,
                   WebKitPolicyDecision     *decision,
                   WebKitPolicyDecisionType  decision_type,
                   EphyWindow               *window)
@@ -2655,7 +2655,7 @@ decide_policy_cb (WebKitWebView            *web_view,
   /* We don't want to allow HTTP requests before the adblocker is ready, except
    * for internal Epiphany pages, which should never be delayed.
    */
-  uri = webkit_web_view_get_uri (web_view);
+  uri = ephy_engine_web_view_get_uri (web_view);
   if (uri && !g_str_has_prefix (uri, "ephy-about:")) {
     EphyFiltersManager *filters_manager = ephy_embed_shell_get_filters_manager (ephy_embed_shell_get_default ());
     if (!ephy_filters_manager_get_is_initialized (filters_manager)) {
@@ -2681,7 +2681,7 @@ decide_policy_cb (WebKitWebView            *web_view,
 }
 
 static void
-progress_update (WebKitWebView *web_view,
+progress_update (EphyEngineView *web_view,
                  GParamSpec    *pspec,
                  EphyWindow    *window)
 {
@@ -2690,7 +2690,7 @@ progress_update (WebKitWebView *web_view,
   gboolean loading;
   const char *address;
 
-  progress = webkit_web_view_get_estimated_load_progress (web_view);
+  progress = ephy_engine_web_view_get_estimated_load_progress (web_view);
   loading = ephy_web_view_is_loading (EPHY_WEB_VIEW (web_view));
 
   address = ephy_web_view_get_address (EPHY_WEB_VIEW (web_view));
@@ -2838,7 +2838,7 @@ static void
 ephy_window_connect_active_embed (EphyWindow *window)
 {
   EphyEmbed *embed;
-  WebKitWebView *web_view;
+  EphyEngineView *web_view;
   EphyWebView *view;
   EphyTitleWidget *title_widget;
 
@@ -2868,7 +2868,7 @@ ephy_window_connect_active_embed (EphyWindow *window)
 
   if (EPHY_IS_LOCATION_ENTRY (title_widget)) {
     EphyLocationEntry *lentry = EPHY_LOCATION_ENTRY (title_widget);
-    gdouble progress = webkit_web_view_get_estimated_load_progress (web_view);
+    gdouble progress = ephy_engine_web_view_get_estimated_load_progress (web_view);
     gboolean loading = ephy_web_view_is_loading (EPHY_WEB_VIEW (web_view));
     EphySiteMenuButton *site_menu_button;
     GListModel *search_engine_model;
@@ -2941,7 +2941,7 @@ ephy_window_connect_active_embed (EphyWindow *window)
                            G_CALLBACK (web_process_terminated_cb),
                            window, G_CONNECT_DEFAULT);
 
-  update_mute_action (window, NULL, WEBKIT_WEB_VIEW (view));
+  update_mute_action (window, NULL, EPHY_ENGINE_VIEW (view));
 
   ephy_mouse_gesture_controller_set_web_view (window->mouse_gesture_controller, web_view);
 
@@ -2952,7 +2952,7 @@ static void
 ephy_window_disconnect_active_embed (EphyWindow *window)
 {
   EphyEmbed *embed;
-  WebKitWebView *web_view;
+  EphyEngineView *web_view;
   EphyWebView *view;
   EphyTitleWidget *title_widget;
 
@@ -3113,7 +3113,7 @@ tab_view_setup_menu_cb (AdwTabView *tab_view,
                                        "unpin");
   g_simple_action_set_enabled (G_SIMPLE_ACTION (action), !page || pinned);
 
-  muted = view && webkit_web_view_get_is_muted (WEBKIT_WEB_VIEW (view));
+  muted = view && ephy_engine_web_view_get_is_muted (EPHY_ENGINE_VIEW (view));
   action = g_action_map_lookup_action (G_ACTION_MAP (action_group),
                                        "mute");
   g_simple_action_set_state (G_SIMPLE_ACTION (action),
@@ -5103,7 +5103,7 @@ ephy_window_set_zoom (EphyWindow *window,
 {
   EphyEmbed *embed;
   double current_zoom = 1.0;
-  WebKitWebView *web_view;
+  EphyEngineView *web_view;
 
   g_assert (EPHY_IS_WINDOW (window));
 
@@ -5114,7 +5114,7 @@ ephy_window_set_zoom (EphyWindow *window,
 
   web_view = EPHY_GET_WEBKIT_WEB_VIEW_FROM_EMBED (embed);
 
-  current_zoom = webkit_web_view_get_zoom_level (web_view);
+  current_zoom = ephy_engine_web_view_get_zoom_level (web_view);
 
   if (zoom == ZOOM_IN)
     zoom = ephy_zoom_get_changed_zoom_level (current_zoom, 1);
@@ -5126,7 +5126,7 @@ ephy_window_set_zoom (EphyWindow *window,
     zoom = g_settings_get_double (EPHY_SETTINGS_WEB, EPHY_PREFS_WEB_DEFAULT_ZOOM_LEVEL);
 
   if (zoom != current_zoom)
-    webkit_web_view_set_zoom_level (web_view, zoom);
+    ephy_engine_web_view_set_zoom_level (web_view, zoom);
 }
 
 /**

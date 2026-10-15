@@ -19,6 +19,7 @@
  */
 
 #include "config.h"
+#include "ephy-engine-view.h"
 
 #include "ephy-reader-handler.h"
 
@@ -46,7 +47,7 @@ G_DEFINE_FINAL_TYPE (EphyReaderHandler, ephy_reader_handler, G_TYPE_OBJECT)
 typedef struct {
   EphyReaderHandler *source_handler;
   WebKitURISchemeRequest *scheme_request;
-  WebKitWebView *web_view;
+  EphyEngineView *web_view;
   GCancellable *cancellable;
   gulong load_changed_id;
 } EphyReaderRequest;
@@ -152,7 +153,7 @@ readability_js_finish_cb (GObject      *object,
                           GAsyncResult *result,
                           gpointer      user_data)
 {
-  WebKitWebView *web_view = WEBKIT_WEB_VIEW (object);
+  EphyEngineView *web_view = EPHY_ENGINE_VIEW (object);
   EphyReaderRequest *request = user_data;
   g_autoptr (JSCValue) value = NULL;
   g_autoptr (GError) error = NULL;
@@ -168,7 +169,7 @@ readability_js_finish_cb (GObject      *object,
   const gchar *color_scheme;
   AdwStyleManager *style_manager;
 
-  value = webkit_web_view_evaluate_javascript_finish (web_view, result, &error);
+  value = ephy_engine_web_view_evaluate_javascript_finish (web_view, result, &error);
   if (!value) {
     if (!g_error_matches (error, G_IO_ERROR, G_IO_ERROR_CANCELLED))
       g_warning ("Error running javascript: %s", error->message);
@@ -178,7 +179,7 @@ readability_js_finish_cb (GObject      *object,
   byline = readability_get_property_string (value, "byline");
   content = readability_get_property_string (value, "content");
   reading_time = readability_get_property_string (value, "reading_time");
-  title = webkit_web_view_get_title (web_view);
+  title = ephy_engine_web_view_get_title (web_view);
 
   encoded_byline = byline ? ephy_encode_for_html (byline) : g_strdup ("");
   encoded_title = ephy_encode_for_html (title);
@@ -244,7 +245,7 @@ readability_js_finish_cb (GObject      *object,
 
 static void
 ephy_reader_request_begin_get_source_from_web_view (EphyReaderRequest *request,
-                                                    WebKitWebView     *web_view)
+                                                    EphyEngineView     *web_view)
 {
   gsize length;
   const char *script;
@@ -258,7 +259,7 @@ ephy_reader_request_begin_get_source_from_web_view (EphyReaderRequest *request,
   }
 
   script = (const char *)g_bytes_get_data (bytes, &length);
-  webkit_web_view_evaluate_javascript (web_view, script, length, NULL,
+  ephy_engine_web_view_evaluate_javascript (web_view, script, length, NULL,
                                        "resource:///org/gnome/epiphany/readability/Readability.js",
                                        request->cancellable,
                                        readability_js_finish_cb,
@@ -266,7 +267,7 @@ ephy_reader_request_begin_get_source_from_web_view (EphyReaderRequest *request,
 }
 
 static void
-load_changed_cb (WebKitWebView     *web_view,
+load_changed_cb (EphyEngineView     *web_view,
                  WebKitLoadEvent    load_event,
                  EphyReaderRequest *request)
 {
@@ -286,7 +287,7 @@ ephy_reader_request_begin_get_source_from_uri (EphyReaderRequest *request,
   WebKitNetworkSession *network_session = ephy_embed_shell_get_network_session (shell);
 
   g_assert (!request->web_view);
-  request->web_view = WEBKIT_WEB_VIEW (g_object_ref_sink (g_object_new (WEBKIT_TYPE_WEB_VIEW,
+  request->web_view = EPHY_ENGINE_VIEW (g_object_ref_sink (g_object_new (EPHY_TYPE_ENGINE_VIEW,
                                                                         "web-context", context,
                                                                         "network-session", network_session,
                                                                         NULL)));
@@ -296,7 +297,7 @@ ephy_reader_request_begin_get_source_from_uri (EphyReaderRequest *request,
                                                G_CALLBACK (load_changed_cb),
                                                request);
 
-  webkit_web_view_load_uri (request->web_view, uri);
+  ephy_engine_web_view_load_uri (request->web_view, uri);
 }
 
 static void
@@ -304,7 +305,7 @@ ephy_reader_request_start (EphyReaderRequest *request)
 {
   g_autoptr (GUri) uri = NULL;
   const char *original_uri;
-  WebKitWebView *web_view;
+  EphyEngineView *web_view;
 
   original_uri = webkit_uri_scheme_request_get_uri (request->scheme_request);
   uri = g_uri_parse (original_uri, G_URI_FLAGS_PARSE_RELAXED, NULL);

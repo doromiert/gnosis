@@ -23,7 +23,7 @@
 #include <glib.h>
 #include <gtk/gtk.h>
 #include <libsoup/soup.h>
-#include <webkit/webkit.h>
+#include "ephy-engine-view.h"
 
 #include "ephy-debug.h"
 #include "ephy-file-helpers.h"
@@ -76,10 +76,10 @@ on_snapshot_path_ready (GObject      *source,
   g_main_loop_quit (data->loop);
 }
 
-static WebKitWebView *
+static EphyEngineView *
 create_web_view (void)
 {
-  return WEBKIT_WEB_VIEW (g_object_ref_sink (G_OBJECT (webkit_web_view_new ())));
+  return EPHY_ENGINE_VIEW (g_object_ref_sink (G_OBJECT (webkit_web_view_new ())));
 }
 
 static void
@@ -101,12 +101,12 @@ static void
 test_snapshot (void)
 {
   EphySnapshotService *service = ephy_snapshot_service_get_default ();
-  g_autoptr (WebKitWebView) view = create_web_view ();
+  g_autoptr (EphyEngineView) view = create_web_view ();
   g_autofree char *url = g_strconcat (base_uri, "/snapshot", NULL);
   SnapshotTestData data;
 
   snapshot_test_data_init (&data);
-  webkit_web_view_load_uri (view, url);
+  ephy_engine_web_view_load_uri (view, url);
 
   ephy_snapshot_service_get_snapshot_path_async (service,
                                                  view,
@@ -126,7 +126,7 @@ static void
 test_cached_snapshot (void)
 {
   EphySnapshotService *service = ephy_snapshot_service_get_default ();
-  g_autoptr (WebKitWebView) view = create_web_view ();
+  g_autoptr (EphyEngineView) view = create_web_view ();
   g_autofree char *url = g_strconcat (base_uri, "/snapshot", NULL);
   const char *cached_path;
   SnapshotTestData data;
@@ -136,7 +136,7 @@ test_cached_snapshot (void)
   g_assert_true (g_file_test (cached_path, G_FILE_TEST_EXISTS));
 
   snapshot_test_data_init (&data);
-  webkit_web_view_load_uri (view, url);
+  ephy_engine_web_view_load_uri (view, url);
 
   ephy_snapshot_service_get_snapshot_path_async (service,
                                                  view,
@@ -193,10 +193,10 @@ test_many_snapshots (void)
 
   for (guint i = 0; i < 3; i++) {
     g_autofree char *url = g_strconcat (base_uri, paths[i], NULL);
-    WebKitWebView *view = create_web_view ();
+    EphyEngineView *view = create_web_view ();
 
     g_ptr_array_add (views, view);
-    webkit_web_view_load_uri (view, url);
+    ephy_engine_web_view_load_uri (view, url);
     ephy_snapshot_service_get_snapshot_path_async (service,
                                                    view,
                                                    NULL,
@@ -213,13 +213,13 @@ static void
 test_snapshot_with_cancellable (void)
 {
   EphySnapshotService *service = ephy_snapshot_service_get_default ();
-  g_autoptr (WebKitWebView) view = create_web_view ();
+  g_autoptr (EphyEngineView) view = create_web_view ();
   g_autofree char *url = g_strconcat (base_uri, "/with-cancellable", NULL);
   g_autoptr (GCancellable) cancellable = g_cancellable_new ();
   SnapshotTestData data;
 
   snapshot_test_data_init (&data);
-  webkit_web_view_load_uri (view, url);
+  ephy_engine_web_view_load_uri (view, url);
 
   ephy_snapshot_service_get_snapshot_path_async (service,
                                                  view,
@@ -239,13 +239,13 @@ static void
 test_already_cancelled_snapshot (void)
 {
   EphySnapshotService *service = ephy_snapshot_service_get_default ();
-  g_autoptr (WebKitWebView) view = create_web_view ();
+  g_autoptr (EphyEngineView) view = create_web_view ();
   g_autofree char *url = g_strconcat (base_uri, "/already-cancelled", NULL);
   g_autoptr (GCancellable) cancellable = g_cancellable_new ();
   SnapshotTestData data;
 
   snapshot_test_data_init (&data);
-  webkit_web_view_load_uri (view, url);
+  ephy_engine_web_view_load_uri (view, url);
 
   g_cancellable_cancel (cancellable);
   ephy_snapshot_service_get_snapshot_path_async (service,
@@ -265,13 +265,13 @@ static void
 test_delete_snapshot (void)
 {
   EphySnapshotService *service = ephy_snapshot_service_get_default ();
-  g_autoptr (WebKitWebView) view = create_web_view ();
+  g_autoptr (EphyEngineView) view = create_web_view ();
   g_autofree char *url = g_strconcat (base_uri, "/to-delete", NULL);
   SnapshotTestData data;
   g_autofree char *saved_path = NULL;
 
   snapshot_test_data_init (&data);
-  webkit_web_view_load_uri (view, url);
+  ephy_engine_web_view_load_uri (view, url);
 
   ephy_snapshot_service_get_snapshot_path_async (service,
                                                  view,

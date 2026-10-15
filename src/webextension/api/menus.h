@@ -20,7 +20,7 @@
 #pragma once
 
 #include <json-glib/json-glib.h>
-#include <webkit/webkit.h>
+#include "ephy-engine-view.h"
 
 #include "ephy-web-extension.h"
 
@@ -32,7 +32,7 @@ void         ephy_web_extension_api_menus_handler                    (EphyWebExt
                                                                       GTask                  *task);
 
 WebKitContextMenuItem  *ephy_web_extension_api_menus_create_context_menu        (EphyWebExtension    *self,
-                                                                                 WebKitWebView       *web_view,
+                                                                                 EphyEngineView       *web_view,
                                                                                  WebKitContextMenu   *context_menu,
                                                                                  WebKitHitTestResult *hit_test_result,
                                                                                  GdkModifierType      modifiers,

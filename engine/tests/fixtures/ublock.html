@@ -1,0 +1,12 @@
+<!doctype html><meta charset="utf-8"><title>uBlock compatibility</title>
+<div class="jupiter-ad">This should be hidden by uBlock</div><p>Full uBlock Origin MV2</p>
+<iframe src="ublock-frame.html"></iframe>
+<script>
+window.jupiterSentinel=false;
+setTimeout(async()=>{
+try {await fetch('/blocked.gif');console.log('UBO_NETWORK:FAIL');}catch{console.log('UBO_NETWORK:PASS');}
+console.log('UBO_COSMETIC:'+(getComputedStyle(document.querySelector('.jupiter-ad')).display==='none'?'PASS':'FAIL'));
+console.log('UBO_SCRIPTLET:'+(window.jupiterSentinel===true?'PASS':'FAIL'));
+},4000);
+addEventListener('message',e=>{if(e.source===document.querySelector('iframe').contentWindow)console.log(e.data);});
+</script>

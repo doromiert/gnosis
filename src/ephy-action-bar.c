@@ -89,7 +89,7 @@ history_row_enter_cb (GtkEventController *controller,
   const char *text;
   GtkRoot *root;
   EphyEmbed *embed;
-  WebKitWebView *web_view;
+  EphyEngineView *web_view;
 
   widget = gtk_event_controller_get_widget (controller);
   text = g_object_get_data (G_OBJECT (widget), "link-message");
@@ -107,7 +107,7 @@ history_row_leave_cb (GtkEventController *controller,
 {
   GtkRoot *root;
   EphyEmbed *embed;
-  WebKitWebView *web_view;
+  EphyEngineView *web_view;
 
   root = gtk_widget_get_root (GTK_WIDGET (action_bar_start));
   embed = ephy_embed_container_get_active_child (EPHY_EMBED_CONTAINER (root));
@@ -117,21 +117,21 @@ history_row_leave_cb (GtkEventController *controller,
 }
 
 static GList *
-construct_webkit_history_list (WebKitWebView     *web_view,
+construct_webkit_history_list (EphyEngineView     *web_view,
                                WebKitHistoryType  hist_type,
                                int                limit)
 {
-  WebKitBackForwardList *back_forward_list;
+  EphyEngineHistory *back_forward_list;
 
-  back_forward_list = webkit_web_view_get_back_forward_list (web_view);
+  back_forward_list = ephy_engine_web_view_get_back_forward_list (web_view);
   return hist_type == WEBKIT_HISTORY_FORWARD ?
-         g_list_reverse (webkit_back_forward_list_get_forward_list_with_limit (back_forward_list, limit)) :
-         webkit_back_forward_list_get_back_list_with_limit (back_forward_list, limit);
+         g_list_reverse (ephy_engine_back_forward_list_get_forward_list_with_limit (back_forward_list, limit)) :
+         ephy_engine_back_forward_list_get_back_list_with_limit (back_forward_list, limit);
 }
 
 static void
 middle_click_handle_on_history_menu_item (EphyEmbed                 *embed,
-                                          WebKitBackForwardListItem *item)
+                                          EphyEngineHistoryItem *item)
 {
   EphyEmbed *new_embed = NULL;
   const gchar *url;
@@ -143,7 +143,7 @@ middle_click_handle_on_history_menu_item (EphyEmbed                 *embed,
   g_assert (new_embed);
 
   /* Load the new URL */
-  url = webkit_back_forward_list_item_get_original_uri (item);
+  url = ephy_engine_back_forward_list_item_get_original_uri (item);
   ephy_web_view_load_url (ephy_embed_get_web_view (new_embed), url);
 }
 
@@ -154,7 +154,7 @@ history_row_released_cb (GtkGesture    *gesture,
                          double         y,
                          EphyActionBar *action_bar)
 {
-  WebKitBackForwardListItem *item;
+  EphyEngineHistoryItem *item;
   GtkWidget *widget;
   guint button;
   GtkRoot *root;
@@ -184,10 +184,10 @@ history_row_released_cb (GtkGesture    *gesture,
   if (button == GDK_BUTTON_MIDDLE) {
     middle_click_handle_on_history_menu_item (embed, item);
   } else {
-    WebKitWebView *web_view;
+    EphyEngineView *web_view;
 
     web_view = EPHY_GET_WEBKIT_WEB_VIEW_FROM_EMBED (embed);
-    webkit_web_view_go_to_back_forward_list_item (web_view, item);
+    ephy_engine_web_view_go_to_back_forward_list_item (web_view, item);
 
     gtk_popover_popdown (GTK_POPOVER (action_bar->history_menu));
   }
@@ -224,7 +224,7 @@ icon_loaded_cb (GObject      *source,
 
 static GtkWidget *
 build_history_row (EphyActionBar             *action_bar,
-                   WebKitBackForwardListItem *item)
+                   EphyEngineHistoryItem *item)
 {
   EphyEmbedShell *shell = ephy_embed_shell_get_default ();
   const char *uri;
@@ -234,8 +234,8 @@ build_history_row (EphyActionBar             *action_bar,
   GtkEventController *controller;
   GtkGesture *gesture;
 
-  uri = webkit_back_forward_list_item_get_uri (item);
-  title = g_strdup (webkit_back_forward_list_item_get_title (item));
+  uri = ephy_engine_back_forward_list_item_get_uri (item);
+  title = g_strdup (ephy_engine_back_forward_list_item_get_title (item));
 
   row = gtk_list_box_row_new ();
 
@@ -292,7 +292,7 @@ build_history_menu (EphyActionBar                  *action_bar,
   GtkWidget *popover, *listbox;
   GtkRoot *root;
   EphyEmbed *embed;
-  WebKitWebView *web_view;
+  EphyEngineView *web_view;
   g_autoptr (GList) list = NULL;
   GList *l;
 

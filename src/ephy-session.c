@@ -22,6 +22,7 @@
  */
 
 #include "config.h"
+#include "ephy-engine-view.h"
 
 #include "ephy-session.h"
 
@@ -54,7 +55,7 @@ typedef struct {
   TabViewTracker *tab_view_tracker;
   int position;
   char *url;
-  WebKitWebViewSessionState *state;
+  EphyEngineSessionState *state;
 } ClosedTab;
 
 struct _EphySession {
@@ -115,7 +116,7 @@ session_delete (EphySession *session)
 }
 
 static void
-load_changed_cb (WebKitWebView   *view,
+load_changed_cb (EphyEngineView   *view,
                  WebKitLoadEvent  load_event,
                  EphySession     *session)
 {
@@ -201,7 +202,7 @@ closed_tab_free (ClosedTab *tab)
 {
   g_free (tab->url);
   tab_view_tracker_unref (tab->tab_view_tracker);
-  webkit_web_view_session_state_unref (tab->state);
+  ephy_engine_web_view_session_state_unref (tab->state);
 
   g_free (tab);
 }
@@ -226,9 +227,9 @@ void
 ephy_session_undo_close_tab (EphySession *session)
 {
   EphyEmbed *embed, *new_tab;
-  WebKitWebView *web_view;
-  WebKitBackForwardList *bf_list;
-  WebKitBackForwardListItem *item;
+  EphyEngineView *web_view;
+  EphyEngineHistory *bf_list;
+  EphyEngineHistoryItem *item;
   ClosedTab *tab;
   EphyWindow *window;
   EphyTabView *tab_view;
@@ -272,12 +273,12 @@ ephy_session_undo_close_tab (EphySession *session)
                                    ephy_window_get_tab_view (window));
   }
 
-  web_view = WEBKIT_WEB_VIEW (ephy_embed_get_web_view (new_tab));
-  webkit_web_view_restore_session_state (web_view, tab->state);
-  bf_list = webkit_web_view_get_back_forward_list (web_view);
-  item = webkit_back_forward_list_get_current_item (bf_list);
+  web_view = EPHY_ENGINE_VIEW (ephy_embed_get_web_view (new_tab));
+  ephy_engine_web_view_restore_session_state (web_view, tab->state);
+  bf_list = ephy_engine_web_view_get_back_forward_list (web_view);
+  item = ephy_engine_back_forward_list_get_current_item (bf_list);
   if (item) {
-    webkit_web_view_go_to_back_forward_list_item (web_view, item);
+    ephy_engine_web_view_go_to_back_forward_list_item (web_view, item);
   } else {
     ephy_web_view_load_url (ephy_embed_get_web_view (new_tab), tab->url);
   }
@@ -298,13 +299,13 @@ ephy_session_tab_closed (EphySession *session,
                          gint         position)
 {
   EphyWebView *view;
-  WebKitWebView *wk_view;
+  EphyEngineView *wk_view;
   ClosedTab *tab;
 
   view = ephy_embed_get_web_view (embed);
-  wk_view = WEBKIT_WEB_VIEW (view);
+  wk_view = EPHY_ENGINE_VIEW (view);
 
-  if (!webkit_web_view_can_go_back (wk_view) && !webkit_web_view_can_go_forward (wk_view) &&
+  if (!ephy_engine_web_view_can_go_back (wk_view) && !ephy_engine_web_view_can_go_forward (wk_view) &&
       (ephy_web_view_get_is_blank (view) || ephy_web_view_is_newtab (view) ||
        ephy_web_view_is_overview (view))) {
     return;
@@ -547,7 +548,7 @@ typedef struct {
   gboolean loading;
   gboolean crashed;
   gboolean pinned;
-  WebKitWebViewSessionState *state;
+  EphyEngineSessionState *state;
 } SessionTab;
 
 static SessionTab *
@@ -568,9 +569,9 @@ session_tab_new (EphyEmbed   *embed,
     session_tab->url = g_strconcat ("about", address + EPHY_ABOUT_SCHEME_LEN, NULL);
   } else if (strcmp (address, "about:blank") == 0) {
     /* EphyWebView address is NULL between load_uri() and WEBKIT_LOAD_STARTED,
-     * but WebKitWebView knows the pending API request URL, so use that instead of about:blank.
+     * but EphyEngineView knows the pending API request URL, so use that instead of about:blank.
      */
-    session_tab->url = g_strdup (webkit_web_view_get_uri (WEBKIT_WEB_VIEW (web_view)));
+    session_tab->url = g_strdup (ephy_engine_web_view_get_uri (EPHY_ENGINE_VIEW (web_view)));
   } else {
     session_tab->url = g_strdup (address);
   }
@@ -592,7 +593,7 @@ session_tab_free (SessionTab *tab)
 {
   g_free (tab->url);
   g_free (tab->title);
-  g_clear_pointer (&tab->state, webkit_web_view_session_state_unref);
+  g_clear_pointer (&tab->state, ephy_engine_web_view_session_state_unref);
 
   g_free (tab);
 }
@@ -749,7 +750,7 @@ write_tab (xmlTextWriterPtr  writer,
   if (tab->state) {
     GBytes *bytes;
 
-    bytes = webkit_web_view_session_state_serialize (tab->state);
+    bytes = ephy_engine_web_view_session_state_serialize (tab->state);
     if (bytes) {
       gchar *base64;
       gconstpointer data;
@@ -1191,7 +1192,7 @@ session_parse_embed (SessionParserContext  *context,
     EphyEmbed *embed;
     EphyWebView *web_view;
     gboolean delay_loading = FALSE;
-    WebKitWebViewSessionState *state = NULL;
+    EphyEngineSessionState *state = NULL;
 
     shell = ephy_embed_shell_get_default ();
     mode = ephy_embed_shell_get_mode (shell);
@@ -1220,7 +1221,7 @@ session_parse_embed (SessionParserContext  *context,
 
       data = g_base64_decode (history, &data_length);
       history_data = g_bytes_new_take (data, data_length);
-      state = webkit_web_view_session_state_new (history_data);
+      state = ephy_engine_web_view_session_state_new (history_data);
       g_bytes_unref (history_data);
     }
 
@@ -1231,24 +1232,24 @@ session_parse_embed (SessionParserContext  *context,
       ephy_web_view_set_placeholder (web_view, url, title);
       g_object_unref (request);
     } else {
-      WebKitBackForwardList *bf_list;
-      WebKitBackForwardListItem *item;
+      EphyEngineHistory *bf_list;
+      EphyEngineHistoryItem *item;
 
       if (state) {
-        webkit_web_view_restore_session_state (WEBKIT_WEB_VIEW (web_view), state);
+        ephy_engine_web_view_restore_session_state (EPHY_ENGINE_VIEW (web_view), state);
       }
 
-      bf_list = webkit_web_view_get_back_forward_list (WEBKIT_WEB_VIEW (web_view));
-      item = webkit_back_forward_list_get_current_item (bf_list);
+      bf_list = ephy_engine_web_view_get_back_forward_list (EPHY_ENGINE_VIEW (web_view));
+      item = ephy_engine_back_forward_list_get_current_item (bf_list);
       if (item) {
-        webkit_web_view_go_to_back_forward_list_item (WEBKIT_WEB_VIEW (web_view), item);
+        ephy_engine_web_view_go_to_back_forward_list_item (EPHY_ENGINE_VIEW (web_view), item);
       } else {
         ephy_web_view_load_url (web_view, url);
       }
     }
 
     if (state) {
-      webkit_web_view_session_state_unref (state);
+      ephy_engine_web_view_session_state_unref (state);
     }
   } else if (url && (was_loading || crashed)) {
     /* This page was loading during a UI process crash

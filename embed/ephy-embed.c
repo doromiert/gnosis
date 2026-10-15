@@ -27,7 +27,7 @@
 #include "ephy-embed.h"
 
 #include <glib/gi18n.h>
-#include <webkit/webkit.h>
+#include "ephy-engine-view.h"
 
 #include "ephy-debug.h"
 #include "ephy-embed-prefs.h"
@@ -59,7 +59,7 @@ struct _EphyEmbed {
 
   EphyFindToolbar *find_toolbar;
   GtkBox *top_widgets_vbox;
-  WebKitWebView *web_view;
+  EphyEngineView *web_view;
   GSList *destroy_on_transition_list; /* unowned GtkWidgets */
   GtkWidget *overlay;
   GtkWidget *floating_bar;
@@ -68,7 +68,7 @@ struct _EphyEmbed {
 
   char *title;
   WebKitURIRequest *delayed_request;
-  WebKitWebViewSessionState *delayed_state;
+  EphyEngineSessionState *delayed_state;
   guint delayed_request_source_id;
   char *typed_input;
 
@@ -282,11 +282,11 @@ ephy_embed_set_title (EphyEmbed  *embed,
 }
 
 static void
-web_view_title_changed_cb (WebKitWebView *web_view,
+web_view_title_changed_cb (EphyEngineView *web_view,
                            GParamSpec    *spec,
                            EphyEmbed     *embed)
 {
-  ephy_embed_set_title (embed, webkit_web_view_get_title (web_view));
+  ephy_embed_set_title (embed, ephy_engine_web_view_get_title (web_view));
 }
 
 const char *
@@ -329,7 +329,7 @@ ephy_embed_set_animate_search_engine (EphyEmbed *embed,
 }
 
 static void
-load_changed_cb (WebKitWebView   *web_view,
+load_changed_cb (EphyEngineView   *web_view,
                  WebKitLoadEvent  load_event,
                  EphyEmbed       *embed)
 {
@@ -338,7 +338,7 @@ load_changed_cb (WebKitWebView   *web_view,
       ephy_embed_destroy_top_widgets (embed);
       break;
     case WEBKIT_LOAD_FINISHED: {
-      const char *title = webkit_web_view_get_title (web_view);
+      const char *title = ephy_engine_web_view_get_title (web_view);
 
       embed->first_load_finished = TRUE;
       embed->animate_search_engine = TRUE;
@@ -416,7 +416,7 @@ ephy_embed_dispose (GObject *object)
   g_clear_signal_handler (&embed->progress_update_handler_id, embed->web_view);
 
   g_clear_object (&embed->delayed_request);
-  g_clear_pointer (&embed->delayed_state, webkit_web_view_session_state_unref);
+  g_clear_pointer (&embed->delayed_state, ephy_engine_web_view_session_state_unref);
 
   G_OBJECT_CLASS (ephy_embed_parent_class)->dispose (object);
 }
@@ -527,7 +527,7 @@ ephy_embed_class_init (EphyEmbedClass *klass)
 }
 
 static gboolean
-ephy_embed_attach_inspector_cb (WebKitWebInspector *inspector,
+ephy_embed_attach_inspector_cb (EphyEngineInspector *inspector,
                                 EphyEmbed          *embed)
 {
   embed->inspector_loaded = TRUE;
@@ -536,7 +536,7 @@ ephy_embed_attach_inspector_cb (WebKitWebInspector *inspector,
 }
 
 static gboolean
-ephy_embed_close_inspector_cb (WebKitWebInspector *inspector,
+ephy_embed_close_inspector_cb (EphyEngineInspector *inspector,
                                EphyEmbed          *embed)
 {
   embed->inspector_loaded = FALSE;
@@ -558,7 +558,7 @@ ephy_embed_set_fullscreen_message (EphyEmbed *embed,
 }
 
 static gboolean
-entering_fullscreen_cb (WebKitWebView *web_view,
+entering_fullscreen_cb (EphyEngineView *web_view,
                         EphyEmbed     *embed)
 {
   ephy_embed_set_fullscreen_message (embed, TRUE);
@@ -566,7 +566,7 @@ entering_fullscreen_cb (WebKitWebView *web_view,
 }
 
 static gboolean
-leaving_fullscreen_cb (WebKitWebView *web_view,
+leaving_fullscreen_cb (EphyEngineView *web_view,
                        EphyEmbed     *embed)
 {
   ephy_embed_set_fullscreen_message (embed, FALSE);
@@ -623,14 +623,14 @@ progress_update (EphyWebView *view,
 
   g_clear_handle_id (&embed->clear_progress_source_id, g_source_remove);
 
-  uri = webkit_web_view_get_uri (embed->web_view);
+  uri = ephy_engine_web_view_get_uri (embed->web_view);
   if (!uri || g_str_has_prefix (uri, "ephy-about:") ||
       g_str_has_prefix (uri, "about:")) {
     gtk_widget_set_visible (embed->progress, FALSE);
     return;
   }
 
-  progress = webkit_web_view_get_estimated_load_progress (embed->web_view);
+  progress = ephy_engine_web_view_get_estimated_load_progress (embed->web_view);
   loading = ephy_web_view_is_loading (EPHY_WEB_VIEW (embed->web_view));
 
   if (progress == 1.0 || !loading) {
@@ -648,7 +648,7 @@ load_delayed_request_if_mapped (gpointer user_data)
 {
   EphyEmbed *embed = EPHY_EMBED (user_data);
   EphyWebView *web_view;
-  WebKitBackForwardListItem *item;
+  EphyEngineHistoryItem *item;
 
   embed->delayed_request_source_id = 0;
 
@@ -657,16 +657,16 @@ load_delayed_request_if_mapped (gpointer user_data)
 
   web_view = ephy_embed_get_web_view (embed);
   if (embed->delayed_state)
-    webkit_web_view_restore_session_state (WEBKIT_WEB_VIEW (web_view), embed->delayed_state);
+    ephy_engine_web_view_restore_session_state (EPHY_ENGINE_VIEW (web_view), embed->delayed_state);
 
-  item = webkit_back_forward_list_get_current_item (webkit_web_view_get_back_forward_list (WEBKIT_WEB_VIEW (web_view)));
+  item = ephy_engine_back_forward_list_get_current_item (ephy_engine_web_view_get_back_forward_list (EPHY_ENGINE_VIEW (web_view)));
   if (item)
-    webkit_web_view_go_to_back_forward_list_item (WEBKIT_WEB_VIEW (web_view), item);
+    ephy_engine_web_view_go_to_back_forward_list_item (EPHY_ENGINE_VIEW (web_view), item);
   else
     ephy_web_view_load_request (web_view, embed->delayed_request);
 
   g_clear_object (&embed->delayed_request);
-  g_clear_pointer (&embed->delayed_state, webkit_web_view_session_state_unref);
+  g_clear_pointer (&embed->delayed_state, ephy_engine_web_view_session_state_unref);
 
   /* We have a binding to `is-loading` in `ephy_tab_view_add_tab ()` that depends on
    * whether the page is a placeholder (to avoid showing the spinner on tabs while restoring the session),
@@ -741,7 +741,7 @@ ephy_embed_constructed (GObject *object)
 {
   EphyEmbed *embed = (EphyEmbed *)object;
   EphyEmbedShell *shell = ephy_embed_shell_get_default ();
-  WebKitWebInspector *inspector;
+  EphyEngineInspector *inspector;
   GtkEventController *controller;
 
   G_OBJECT_CLASS (ephy_embed_parent_class)->constructed (object);
@@ -812,7 +812,7 @@ ephy_embed_constructed (GObject *object)
                                                       embed, G_CONNECT_DEFAULT);
 
   /* The inspector */
-  inspector = webkit_web_view_get_inspector (embed->web_view);
+  inspector = ephy_engine_web_view_get_inspector (embed->web_view);
 
   g_signal_connect_object (inspector, "attach",
                            G_CALLBACK (ephy_embed_attach_inspector_cb),
@@ -821,7 +821,7 @@ ephy_embed_constructed (GObject *object)
                            G_CALLBACK (ephy_embed_close_inspector_cb),
                            embed, G_CONNECT_DEFAULT);
 
-  if (webkit_web_view_is_controlled_by_automation (embed->web_view)) {
+  if (ephy_engine_web_view_is_controlled_by_automation (embed->web_view)) {
     GtkWidget *banner;
 
     /* Translators: this means WebDriver control. */
@@ -942,7 +942,7 @@ ephy_embed_remove_top_widget (EphyEmbed *embed,
  * ephy_embed_set_delayed_load_request:
  * @embed: a #EphyEmbed
  * @request: a #WebKitNetworkRequest
- * @state: (nullable): a #WebKitWebViewSessionState
+ * @state: (nullable): a #EphyEngineSessionState
  *
  * Sets the #WebKitNetworkRequest that should be loaded when the tab this embed
  * is on is switched to.
@@ -950,16 +950,16 @@ ephy_embed_remove_top_widget (EphyEmbed *embed,
 void
 ephy_embed_set_delayed_load_request (EphyEmbed                 *embed,
                                      WebKitURIRequest          *request,
-                                     WebKitWebViewSessionState *state)
+                                     EphyEngineSessionState *state)
 {
   g_assert (EPHY_IS_EMBED (embed));
   g_assert (WEBKIT_IS_URI_REQUEST (request));
 
-  g_clear_pointer (&embed->delayed_state, webkit_web_view_session_state_unref);
+  g_clear_pointer (&embed->delayed_state, ephy_engine_web_view_session_state_unref);
 
   g_set_object (&embed->delayed_request, request);
   if (state)
-    embed->delayed_state = webkit_web_view_session_state_ref (state);
+    embed->delayed_state = ephy_engine_web_view_session_state_ref (state);
 }
 
 /**
@@ -1032,10 +1032,10 @@ ephy_embed_detach_notification_container (EphyEmbed *embed)
   }
 }
 
-WebKitWebViewSessionState *
+EphyEngineSessionState *
 ephy_embed_get_session_state (EphyEmbed *embed)
 {
   if (embed->delayed_state)
-    return webkit_web_view_session_state_ref (embed->delayed_state);
-  return webkit_web_view_get_session_state (embed->web_view);
+    return ephy_engine_web_view_session_state_ref (embed->delayed_state);
+  return ephy_engine_web_view_get_session_state (embed->web_view);
 }

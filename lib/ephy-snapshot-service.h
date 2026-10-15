@@ -22,7 +22,7 @@
 
 #include <glib-object.h>
 #include <gtk/gtk.h>
-#include <webkit/webkit.h>
+#include "ephy-engine-view.h"
 
 G_BEGIN_DECLS
 
@@ -67,7 +67,7 @@ char                *ephy_snapshot_service_get_snapshot_path_for_url_finish (Eph
                                                                              GError **error);
 
 void                 ephy_snapshot_service_get_snapshot_path_async          (EphySnapshotService *service,
-                                                                             WebKitWebView *web_view,
+                                                                             EphyEngineView *web_view,
                                                                              GCancellable *cancellable,
                                                                              GAsyncReadyCallback callback,
                                                                              gpointer user_data);

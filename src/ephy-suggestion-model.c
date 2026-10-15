@@ -17,6 +17,7 @@
  */
 
 #include "config.h"
+#include "ephy-engine-view.h"
 
 #include "ephy-suggestion-model.h"
 
@@ -530,7 +531,7 @@ tabs_query (EphySuggestionModel *self,
       webview = ephy_embed_get_web_view (embed);
       display_address = ephy_web_view_get_display_address (webview);
       address = g_strdup_printf ("ephy-tab://%d@%d", i, win_idx);
-      title = webkit_web_view_get_title (WEBKIT_WEB_VIEW (webview));
+      title = ephy_engine_web_view_get_title (EPHY_ENGINE_VIEW (webview));
 
       display_address_casefold = g_utf8_casefold (display_address, -1);
       query_casefold = g_utf8_casefold (data->query, -1);

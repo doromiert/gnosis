@@ -1,0 +1,1 @@
+setInterval(()=>{try {chrome.runtime.sendMessage({probe:true},reply=>{document.documentElement.dataset.jupiterExtension=JSON.stringify(reply||{error:chrome.runtime.lastError?.message});});}catch(e){document.documentElement.dataset.jupiterExtension=JSON.stringify({error:e.message});}},500);

@@ -19,6 +19,7 @@
  */
 
 #include "config.h"
+#include "ephy-engine-view.h"
 
 #include "ephy-about-handler.h"
 
@@ -247,7 +248,7 @@ handle_applications_finished_cb (EphyAboutHandler       *handler,
                                  GAsyncResult           *result,
                                  WebKitURISchemeRequest *request)
 {
-  WebKitWebView *view;
+  EphyEngineView *view;
   GString *data_str;
   gsize data_length;
   GList *applications, *p;
@@ -273,8 +274,8 @@ handle_applications_finished_cb (EphyAboutHandler       *handler,
                             "</head><div id=\"applications\"><body class=\"applications-body\"><h1>%s</h1>"
                             "<p>%s</p>",
                             _("Apps"),
-                            webkit_web_view_get_page_id (view),
-                            webkit_web_view_get_page_id (view),
+                            ephy_engine_web_view_get_page_id (view),
+                            ephy_engine_web_view_get_page_id (view),
                             _("Apps"),
                             _("List of installed web apps"));
 

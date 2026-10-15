@@ -29,7 +29,7 @@
 #include <adwaita.h>
 #include <gdk/gdkkeysyms.h>
 #include <glib/gi18n.h>
-#include <webkit/webkit.h>
+#include "ephy-engine-view.h"
 
 #include "ephy-debug.h"
 #include "ephy-search-entry.h"
@@ -38,8 +38,8 @@ struct _EphyFindToolbar {
   AdwBin parent_instance;
 
   GCancellable *cancellable;
-  WebKitWebView *web_view;
-  WebKitFindController *controller;
+  EphyEngineView *web_view;
+  EphyEngineFind *controller;
   GtkWidget *search_bar;
   GtkWidget *entry;
   GtkWidget *options_button;
@@ -77,7 +77,7 @@ typedef enum {
 /* private functions */
 
 static void ephy_find_toolbar_set_web_view (EphyFindToolbar *toolbar,
-                                            WebKitWebView   *web_view);
+                                            EphyEngineView   *web_view);
 
 static void
 update_entry_matches (EphyFindToolbar *toolbar)
@@ -117,7 +117,7 @@ clear_status (EphyFindToolbar *toolbar)
   if (!toolbar->web_view)
     return;
 
-  webkit_find_controller_search_finish (toolbar->controller);
+  ephy_engine_find_controller_search_finish (toolbar->controller);
 }
 
 static void
@@ -138,8 +138,8 @@ real_find (EphyFindToolbar   *toolbar,
   if (toolbar->word_action)
     options |= WEBKIT_FIND_OPTIONS_AT_WORD_STARTS;
 
-  webkit_find_controller_count_matches (toolbar->controller, toolbar->find_string, options, G_MAXUINT);
-  webkit_find_controller_search (toolbar->controller, toolbar->find_string, options, G_MAXUINT);
+  ephy_engine_find_controller_count_matches (toolbar->controller, toolbar->find_string, options, G_MAXUINT);
+  ephy_engine_find_controller_search (toolbar->controller, toolbar->find_string, options, G_MAXUINT);
 }
 
 static void
@@ -151,7 +151,7 @@ do_search (EphyFindToolbar *toolbar)
 }
 
 static void
-found_text_cb (WebKitFindController *controller,
+found_text_cb (EphyEngineFind *controller,
                guint                 n_matches,
                EphyFindToolbar      *toolbar)
 {
@@ -160,26 +160,26 @@ found_text_cb (WebKitFindController *controller,
 
   update_entry_matches (toolbar);
 
-  options = webkit_find_controller_get_options (controller);
+  options = ephy_engine_find_controller_get_options (controller);
   /* FIXME: it's not possible to remove the wrap flag, so the status is now always wrapped. */
   result = (options & WEBKIT_FIND_OPTIONS_WRAP_AROUND) ? EPHY_FIND_RESULT_FOUNDWRAPPED : EPHY_FIND_RESULT_FOUND;
   set_status (toolbar, result);
 }
 
 static void
-failed_to_find_text_cb (WebKitFindController *controller,
+failed_to_find_text_cb (EphyEngineFind *controller,
                         EphyFindToolbar      *toolbar)
 {
   WebKitFindOptions options;
 
-  options = webkit_find_controller_get_options (controller);
+  options = ephy_engine_find_controller_get_options (controller);
   if (options & WEBKIT_FIND_OPTIONS_WRAP_AROUND) {
     set_status (toolbar, EPHY_FIND_RESULT_NOTFOUND);
     return;
   }
 
   options |= WEBKIT_FIND_OPTIONS_WRAP_AROUND;
-  webkit_find_controller_search (controller, toolbar->find_string, options, G_MAXUINT);
+  ephy_engine_find_controller_search (controller, toolbar->find_string, options, G_MAXUINT);
 }
 
 static void
@@ -223,7 +223,7 @@ key_pressed_cb (EphyFindToolbar       *toolbar,
 }
 
 static void
-ephy_find_toolbar_load_changed_cb (WebKitWebView   *web_view,
+ephy_find_toolbar_load_changed_cb (EphyEngineView   *web_view,
                                    WebKitLoadEvent  load_event,
                                    EphyFindToolbar *toolbar)
 {
@@ -388,7 +388,7 @@ ephy_find_toolbar_set_property (GObject      *object,
 
   switch ((EphyFindToolbarProps)prop_id) {
     case PROP_WEB_VIEW:
-      ephy_find_toolbar_set_web_view (toolbar, (WebKitWebView *)g_value_get_object (value));
+      ephy_find_toolbar_set_web_view (toolbar, (EphyEngineView *)g_value_get_object (value));
       break;
     default:
       G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
@@ -425,7 +425,7 @@ ephy_find_toolbar_class_init (EphyFindToolbarClass *klass)
   obj_properties[PROP_WEB_VIEW] =
     g_param_spec_object ("web-view",
                          NULL, NULL,
-                         WEBKIT_TYPE_WEB_VIEW,
+                         EPHY_TYPE_ENGINE_VIEW,
                          G_PARAM_WRITABLE | G_PARAM_CONSTRUCT_ONLY | G_PARAM_STATIC_STRINGS);
 
   g_object_class_install_properties (object_class, G_N_ELEMENTS (obj_properties), obj_properties);
@@ -434,7 +434,7 @@ ephy_find_toolbar_class_init (EphyFindToolbarClass *klass)
 /* public functions */
 
 EphyFindToolbar *
-ephy_find_toolbar_new (WebKitWebView *web_view)
+ephy_find_toolbar_new (EphyEngineView *web_view)
 {
   return g_object_new (EPHY_TYPE_FIND_TOOLBAR,
                        "web-view", web_view,
@@ -448,7 +448,7 @@ ephy_find_toolbar_get_text (EphyFindToolbar *toolbar)
 }
 
 static void
-counted_matches_cb (WebKitFindController *find_controller,
+counted_matches_cb (EphyEngineFind *find_controller,
                     guint                 match_count,
                     gpointer              user_data)
 {
@@ -462,7 +462,7 @@ counted_matches_cb (WebKitFindController *find_controller,
 
 static void
 ephy_find_toolbar_set_web_view (EphyFindToolbar *toolbar,
-                                WebKitWebView   *web_view)
+                                EphyEngineView   *web_view)
 {
   if (toolbar->web_view == web_view) return;
 
@@ -474,7 +474,7 @@ ephy_find_toolbar_set_web_view (EphyFindToolbar *toolbar,
 
   toolbar->web_view = web_view;
   if (web_view) {
-    toolbar->controller = webkit_web_view_get_find_controller (web_view);
+    toolbar->controller = ephy_engine_web_view_get_find_controller (web_view);
     g_signal_connect_object (toolbar->controller, "found-text",
                              G_CALLBACK (found_text_cb),
                              toolbar, G_CONNECT_DEFAULT);
@@ -501,7 +501,7 @@ ephy_find_toolbar_find_next (EphyFindToolbar *toolbar)
       toolbar->current_match = 1;
   }
 
-  webkit_find_controller_search_next (toolbar->controller);
+  ephy_engine_find_controller_search_next (toolbar->controller);
 }
 
 void
@@ -514,7 +514,7 @@ ephy_find_toolbar_find_previous (EphyFindToolbar *toolbar)
       toolbar->current_match = toolbar->num_matches;
   }
 
-  webkit_find_controller_search_previous (toolbar->controller);
+  ephy_engine_find_controller_search_previous (toolbar->controller);
 }
 
 static void
@@ -522,12 +522,12 @@ ephy_find_toolbar_selection_async (GObject      *source_object,
                                    GAsyncResult *res,
                                    gpointer      user_data)
 {
-  WebKitWebView *web_view = WEBKIT_WEB_VIEW (source_object);
+  EphyEngineView *web_view = EPHY_ENGINE_VIEW (source_object);
   EphyFindToolbar *toolbar = EPHY_FIND_TOOLBAR (user_data);
   g_autoptr (GError) error = NULL;
   g_autoptr (JSCValue) value = NULL;
 
-  value = webkit_web_view_evaluate_javascript_finish (web_view, res, &error);
+  value = ephy_engine_web_view_evaluate_javascript_finish (web_view, res, &error);
   if (!value) {
     g_warning ("Error running javascript: %s", error->message);
     return;
@@ -553,7 +553,7 @@ ephy_find_toolbar_open (EphyFindToolbar *toolbar)
 {
   g_assert (toolbar->web_view);
 
-  webkit_web_view_evaluate_javascript (toolbar->web_view, "window.getSelection().toString();", -1, NULL, NULL, toolbar->cancellable, ephy_find_toolbar_selection_async, toolbar);
+  ephy_engine_web_view_evaluate_javascript (toolbar->web_view, "window.getSelection().toString();", -1, NULL, NULL, toolbar->cancellable, ephy_find_toolbar_selection_async, toolbar);
 
   gtk_editable_select_region (GTK_EDITABLE (toolbar->entry), 0, -1);
 
@@ -569,7 +569,7 @@ ephy_find_toolbar_close (EphyFindToolbar *toolbar)
 
   if (!toolbar->web_view) return;
 
-  webkit_find_controller_search_finish (toolbar->controller);
+  ephy_engine_find_controller_search_finish (toolbar->controller);
 }
 
 void

@@ -19,6 +19,7 @@
  */
 
 #include "config.h"
+#include "ephy-engine-view.h"
 #include "ephy-tab-view.h"
 
 #include "ephy-desktop-utils.h"
@@ -70,9 +71,9 @@ indicator_activated_cb (EphyTabView *self,
 {
   EphyEmbed *embed = EPHY_EMBED (adw_tab_page_get_child (page));
   EphyWebView *view = ephy_embed_get_web_view (embed);
-  gboolean muted = webkit_web_view_get_is_muted (WEBKIT_WEB_VIEW (view));
+  gboolean muted = ephy_engine_web_view_get_is_muted (EPHY_ENGINE_VIEW (view));
 
-  webkit_web_view_set_is_muted (WEBKIT_WEB_VIEW (view), !muted);
+  ephy_engine_web_view_set_is_muted (EPHY_ENGINE_VIEW (view), !muted);
 }
 
 static void
@@ -394,7 +395,7 @@ update_icon_cb (AdwTabPage *page)
     return;
   }
 
-  uri = webkit_web_view_get_uri (WEBKIT_WEB_VIEW (view));
+  uri = ephy_engine_web_view_get_uri (EPHY_ENGINE_VIEW (view));
   favicon_name = ephy_get_fallback_favicon_name (uri, EPHY_FAVICON_TYPE_NO_MISSING_PLACEHOLDER);
 
   if (favicon_name)
@@ -412,7 +413,7 @@ update_uri_cb (AdwTabPage *page)
 
   update_icon_cb (page);
 
-  uri = webkit_web_view_get_uri (WEBKIT_WEB_VIEW (view));
+  uri = ephy_engine_web_view_get_uri (EPHY_ENGINE_VIEW (view));
 
   adw_tab_page_set_keyword (page, uri);
 }
@@ -424,8 +425,8 @@ update_indicator_cb (AdwTabPage *page)
   EphyWebView *view = ephy_embed_get_web_view (embed);
   g_autoptr (GIcon) icon = NULL;
 
-  if (webkit_web_view_is_playing_audio (WEBKIT_WEB_VIEW (view))) {
-    if (webkit_web_view_get_is_muted (WEBKIT_WEB_VIEW (view)))
+  if (ephy_engine_web_view_is_playing_audio (EPHY_ENGINE_VIEW (view))) {
+    if (ephy_engine_web_view_get_is_muted (EPHY_ENGINE_VIEW (view)))
       icon = G_ICON (g_themed_icon_new ("ephy-audio-muted-symbolic"));
     else
       icon = G_ICON (g_themed_icon_new ("ephy-audio-playing-symbolic"));

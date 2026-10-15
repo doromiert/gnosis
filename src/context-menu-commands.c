@@ -28,7 +28,7 @@
 #include <glib/gi18n.h>
 #include <gtk/gtk.h>
 #include <libportal-gtk4/portal-gtk4.h>
-#include <webkit/webkit.h>
+#include "ephy-engine-view.h"
 
 #include "ephy-bookmark-properties.h"
 #include "ephy-downloads-manager.h"
@@ -57,7 +57,7 @@ view_in_destination (EphyWindow      *window,
   EphyEmbed *embed;
   EphyEmbed *new_embed;
   EphyWebView *new_view;
-  WebKitWebViewSessionState *session_state;
+  EphyEngineSessionState *session_state;
   EphyWindow *dest_window = window;
   EphyNewTabFlags flags = 0;
 
@@ -85,9 +85,9 @@ view_in_destination (EphyWindow      *window,
                                   dest_window, embed, flags);
 
   new_view = ephy_embed_get_web_view (new_embed);
-  session_state = webkit_web_view_get_session_state (WEBKIT_WEB_VIEW (ephy_embed_get_web_view (embed)));
-  webkit_web_view_restore_session_state (WEBKIT_WEB_VIEW (new_view), session_state);
-  webkit_web_view_session_state_unref (session_state);
+  session_state = ephy_engine_web_view_get_session_state (EPHY_ENGINE_VIEW (ephy_embed_get_web_view (embed)));
+  ephy_engine_web_view_restore_session_state (EPHY_ENGINE_VIEW (new_view), session_state);
+  ephy_engine_web_view_session_state_unref (session_state);
   ephy_web_view_load_url (new_view, value);
 
   if (g_settings_get_boolean (EPHY_SETTINGS_WEB, EPHY_PREFS_WEB_SWITCH_TO_NEW_TAB))

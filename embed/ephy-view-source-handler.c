@@ -19,6 +19,7 @@
  */
 
 #include "config.h"
+#include "ephy-engine-view.h"
 
 #include "ephy-view-source-handler.h"
 
@@ -43,7 +44,7 @@ G_DEFINE_FINAL_TYPE (EphyViewSourceHandler, ephy_view_source_handler, G_TYPE_OBJ
 typedef struct {
   EphyViewSourceHandler *source_handler;
   WebKitURISchemeRequest *scheme_request;
-  WebKitWebView *web_view;
+  EphyEngineView *web_view;
   GCancellable *cancellable;
   gulong load_changed_id;
 } EphyViewSourceRequest;
@@ -107,7 +108,7 @@ finish_uri_scheme_request (EphyViewSourceRequest *request,
 }
 
 static void
-web_resource_data_cb (WebKitWebResource     *resource,
+web_resource_data_cb (EphyEngineResource     *resource,
                       GAsyncResult          *result,
                       EphyViewSourceRequest *request)
 {
@@ -119,7 +120,7 @@ web_resource_data_cb (WebKitWebResource     *resource,
   g_autofree char *html = NULL;
   gsize length;
 
-  data = webkit_web_resource_get_data_finish (resource, result, &length, &error);
+  data = ephy_engine_web_resource_get_data_finish (resource, result, &length, &error);
   if (!data) {
     finish_uri_scheme_request (request, NULL, error);
     return;
@@ -131,7 +132,7 @@ web_resource_data_cb (WebKitWebResource     *resource,
   data_str[length] = '\0';
 
   encoded_str = ephy_encode_for_html (data_str);
-  encoded_uri = ephy_encode_for_html (webkit_web_resource_get_uri (resource));
+  encoded_uri = ephy_encode_for_html (ephy_engine_web_resource_get_uri (resource));
 
   html = g_strdup_printf ("<head>"
                           "  <link rel='stylesheet' href='ephy-resource:///org/gnome/epiphany/highlightjs/nnfx-light.css' media='(prefers-color-scheme: no-preference), (prefers-color-scheme: light)'>"
@@ -154,18 +155,18 @@ web_resource_data_cb (WebKitWebResource     *resource,
 
 static void
 ephy_view_source_request_begin_get_source_from_web_view (EphyViewSourceRequest *request,
-                                                         WebKitWebView         *web_view)
+                                                         EphyEngineView         *web_view)
 {
-  WebKitWebResource *resource = webkit_web_view_get_main_resource (web_view);
+  EphyEngineResource *resource = ephy_engine_web_view_get_main_resource (web_view);
   g_assert (resource);
-  webkit_web_resource_get_data (resource,
+  ephy_engine_web_resource_get_data (resource,
                                 request->cancellable,
                                 (GAsyncReadyCallback)(web_resource_data_cb),
                                 request);
 }
 
 static void
-load_changed_cb (WebKitWebView         *web_view,
+load_changed_cb (EphyEngineView         *web_view,
                  WebKitLoadEvent        load_event,
                  EphyViewSourceRequest *request)
 {
@@ -184,7 +185,7 @@ ephy_view_source_request_begin_get_source_from_uri (EphyViewSourceRequest *reque
   WebKitWebContext *context = ephy_embed_shell_get_web_context (shell);
   WebKitNetworkSession *network_session = ephy_embed_shell_get_network_session (shell);
 
-  request->web_view = WEBKIT_WEB_VIEW (g_object_ref_sink (g_object_new (WEBKIT_TYPE_WEB_VIEW,
+  request->web_view = EPHY_ENGINE_VIEW (g_object_ref_sink (g_object_new (EPHY_TYPE_ENGINE_VIEW,
                                                                         "web-context", context,
                                                                         "network-session", network_session,
                                                                         NULL)));
@@ -194,7 +195,7 @@ ephy_view_source_request_begin_get_source_from_uri (EphyViewSourceRequest *reque
                                                G_CALLBACK (load_changed_cb),
                                                request);
 
-  webkit_web_view_load_uri (request->web_view, uri);
+  ephy_engine_web_view_load_uri (request->web_view, uri);
 }
 
 static gint
@@ -213,7 +214,7 @@ embed_is_displaying_matching_uri (EphyEmbed *embed,
   return g_strcmp0 (ephy_web_view_get_address (web_view), uri);
 }
 
-static WebKitWebView *
+static EphyEngineView *
 get_web_view_matching_uri (const char *uri)
 {
   EphyEmbedShell *shell;
@@ -237,7 +238,7 @@ get_web_view_matching_uri (const char *uri)
 out:
   g_list_free (embeds);
 
-  return embed ? WEBKIT_WEB_VIEW (ephy_embed_get_web_view (embed)) : NULL;
+  return embed ? EPHY_ENGINE_VIEW (ephy_embed_get_web_view (embed)) : NULL;
 }
 
 static void
@@ -246,7 +247,7 @@ ephy_view_source_request_start (EphyViewSourceRequest *request)
   g_autoptr (GUri) uri = NULL;
   const char *converted_uri;
   const char *original_uri;
-  WebKitWebView *web_view;
+  EphyEngineView *web_view;
 
   original_uri = webkit_uri_scheme_request_get_uri (request->scheme_request);
 
@@ -269,7 +270,7 @@ ephy_view_source_request_start (EphyViewSourceRequest *request)
 
   web_view = get_web_view_matching_uri (converted_uri);
   if (web_view)
-    ephy_view_source_request_begin_get_source_from_web_view (request, WEBKIT_WEB_VIEW (web_view));
+    ephy_view_source_request_begin_get_source_from_web_view (request, EPHY_ENGINE_VIEW (web_view));
   else {
     ephy_view_source_request_begin_get_source_from_uri (request, converted_uri);
   }

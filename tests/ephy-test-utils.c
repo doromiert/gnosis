@@ -19,6 +19,7 @@
  */
 
 #include "config.h"
+#include "ephy-engine-view.h"
 
 #include "ephy-test-utils.h"
 
@@ -51,7 +52,7 @@ ephy_test_utils_check_ephy_embed_address (EphyEmbed   *embed,
 }
 
 static void
-load_changed_cb (WebKitWebView   *web_view,
+load_changed_cb (EphyEngineView   *web_view,
                  WebKitLoadEvent  status,
                  GMainLoop       *loop)
 {
@@ -65,7 +66,7 @@ load_changed_cb (WebKitWebView   *web_view,
 }
 
 static void
-wait_until_load_is_committed (WebKitWebView *web_view,
+wait_until_load_is_committed (EphyEngineView *web_view,
                               GMainLoop     *loop)
 {
   g_signal_connect (web_view, "load-changed", G_CALLBACK (load_changed_cb), loop);
@@ -77,7 +78,7 @@ web_view_created_cb (EphyEmbedShell *shell,
                      GMainLoop      *loop)
 {
   web_view_ready_counter++;
-  wait_until_load_is_committed (WEBKIT_WEB_VIEW (view), loop);
+  wait_until_load_is_committed (EPHY_ENGINE_VIEW (view), loop);
 }
 
 GMainLoop *
@@ -113,7 +114,7 @@ ephy_test_utils_setup_wait_until_load_is_committed (EphyWebView *view)
   web_view_ready_counter = 1;
 
   loop = g_main_loop_new (NULL, FALSE);
-  wait_until_load_is_committed (WEBKIT_WEB_VIEW (view), loop);
+  wait_until_load_is_committed (EPHY_ENGINE_VIEW (view), loop);
 
   return loop;
 }

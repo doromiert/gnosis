@@ -34,7 +34,7 @@
 #include <gst/gst.h>
 #include <gtk/gtk.h>
 #include <libportal-gtk4/portal-gtk4.h>
-#include <webkit/webkit.h>
+#include "ephy-engine-view.h"
 
 #include "clear-data-view.h"
 #include "ephy-bookmark-properties.h"
@@ -1283,7 +1283,7 @@ window_cmd_navigation (GSimpleAction *action,
 {
   EphyWindow *window = EPHY_WINDOW (user_data);
   EphyEmbed *embed;
-  WebKitWebView *web_view;
+  EphyEngineView *web_view;
 
   embed = ephy_embed_container_get_active_child (EPHY_EMBED_CONTAINER (window));
   g_assert (embed);
@@ -1291,10 +1291,10 @@ window_cmd_navigation (GSimpleAction *action,
   web_view = EPHY_GET_WEBKIT_WEB_VIEW_FROM_EMBED (embed);
 
   if (strstr (g_action_get_name (G_ACTION (action)), "back")) {
-    webkit_web_view_go_back (web_view);
+    ephy_engine_web_view_go_back (web_view);
     gtk_widget_grab_focus (GTK_WIDGET (embed));
   } else {
-    webkit_web_view_go_forward (web_view);
+    ephy_engine_web_view_go_forward (web_view);
     gtk_widget_grab_focus (GTK_WIDGET (embed));
   }
 }
@@ -1306,7 +1306,7 @@ window_cmd_navigation_new_tab (GSimpleAction *action,
 {
   EphyWindow *window = EPHY_WINDOW (user_data);
   EphyEmbed *embed;
-  WebKitWebView *web_view;
+  EphyEngineView *web_view;
 
   embed = ephy_embed_container_get_active_child (EPHY_EMBED_CONTAINER (window));
   g_assert (embed);
@@ -1315,12 +1315,12 @@ window_cmd_navigation_new_tab (GSimpleAction *action,
 
   if (strstr (g_action_get_name (G_ACTION (action)), "back")) {
     const char *back_uri;
-    WebKitBackForwardList *history;
-    WebKitBackForwardListItem *back_item;
+    EphyEngineHistory *history;
+    EphyEngineHistoryItem *back_item;
 
-    history = webkit_web_view_get_back_forward_list (web_view);
-    back_item = webkit_back_forward_list_get_back_item (history);
-    back_uri = webkit_back_forward_list_item_get_original_uri (back_item);
+    history = ephy_engine_web_view_get_back_forward_list (web_view);
+    back_item = ephy_engine_back_forward_list_get_back_item (history);
+    back_uri = ephy_engine_back_forward_list_item_get_original_uri (back_item);
 
     embed = ephy_shell_new_tab (ephy_shell_get_default (),
                                 EPHY_WINDOW (gtk_widget_get_root (GTK_WIDGET (embed))),
@@ -1328,19 +1328,19 @@ window_cmd_navigation_new_tab (GSimpleAction *action,
                                 0);
 
     web_view = EPHY_GET_WEBKIT_WEB_VIEW_FROM_EMBED (embed);
-    webkit_web_view_load_uri (web_view, back_uri);
+    ephy_engine_web_view_load_uri (web_view, back_uri);
     gtk_widget_grab_focus (GTK_WIDGET (embed));
   } else {
     const char *forward_uri;
-    WebKitBackForwardList *history;
-    WebKitBackForwardListItem *forward_item;
+    EphyEngineHistory *history;
+    EphyEngineHistoryItem *forward_item;
 
     /* Forward history is not copied when opening
      *  a new tab, so get the forward URI manually
      *  and load it */
-    history = webkit_web_view_get_back_forward_list (EPHY_GET_WEBKIT_WEB_VIEW_FROM_EMBED (embed));
-    forward_item = webkit_back_forward_list_get_forward_item (history);
-    forward_uri = webkit_back_forward_list_item_get_original_uri (forward_item);
+    history = ephy_engine_web_view_get_back_forward_list (EPHY_GET_WEBKIT_WEB_VIEW_FROM_EMBED (embed));
+    forward_item = ephy_engine_back_forward_list_get_forward_item (history);
+    forward_uri = ephy_engine_back_forward_list_item_get_original_uri (forward_item);
 
     embed = ephy_shell_new_tab (ephy_shell_get_default (),
                                 EPHY_WINDOW (gtk_widget_get_root (GTK_WIDGET (embed))),
@@ -1348,7 +1348,7 @@ window_cmd_navigation_new_tab (GSimpleAction *action,
                                 0);
 
     web_view = EPHY_GET_WEBKIT_WEB_VIEW_FROM_EMBED (embed);
-    webkit_web_view_load_uri (web_view, forward_uri);
+    ephy_engine_web_view_load_uri (web_view, forward_uri);
   }
 }
 
@@ -1366,7 +1366,7 @@ window_cmd_stop (GSimpleAction *action,
 
   gtk_widget_grab_focus (GTK_WIDGET (embed));
 
-  webkit_web_view_stop_loading (EPHY_GET_WEBKIT_WEB_VIEW_FROM_EMBED (embed));
+  ephy_engine_web_view_stop_loading (EPHY_GET_WEBKIT_WEB_VIEW_FROM_EMBED (embed));
 }
 
 static void
@@ -1374,11 +1374,11 @@ check_tab_has_modified_forms_confirm_cb (AdwAlertDialog *dialog,
                                          const char     *response,
                                          EphyEmbed      *embed)
 {
-  WebKitWebView *view = EPHY_GET_WEBKIT_WEB_VIEW_FROM_EMBED (embed);
+  EphyEngineView *view = EPHY_GET_WEBKIT_WEB_VIEW_FROM_EMBED (embed);
 
   if (strcmp (response, "discard") == 0) {
     gtk_widget_grab_focus (GTK_WIDGET (embed));
-    webkit_web_view_reload (view);
+    ephy_engine_web_view_reload (view);
   }
 
   g_object_unref (embed);
@@ -1416,7 +1416,7 @@ check_tab_has_modified_forms_and_reload_cb (EphyWebView  *view,
   }
 
   gtk_widget_grab_focus (GTK_WIDGET (embed));
-  webkit_web_view_reload (WEBKIT_WEB_VIEW (view));
+  ephy_engine_web_view_reload (EPHY_ENGINE_VIEW (view));
 
   g_object_unref (embed);
 }
@@ -1445,7 +1445,7 @@ window_cmd_reload_bypass_cache (GSimpleAction *action,
 {
   EphyWindow *window = EPHY_WINDOW (user_data);
   EphyEmbed *embed;
-  WebKitWebView *view;
+  EphyEngineView *view;
 
   embed = ephy_embed_container_get_active_child (EPHY_EMBED_CONTAINER (window));
   g_assert (embed);
@@ -1453,7 +1453,7 @@ window_cmd_reload_bypass_cache (GSimpleAction *action,
   gtk_widget_grab_focus (GTK_WIDGET (embed));
 
   view = EPHY_GET_WEBKIT_WEB_VIEW_FROM_EMBED (embed);
-  webkit_web_view_reload_bypass_cache (view);
+  ephy_engine_web_view_reload_bypass_cache (view);
 }
 
 void
@@ -1798,7 +1798,7 @@ static void
 set_image_from_favicon (EphyApplicationDialogData *data)
 {
   g_autoptr (GIcon) icon = NULL;
-  GdkTexture *icon_texture = webkit_web_view_get_favicon (WEBKIT_WEB_VIEW (data->view));
+  GdkTexture *icon_texture = ephy_engine_web_view_get_favicon (EPHY_ENGINE_VIEW (data->view));
 
   icon = ephy_favicon_get_from_texture_scaled (icon_texture, 0, 0);
   if (icon) {
@@ -1927,7 +1927,7 @@ set_default_application_title (EphyApplicationDialogData *data,
     g_autoptr (GUri) uri = NULL;
     const char *host;
 
-    uri = g_uri_parse (webkit_web_view_get_uri (WEBKIT_WEB_VIEW (data->view)), G_URI_FLAGS_PARSE_RELAXED, NULL);
+    uri = g_uri_parse (ephy_engine_web_view_get_uri (EPHY_ENGINE_VIEW (data->view)), G_URI_FLAGS_PARSE_RELAXED, NULL);
     host = g_uri_get_host (uri);
 
     if (host && host[0] != '\0') {
@@ -1939,7 +1939,7 @@ set_default_application_title (EphyApplicationDialogData *data,
   }
 
   if (!title || title[0] == '\0') {
-    g_set_str (&title, webkit_web_view_get_title (WEBKIT_WEB_VIEW (data->view)));
+    g_set_str (&title, ephy_engine_web_view_get_title (EPHY_ENGINE_VIEW (data->view)));
   }
 
   if (!title || title[0] == '\0') {
@@ -2340,7 +2340,7 @@ window_cmd_save_as_application (GSimpleAction *action,
   data->window = g_object_ref (window);
   data->view = EPHY_WEB_VIEW (EPHY_GET_WEBKIT_WEB_VIEW_FROM_EMBED (embed));
   data->display_address = ephy_web_view_get_display_address (data->view);
-  data->url = webkit_web_view_get_uri (WEBKIT_WEB_VIEW (data->view));
+  data->url = ephy_engine_web_view_get_uri (EPHY_ENGINE_VIEW (data->view));
   data->cancellable = g_cancellable_new ();
 
   ephy_web_view_get_web_app_manifest_url (data->view, data->cancellable, got_manifest_url_cb, data);
@@ -2355,18 +2355,18 @@ get_suggested_filename (EphyEmbed  *embed,
   const char *mimetype;
   const char *page_title;
   WebKitURIResponse *response;
-  WebKitWebResource *web_resource;
+  EphyEngineResource *web_resource;
   g_autoptr (GUri) uri = NULL;
   g_autofree char *filename = NULL;
 
   view = ephy_embed_get_web_view (embed);
-  web_resource = webkit_web_view_get_main_resource (WEBKIT_WEB_VIEW (view));
-  response = webkit_web_resource_get_response (web_resource);
+  web_resource = ephy_engine_web_view_get_main_resource (EPHY_ENGINE_VIEW (view));
+  response = ephy_engine_web_resource_get_response (web_resource);
   if (!response)
     return g_strdup (file_extension);
 
   mimetype = webkit_uri_response_get_mime_type (response);
-  uri = g_uri_parse (webkit_web_resource_get_uri (web_resource), G_URI_FLAGS_PARSE_RELAXED | G_URI_FLAGS_SCHEME_NORMALIZE, NULL);
+  uri = g_uri_parse (ephy_engine_web_resource_get_uri (web_resource), G_URI_FLAGS_PARSE_RELAXED | G_URI_FLAGS_SCHEME_NORMALIZE, NULL);
   page_title = ephy_embed_get_title (embed);
   filename = g_strconcat (page_title, file_extension, NULL);
 
@@ -2395,7 +2395,7 @@ take_snapshot_full_cb (GObject      *source,
                        GAsyncResult *res,
                        gpointer      user_data)
 {
-  g_autoptr (WebKitWebView) view = WEBKIT_WEB_VIEW (source);
+  g_autoptr (EphyEngineView) view = EPHY_ENGINE_VIEW (source);
   g_autoptr (GError) error = NULL;
   g_autoptr (GdkTexture) texture = NULL;
   g_autofree char *file = user_data;
@@ -2406,7 +2406,7 @@ take_snapshot_full_cb (GObject      *source,
   if (!file)
     return;
 
-  texture = webkit_web_view_get_snapshot_finish (view, res, &error);
+  texture = ephy_engine_web_view_get_snapshot_finish (view, res, &error);
   if (error) {
     g_warning ("Failed to take snapshot: %s", error->message);
     return;
@@ -2422,10 +2422,10 @@ void
 take_snapshot (EphyEmbed *embed,
                char      *file)
 {
-  WebKitWebView *view;
+  EphyEngineView *view;
 
   view = EPHY_GET_WEBKIT_WEB_VIEW_FROM_EMBED (embed);
-  webkit_web_view_get_snapshot (g_object_ref (view),
+  ephy_engine_web_view_get_snapshot (g_object_ref (view),
                                 WEBKIT_SNAPSHOT_REGION_FULL_DOCUMENT,
                                 WEBKIT_SNAPSHOT_OPTIONS_NONE,
                                 NULL,
@@ -2622,7 +2622,7 @@ window_cmd_undo (GSimpleAction *action,
     embed = gtk_widget_get_ancestor (widget, EPHY_TYPE_EMBED);
 
     if (embed) {
-      webkit_web_view_execute_editing_command (EPHY_GET_WEBKIT_WEB_VIEW_FROM_EMBED (EPHY_EMBED (embed)), "Undo");
+      ephy_engine_web_view_execute_editing_command (EPHY_GET_WEBKIT_WEB_VIEW_FROM_EMBED (EPHY_EMBED (embed)), "Undo");
     }
   }
 }
@@ -2691,7 +2691,7 @@ window_cmd_redo (GSimpleAction *action,
   } else {
     embed = gtk_widget_get_ancestor (widget, EPHY_TYPE_EMBED);
     if (embed) {
-      webkit_web_view_execute_editing_command (EPHY_GET_WEBKIT_WEB_VIEW_FROM_EMBED (EPHY_EMBED (embed)), "Redo");
+      ephy_engine_web_view_execute_editing_command (EPHY_GET_WEBKIT_WEB_VIEW_FROM_EMBED (EPHY_EMBED (embed)), "Redo");
     }
   }
 }
@@ -2713,7 +2713,7 @@ window_cmd_cut (GSimpleAction *action,
     if (!embed)
       return;
 
-    webkit_web_view_execute_editing_command (EPHY_GET_WEBKIT_WEB_VIEW_FROM_EMBED (embed), WEBKIT_EDITING_COMMAND_CUT);
+    ephy_engine_web_view_execute_editing_command (EPHY_GET_WEBKIT_WEB_VIEW_FROM_EMBED (embed), WEBKIT_EDITING_COMMAND_CUT);
   }
 }
 
@@ -2735,7 +2735,7 @@ window_cmd_copy (GSimpleAction *action,
     if (!embed)
       return;
 
-    webkit_web_view_execute_editing_command (EPHY_GET_WEBKIT_WEB_VIEW_FROM_EMBED (embed), WEBKIT_EDITING_COMMAND_COPY);
+    ephy_engine_web_view_execute_editing_command (EPHY_GET_WEBKIT_WEB_VIEW_FROM_EMBED (embed), WEBKIT_EDITING_COMMAND_COPY);
   }
 }
 
@@ -2757,7 +2757,7 @@ window_cmd_paste (GSimpleAction *action,
     if (!embed)
       return;
 
-    webkit_web_view_execute_editing_command (EPHY_GET_WEBKIT_WEB_VIEW_FROM_EMBED (embed), WEBKIT_EDITING_COMMAND_PASTE);
+    ephy_engine_web_view_execute_editing_command (EPHY_GET_WEBKIT_WEB_VIEW_FROM_EMBED (embed), WEBKIT_EDITING_COMMAND_PASTE);
   }
 }
 
@@ -2779,7 +2779,7 @@ window_cmd_paste_as_plain_text (GSimpleAction *action,
     if (!embed)
       return;
 
-    webkit_web_view_execute_editing_command (EPHY_GET_WEBKIT_WEB_VIEW_FROM_EMBED (embed), WEBKIT_EDITING_COMMAND_PASTE_AS_PLAIN_TEXT);
+    ephy_engine_web_view_execute_editing_command (EPHY_GET_WEBKIT_WEB_VIEW_FROM_EMBED (embed), WEBKIT_EDITING_COMMAND_PASTE_AS_PLAIN_TEXT);
   }
 }
 
@@ -3088,7 +3088,7 @@ window_cmd_page_source (GSimpleAction *action,
                 embed,
                 EPHY_NEW_TAB_JUMP | EPHY_NEW_TAB_APPEND_AFTER);
 
-  webkit_web_view_load_uri (EPHY_GET_WEBKIT_WEB_VIEW_FROM_EMBED (new_embed), source_uri);
+  ephy_engine_web_view_load_uri (EPHY_GET_WEBKIT_WEB_VIEW_FROM_EMBED (new_embed), source_uri);
   gtk_widget_grab_focus (GTK_WIDGET (new_embed));
 }
 
@@ -3099,8 +3099,8 @@ window_cmd_toggle_inspector (GSimpleAction *action,
 {
   EphyWindow *window = user_data;
   EphyEmbed *embed;
-  WebKitWebView *view;
-  WebKitWebInspector *inspector_window;
+  EphyEngineView *view;
+  EphyEngineInspector *inspector_window;
 
   embed = ephy_embed_container_get_active_child
             (EPHY_EMBED_CONTAINER (window));
@@ -3110,12 +3110,12 @@ window_cmd_toggle_inspector (GSimpleAction *action,
 
   view = EPHY_GET_WEBKIT_WEB_VIEW_FROM_EMBED (embed);
 
-  inspector_window = webkit_web_view_get_inspector (view);
+  inspector_window = ephy_engine_web_view_get_inspector (view);
 
   if (!ephy_embed_inspector_is_loaded (embed))
-    webkit_web_inspector_show (inspector_window);
+    ephy_engine_web_inspector_show (inspector_window);
   else
-    webkit_web_inspector_close (inspector_window);
+    ephy_engine_web_inspector_close (inspector_window);
 }
 
 void
@@ -3135,7 +3135,7 @@ window_cmd_select_all (GSimpleAction *action,
     embed = ephy_embed_container_get_active_child
               (EPHY_EMBED_CONTAINER (window));
 
-    webkit_web_view_execute_editing_command (EPHY_GET_WEBKIT_WEB_VIEW_FROM_EMBED (embed), "SelectAll");
+    ephy_engine_web_view_execute_editing_command (EPHY_GET_WEBKIT_WEB_VIEW_FROM_EMBED (embed), "SelectAll");
   }
 }
 
@@ -3280,33 +3280,33 @@ window_cmd_tabs_duplicate (GSimpleAction *action,
 {
   EphyTabView *tab_view;
   EphyEmbed *embed, *new_embed;
-  WebKitWebView *view, *new_view;
-  WebKitWebViewSessionState *session_state;
-  WebKitBackForwardList *bf_list;
-  WebKitBackForwardListItem *item;
+  EphyEngineView *view, *new_view;
+  EphyEngineSessionState *session_state;
+  EphyEngineHistory *bf_list;
+  EphyEngineHistoryItem *item;
 
   tab_view = ephy_window_get_tab_view (EPHY_WINDOW (user_data));
   embed = EPHY_EMBED (ephy_tab_view_get_current_page (tab_view));
 
-  view = WEBKIT_WEB_VIEW (ephy_embed_get_web_view (embed));
-  session_state = webkit_web_view_get_session_state (view);
+  view = EPHY_ENGINE_VIEW (ephy_embed_get_web_view (embed));
+  session_state = ephy_engine_web_view_get_session_state (view);
 
   new_embed = ephy_shell_new_tab (ephy_shell_get_default (),
                                   EPHY_WINDOW (user_data),
                                   embed,
                                   EPHY_NEW_TAB_APPEND_AFTER | EPHY_NEW_TAB_JUMP);
 
-  new_view = WEBKIT_WEB_VIEW (ephy_embed_get_web_view (new_embed));
+  new_view = EPHY_ENGINE_VIEW (ephy_embed_get_web_view (new_embed));
 
-  webkit_web_view_restore_session_state (new_view, session_state);
-  webkit_web_view_session_state_unref (session_state);
+  ephy_engine_web_view_restore_session_state (new_view, session_state);
+  ephy_engine_web_view_session_state_unref (session_state);
 
-  bf_list = webkit_web_view_get_back_forward_list (new_view);
-  item = webkit_back_forward_list_get_current_item (bf_list);
+  bf_list = ephy_engine_web_view_get_back_forward_list (new_view);
+  item = ephy_engine_back_forward_list_get_current_item (bf_list);
   if (item)
-    webkit_web_view_go_to_back_forward_list_item (new_view, item);
+    ephy_engine_web_view_go_to_back_forward_list_item (new_view, item);
   else
-    ephy_web_view_load_url (EPHY_WEB_VIEW (new_view), webkit_web_view_get_uri (view));
+    ephy_web_view_load_url (EPHY_WEB_VIEW (new_view), ephy_engine_web_view_get_uri (view));
 }
 
 void
@@ -3369,9 +3369,9 @@ reload_cb (GtkWidget *widget,
            gpointer   user_data)
 {
   EphyEmbed *embed = EPHY_EMBED (widget);
-  WebKitWebView *view = EPHY_GET_WEBKIT_WEB_VIEW_FROM_EMBED (embed);
+  EphyEngineView *view = EPHY_GET_WEBKIT_WEB_VIEW_FROM_EMBED (embed);
 
-  webkit_web_view_reload (view);
+  ephy_engine_web_view_reload (view);
 }
 
 void
@@ -3542,9 +3542,9 @@ window_cmd_change_tabs_mute_state (GSimpleAction *action,
 
   view = ephy_embed_get_web_view (embed);
 
-  mute = !webkit_web_view_get_is_muted (WEBKIT_WEB_VIEW (view));
+  mute = !ephy_engine_web_view_get_is_muted (EPHY_ENGINE_VIEW (view));
 
-  webkit_web_view_set_is_muted (WEBKIT_WEB_VIEW (view), mute);
+  ephy_engine_web_view_set_is_muted (EPHY_ENGINE_VIEW (view), mute);
 
   g_simple_action_set_state (action, g_variant_new_boolean (mute));
 }
@@ -3617,7 +3617,7 @@ window_cmd_generate_password (GSimpleAction *action,
 {
   EphyWindow *window = user_data;
   EphyEmbed *embed;
-  WebKitWebView *web_view;
+  EphyEngineView *web_view;
   g_autoptr (WebKitUserMessage) message = NULL;
   guint64 frame_id;
 
@@ -3633,5 +3633,5 @@ window_cmd_generate_password (GSimpleAction *action,
   web_view = EPHY_GET_WEBKIT_WEB_VIEW_FROM_EMBED (embed);
   message = webkit_user_message_new ("PasswordManager.GeneratePassword",
                                      g_variant_new_uint64 (frame_id));
-  webkit_web_view_send_message_to_page (web_view, g_steal_pointer (&message), NULL, NULL, NULL);
+  ephy_engine_web_view_send_message_to_page (web_view, g_steal_pointer (&message), NULL, NULL, NULL);
 }

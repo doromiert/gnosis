@@ -19,6 +19,7 @@
  */
 
 #include "config.h"
+#include "ephy-engine-view.h"
 
 #include "tabs.h"
 
@@ -31,7 +32,7 @@
 /* Matches Firefox. */
 static const int WINDOW_ID_CURRENT = -2;
 
-static WebKitWebView *
+static EphyEngineView *
 get_web_view_for_tab_id (EphyShell   *shell,
                          gint64       tab_id,
                          EphyWindow **window_out)
@@ -56,7 +57,7 @@ get_web_view_for_tab_id (EphyShell   *shell,
       if (ephy_web_view_get_uid (web_view) == (guint64)tab_id) {
         if (window_out)
           *window_out = window;
-        return WEBKIT_WEB_VIEW (web_view);
+        return EPHY_ENGINE_VIEW (web_view);
       }
     }
   }
@@ -83,7 +84,7 @@ add_web_view_to_json (EphyWebExtension *extension,
     json_builder_set_member_name (builder, "url");
     json_builder_add_string_value (builder, ephy_web_view_get_address (web_view));
     json_builder_set_member_name (builder, "title");
-    json_builder_add_string_value (builder, webkit_web_view_get_title (WEBKIT_WEB_VIEW (web_view)));
+    json_builder_add_string_value (builder, ephy_engine_web_view_get_title (EPHY_ENGINE_VIEW (web_view)));
     if (favicon_uri) {
       json_builder_set_member_name (builder, "favIconUrl");
       json_builder_add_string_value (builder, favicon_uri);
@@ -114,7 +115,7 @@ add_web_view_to_json (EphyWebExtension *extension,
   json_builder_set_member_name (builder, "mutedInfo");
   json_builder_begin_object (builder);
   json_builder_set_member_name (builder, "muted");
-  json_builder_add_boolean_value (builder, webkit_web_view_get_is_muted (WEBKIT_WEB_VIEW (web_view)));
+  json_builder_add_boolean_value (builder, ephy_engine_web_view_get_is_muted (EPHY_ENGINE_VIEW (web_view)));
   json_builder_end_object (builder);
   json_builder_end_object (builder);
 }
@@ -245,7 +246,7 @@ tabs_handler_insert_css (EphyWebExtensionSender *sender,
   const char *code;
   gint64 tab_id = -1;
   JsonObject *details;
-  WebKitWebView *target_web_view;
+  EphyEngineView *target_web_view;
 
   /* This takes an optional first argument so it's either:
    * [tabId:int, details:obj], or [details:obj] */
@@ -261,7 +262,7 @@ tabs_handler_insert_css (EphyWebExtensionSender *sender,
   }
 
   if (tab_id == -1)
-    target_web_view = WEBKIT_WEB_VIEW (ephy_shell_get_active_web_view (shell));
+    target_web_view = EPHY_ENGINE_VIEW (ephy_shell_get_active_web_view (shell));
   else
     target_web_view = get_web_view_for_tab_id (shell, tab_id, NULL);
 
@@ -275,7 +276,7 @@ tabs_handler_insert_css (EphyWebExtensionSender *sender,
     return;
   }
 
-  ucm = webkit_web_view_get_user_content_manager (target_web_view);
+  ucm = ephy_engine_web_view_get_user_content_manager (target_web_view);
 
   /* FIXME: Handle file */
   if (ephy_json_object_get_string (details, "file")) {
@@ -313,7 +314,7 @@ tabs_handler_remove_css (EphyWebExtensionSender *sender,
   JsonObject *details;
   WebKitUserStyleSheet *css = NULL;
   WebKitUserContentManager *ucm;
-  WebKitWebView *target_web_view;
+  EphyEngineView *target_web_view;
 
   /* This takes an optional first argument so it's either:
    * [tabId:int, details:obj], or [details:obj] */
@@ -329,7 +330,7 @@ tabs_handler_remove_css (EphyWebExtensionSender *sender,
   }
 
   if (tab_id == -1)
-    target_web_view = WEBKIT_WEB_VIEW (ephy_shell_get_active_web_view (shell));
+    target_web_view = EPHY_ENGINE_VIEW (ephy_shell_get_active_web_view (shell));
   else
     target_web_view = get_web_view_for_tab_id (shell, tab_id, NULL);
 
@@ -343,7 +344,7 @@ tabs_handler_remove_css (EphyWebExtensionSender *sender,
     return;
   }
 
-  ucm = webkit_web_view_get_user_content_manager (target_web_view);
+  ucm = ephy_engine_web_view_get_user_content_manager (target_web_view);
 
   if (!(code = ephy_json_object_get_string (details, "code"))) {
     g_task_return_new_error (task, WEB_EXTENSION_ERROR, WEB_EXTENSION_ERROR_INVALID_ARGUMENT, "tabs.removeCSS(): Missing code (file is unsupported)");
@@ -396,7 +397,7 @@ on_execute_script_ready (GObject      *source,
   g_autoptr (GError) error = NULL;
   GTask *task = user_data;
 
-  value = webkit_web_view_evaluate_javascript_finish (WEBKIT_WEB_VIEW (source),
+  value = ephy_engine_web_view_evaluate_javascript_finish (EPHY_ENGINE_VIEW (source),
                                                       result,
                                                       &error);
 
@@ -419,7 +420,7 @@ tabs_handler_execute_script (EphyWebExtensionSender *sender,
   JsonObject *details;
   gint64 tab_id = -1;
   EphyShell *shell = ephy_shell_get_default ();
-  WebKitWebView *target_web_view;
+  EphyEngineView *target_web_view;
 
   /* This takes an optional first argument so it's either:
    * [tabId:int, details:obj], or [details:obj] */
@@ -445,7 +446,7 @@ tabs_handler_execute_script (EphyWebExtensionSender *sender,
   }
 
   if (tab_id == -1)
-    target_web_view = WEBKIT_WEB_VIEW (ephy_shell_get_active_web_view (shell));
+    target_web_view = EPHY_ENGINE_VIEW (ephy_shell_get_active_web_view (shell));
   else
     target_web_view = get_web_view_for_tab_id (shell, tab_id, NULL);
 
@@ -459,7 +460,7 @@ tabs_handler_execute_script (EphyWebExtensionSender *sender,
     return;
   }
 
-  webkit_web_view_evaluate_javascript (target_web_view,
+  ephy_engine_web_view_evaluate_javascript (target_web_view,
                                        code, -1,
                                        ephy_web_extension_get_guid (sender->extension),
                                        NULL,
@@ -477,7 +478,7 @@ tabs_handler_send_message (EphyWebExtensionSender *sender,
   EphyWebExtensionManager *manager = ephy_web_extension_manager_get_default ();
   g_autofree char *serialized_message = NULL;
   EphyShell *shell = ephy_shell_get_default ();
-  WebKitWebView *target_web_view;
+  EphyEngineView *target_web_view;
   gint64 tab_id = ephy_json_array_get_int (args, 0);
   JsonNode *message = ephy_json_array_get_element (args, 1);
 
@@ -614,7 +615,7 @@ tabs_handler_update (EphyWebExtensionSender *sender,
   const char *new_url;
   g_autoptr (JsonBuilder) builder = NULL;
   g_autoptr (JsonNode) root = NULL;
-  WebKitWebView *target_web_view;
+  EphyEngineView *target_web_view;
   EphyWindow *parent_window;
   ApiTriStateValue muted;
 
@@ -633,7 +634,7 @@ tabs_handler_update (EphyWebExtensionSender *sender,
   if (tab_id >= 0)
     target_web_view = get_web_view_for_tab_id (shell, tab_id, &parent_window);
   else {
-    target_web_view = WEBKIT_WEB_VIEW (ephy_shell_get_active_web_view (shell));
+    target_web_view = EPHY_ENGINE_VIEW (ephy_shell_get_active_web_view (shell));
     parent_window = EPHY_WINDOW (gtk_application_get_active_window (GTK_APPLICATION (shell)));
   }
 
@@ -650,10 +651,10 @@ tabs_handler_update (EphyWebExtensionSender *sender,
 
   muted = ephy_json_object_get_boolean (update_properties, "muted", API_VALUE_UNSET);
   if (muted != API_VALUE_UNSET)
-    webkit_web_view_set_is_muted (target_web_view, muted);
+    ephy_engine_web_view_set_is_muted (target_web_view, muted);
 
   if (new_url)
-    webkit_web_view_load_uri (target_web_view, new_url);
+    ephy_engine_web_view_load_uri (target_web_view, new_url);
 
   builder = json_builder_new ();
   add_web_view_to_json (sender->extension, builder, parent_window, EPHY_WEB_VIEW (target_web_view));
@@ -687,7 +688,7 @@ tabs_handler_remove (EphyWebExtensionSender *sender,
   JsonNode *tab_ids = ephy_json_array_get_element (args, 0);
   gint64 tab_id;
 
-  /* FIXME: Epiphany should use webkit_web_view_try_close() and this should wait until after that. */
+  /* FIXME: Epiphany should use ephy_engine_web_view_try_close() and this should wait until after that. */
 
   if (JSON_NODE_HOLDS_ARRAY (tab_ids)) {
     JsonArray *array = json_node_get_array (tab_ids);
@@ -716,7 +717,7 @@ tabs_handler_set_zoom (EphyWebExtensionSender *sender,
                        GTask                  *task)
 {
   EphyShell *shell = ephy_shell_get_default ();
-  WebKitWebView *target_web_view;
+  EphyEngineView *target_web_view;
   gint64 tab_id = -1;
   double zoom_level;
 
@@ -735,14 +736,14 @@ tabs_handler_set_zoom (EphyWebExtensionSender *sender,
   if (tab_id >= 0)
     target_web_view = get_web_view_for_tab_id (shell, tab_id, NULL);
   else
-    target_web_view = WEBKIT_WEB_VIEW (ephy_shell_get_active_web_view (shell));
+    target_web_view = EPHY_ENGINE_VIEW (ephy_shell_get_active_web_view (shell));
 
   if (!target_web_view) {
     g_task_return_new_error (task, WEB_EXTENSION_ERROR, WEB_EXTENSION_ERROR_INVALID_ARGUMENT, "tabs.setZoom(): Failed to find tabId %" G_GUINT64_FORMAT, tab_id);
     return;
   }
 
-  webkit_web_view_set_zoom_level (target_web_view, zoom_level);
+  ephy_engine_web_view_set_zoom_level (target_web_view, zoom_level);
   g_task_return_pointer (task, NULL, NULL);
 }
 
@@ -754,19 +755,19 @@ tabs_handler_get_zoom (EphyWebExtensionSender *sender,
 {
   EphyShell *shell = ephy_shell_get_default ();
   gint64 tab_id = ephy_json_array_get_int (args, 0);
-  WebKitWebView *target_web_view;
+  EphyEngineView *target_web_view;
 
   if (tab_id >= 0)
     target_web_view = get_web_view_for_tab_id (shell, tab_id, NULL);
   else
-    target_web_view = WEBKIT_WEB_VIEW (ephy_shell_get_active_web_view (shell));
+    target_web_view = EPHY_ENGINE_VIEW (ephy_shell_get_active_web_view (shell));
 
   if (!target_web_view) {
     g_task_return_new_error (task, WEB_EXTENSION_ERROR, WEB_EXTENSION_ERROR_INVALID_ARGUMENT, "tabs.getZoom(): Failed to find tabId %" G_GINT64_FORMAT, tab_id);
     return;
   }
 
-  g_task_return_pointer (task, g_strdup_printf ("%f", webkit_web_view_get_zoom_level (target_web_view)), g_free);
+  g_task_return_pointer (task, g_strdup_printf ("%f", ephy_engine_web_view_get_zoom_level (target_web_view)), g_free);
 }
 
 static void
@@ -777,19 +778,19 @@ tabs_handler_reload (EphyWebExtensionSender *sender,
 {
   EphyShell *shell = ephy_shell_get_default ();
   gint64 tab_id = ephy_json_array_get_int (args, 0);
-  WebKitWebView *target_web_view;
+  EphyEngineView *target_web_view;
 
   if (tab_id >= 0)
     target_web_view = get_web_view_for_tab_id (shell, tab_id, NULL);
   else
-    target_web_view = WEBKIT_WEB_VIEW (ephy_shell_get_active_web_view (shell));
+    target_web_view = EPHY_ENGINE_VIEW (ephy_shell_get_active_web_view (shell));
 
   if (!target_web_view) {
     g_task_return_new_error (task, WEB_EXTENSION_ERROR, WEB_EXTENSION_ERROR_INVALID_ARGUMENT, "tabs.reload(): Failed to find tabId %" G_GINT64_FORMAT, tab_id);
     return;
   }
 
-  webkit_web_view_reload (WEBKIT_WEB_VIEW (target_web_view));
+  ephy_engine_web_view_reload (EPHY_ENGINE_VIEW (target_web_view));
   g_task_return_pointer (task, NULL, NULL);
 }
 

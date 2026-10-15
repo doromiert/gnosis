@@ -1,0 +1,6 @@
+<gresources>
+  <gresource prefix="/io/github/doromiert/Jupiter">
+    <file alias="clipboard/bridge.js">clipboard.js</file>
+    <file alias="extension-tabs.js">extension-tabs.js</file>
+  </gresource>
+</gresources>

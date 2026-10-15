@@ -90,7 +90,7 @@ struct _EphyFirefoxSyncDialog {
   GtkWidget *sync_device_name_save_button;
   GtkWidget *sync_device_name_cancel_button;
 
-  WebKitWebView *fxa_web_view;
+  EphyEngineView *fxa_web_view;
   WebKitUserContentManager *fxa_manager;
   WebKitUserScript *fxa_script;
 
@@ -315,7 +315,7 @@ sync_message_to_fxa_content (EphyFirefoxSyncDialog *sync_dialog,
   LOG ("Firefox Sync WebChannel: sending command '%s' response", command);
 
   /* We don't expect any response from the server. */
-  webkit_web_view_evaluate_javascript (sync_dialog->fxa_web_view, script, -1, NULL, NULL, NULL, NULL, NULL);
+  ephy_engine_web_view_evaluate_javascript (sync_dialog->fxa_web_view, script, -1, NULL, NULL, NULL, NULL, NULL);
 }
 
 /* Parse a WebChannelMessageToChrome event from the FxA page.
@@ -797,12 +797,12 @@ sync_open_webmail_clicked_cb (WebKitUserContentManager *manager,
  * user doesn't get stuck in the Fastly error page.
  */
 static void
-fastly_challenge_resource_finished_cb (WebKitWebResource *resource,
+fastly_challenge_resource_finished_cb (EphyEngineResource *resource,
                                        gpointer           user_data)
 {
   EphyFirefoxSyncDialog *sync_dialog = EPHY_FIREFOX_SYNC_DIALOG (user_data);
-  WebKitURIResponse *response = webkit_web_resource_get_response (resource);
-  const char *uri = webkit_web_resource_get_uri (resource);
+  WebKitURIResponse *response = ephy_engine_web_resource_get_response (resource);
+  const char *uri = ephy_engine_web_resource_get_uri (resource);
 
   if (!response || !strstr (uri, "fst-post-back"))
     return;
@@ -812,7 +812,7 @@ fastly_challenge_resource_finished_cb (WebKitWebResource *resource,
       LOG ("Fastly challenge failed (status %u), reloading once",
            webkit_uri_response_get_status_code (response));
       sync_dialog->fastly_challenge_retried = TRUE;
-      webkit_web_view_reload (sync_dialog->fxa_web_view);
+      ephy_engine_web_view_reload (sync_dialog->fxa_web_view);
     } else {
       LOG ("Fastly challenge failed again, not retrying");
     }
@@ -822,8 +822,8 @@ fastly_challenge_resource_finished_cb (WebKitWebResource *resource,
 }
 
 static void
-fastly_resource_load_started_cb (WebKitWebView     *web_view,
-                                 WebKitWebResource *resource,
+fastly_resource_load_started_cb (EphyEngineView     *web_view,
+                                 EphyEngineResource *resource,
                                  WebKitURIRequest  *request,
                                  gpointer           user_data)
 {
@@ -836,7 +836,7 @@ fastly_resource_load_started_cb (WebKitWebView     *web_view,
 }
 
 static void
-fxa_web_view_load_changed_cb (WebKitWebView   *web_view,
+fxa_web_view_load_changed_cb (EphyEngineView   *web_view,
                               WebKitLoadEvent  load_event,
                               gpointer         user_data)
 {
@@ -847,7 +847,7 @@ fxa_web_view_load_changed_cb (WebKitWebView   *web_view,
 }
 
 static gboolean
-fxa_web_view_load_failed_cb (WebKitWebView   *web_view,
+fxa_web_view_load_failed_cb (EphyEngineView   *web_view,
                              WebKitLoadEvent  load_event,
                              char            *failing_uri,
                              GError          *error,
@@ -880,7 +880,7 @@ sync_teardown_firefox_iframe (EphyFirefoxSyncDialog *sync_dialog)
 }
 
 static void
-/* Set up the WebKitWebView for FxA sign-in. Injects a user script to
+/* Set up the EphyEngineView for FxA sign-in. Injects a user script to
  * relay WebChannelMessageToChrome events to our native handler.
  * Ref: FxAccountsWebChannel.sys.mjs _setupChannel().
  */
@@ -944,7 +944,7 @@ sync_setup_firefox_iframe (EphyFirefoxSyncDialog *sync_dialog)
     webkit_web_context_set_preferred_languages (sync_context,
                                                 g_object_get_data (G_OBJECT (embed_context), "preferred-languages"));
 
-    sync_dialog->fxa_web_view = WEBKIT_WEB_VIEW (g_object_new (WEBKIT_TYPE_WEB_VIEW,
+    sync_dialog->fxa_web_view = EPHY_ENGINE_VIEW (g_object_new (EPHY_TYPE_ENGINE_VIEW,
                                                                "user-content-manager", sync_dialog->fxa_manager,
                                                                "settings", ephy_embed_prefs_get_settings (),
                                                                "web-context", sync_context,
@@ -972,7 +972,7 @@ sync_setup_firefox_iframe (EphyFirefoxSyncDialog *sync_dialog)
 
   sync_dialog->fastly_challenge_retried = FALSE;
   fxa_url = sync_build_oauth_url (sync_dialog);
-  webkit_web_view_load_uri (sync_dialog->fxa_web_view, fxa_url);
+  ephy_engine_web_view_load_uri (sync_dialog->fxa_web_view, fxa_url);
 }
 
 static void

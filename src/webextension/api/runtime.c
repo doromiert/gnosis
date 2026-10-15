@@ -19,6 +19,7 @@
  */
 
 #include "config.h"
+#include "ephy-engine-view.h"
 
 #include "runtime.h"
 
@@ -169,7 +170,7 @@ runtime_handler_open_options_page (EphyWebExtensionSender *sender,
   new_web_view = ephy_web_extensions_manager_create_web_extensions_webview (sender->extension);
   gtk_window_set_child (GTK_WINDOW (new_window), new_web_view);
 
-  webkit_web_view_load_uri (WEBKIT_WEB_VIEW (new_web_view), options_uri);
+  ephy_engine_web_view_load_uri (EPHY_ENGINE_VIEW (new_web_view), options_uri);
 
   gtk_window_present (new_window);
 

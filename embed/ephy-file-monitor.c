@@ -19,6 +19,7 @@
  */
 
 #include "config.h"
+#include "ephy-engine-view.h"
 
 #include "ephy-file-monitor.h"
 
@@ -90,7 +91,7 @@ ephy_file_monitor_reload_cb (EphyFileMonitor *monitor)
   monitor->reload_scheduled_id = 0;
 
   LOG ("Reloading file '%s'", ephy_web_view_get_address (monitor->view));
-  webkit_web_view_reload (WEBKIT_WEB_VIEW (monitor->view));
+  ephy_engine_web_view_reload (EPHY_ENGINE_VIEW (monitor->view));
 
   /* Don't run again. */
   return G_SOURCE_REMOVE;

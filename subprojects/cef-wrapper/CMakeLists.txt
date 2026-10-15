@@ -1,0 +1,7 @@
+cmake_minimum_required(VERSION 3.21)
+project(JupiterCEFWrapper LANGUAGES C CXX)
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+list(APPEND CMAKE_MODULE_PATH "${CEF_ROOT}/cmake")
+set(USE_SANDBOX OFF CACHE BOOL "Linux uses the Chromium sandbox")
+find_package(CEF REQUIRED)
+add_subdirectory("${CEF_LIBCEF_DLL_WRAPPER_PATH}" libcef_dll_wrapper)

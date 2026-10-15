@@ -21,6 +21,7 @@
  */
 
 #include "config.h"
+#include "ephy-engine-view.h"
 
 #include "ephy-shell.h"
 
@@ -1094,7 +1095,7 @@ static void
 webkit_notification_clicked_cb (WebKitNotification *notification,
                                 gpointer            user_data)
 {
-  WebKitWebView *notification_webview = WEBKIT_WEB_VIEW (user_data);
+  EphyEngineView *notification_webview = EPHY_ENGINE_VIEW (user_data);
   EphyShell *shell;
   GApplication *application;
   GList *windows;
@@ -1114,10 +1115,10 @@ webkit_notification_clicked_cb (WebKitNotification *notification,
 
     for (int i = 0; i < n_pages; i++) {
       EphyEmbed *embed;
-      WebKitWebView *webview;
+      EphyEngineView *webview;
 
       embed = EPHY_EMBED (ephy_tab_view_get_nth_page (tab_view, i));
-      webview = WEBKIT_WEB_VIEW (ephy_embed_get_web_view (embed));
+      webview = EPHY_ENGINE_VIEW (ephy_embed_get_web_view (embed));
 
       if (webview == notification_webview) {
         ephy_tab_view_select_page (tab_view, GTK_WIDGET (embed));
@@ -1129,7 +1130,7 @@ webkit_notification_clicked_cb (WebKitNotification *notification,
 }
 
 static gboolean
-show_notification_cb (WebKitWebView      *web_view,
+show_notification_cb (EphyEngineView      *web_view,
                       WebKitNotification *notification,
                       gpointer            user_data)
 {
@@ -1152,7 +1153,7 @@ show_notification_cb (WebKitWebView      *web_view,
 EphyEmbed *
 ephy_shell_new_tab_full (EphyShell       *shell,
                          const char      *title,
-                         WebKitWebView   *related_view,
+                         EphyEngineView   *related_view,
                          EphyWindow      *window,
                          EphyEmbed       *previous_embed,
                          EphyNewTabFlags  flags)

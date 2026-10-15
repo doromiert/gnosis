@@ -19,6 +19,7 @@
  */
 
 #include "config.h"
+#include "ephy-engine-view.h"
 
 #include "ephy-mouse-gesture-controller.h"
 
@@ -46,7 +47,7 @@ struct _EphyMouseGestureController {
 
   GtkGesture *gesture;
   EphyWindow *window;
-  WebKitWebView *web_view;
+  EphyEngineView *web_view;
 
   MouseDirection sequence[NUM_SEQUENCES];
   MouseDirection direction;
@@ -312,7 +313,7 @@ ephy_mouse_gesture_controller_new (EphyWindow *window)
 
 void
 ephy_mouse_gesture_controller_set_web_view (EphyMouseGestureController *self,
-                                            WebKitWebView              *web_view)
+                                            EphyEngineView              *web_view)
 {
   ephy_mouse_gesture_controller_unset_web_view (self);
 

@@ -114,13 +114,13 @@ ephy_embed_shell_get_view_for_page_id (EphyEmbedShell *self,
 
     for (GList *t = tabs; t && t->data; t = t->next) {
       EphyWebView *ephy_view = ephy_embed_get_web_view (t->data);
-      WebKitWebView *web_view = WEBKIT_WEB_VIEW (ephy_view);
+      EphyEngineView *web_view = EPHY_ENGINE_VIEW (ephy_view);
       g_autofree char *real_origin = NULL;
 
-      if (webkit_web_view_get_page_id (web_view) != page_id)
+      if (ephy_engine_web_view_get_page_id (web_view) != page_id)
         continue;
 
-      real_origin = ephy_uri_to_security_origin (webkit_web_view_get_uri (web_view));
+      real_origin = ephy_uri_to_security_origin (ephy_engine_web_view_get_uri (web_view));
 
       if (g_strcmp0 (real_origin, origin) != 0) {
         g_debug ("Extension's origin '%s' doesn't match real origin '%s'", origin, real_origin);
@@ -684,7 +684,7 @@ ephy_resource_request_cb (WebKitURISchemeRequest *request)
 {
   const char *path;
   gsize size;
-  WebKitWebView *request_view;
+  EphyEngineView *request_view;
   const char *uri;
   g_autoptr (GInputStream) stream = NULL;
   g_autoptr (GError) error = NULL;
@@ -696,7 +696,7 @@ ephy_resource_request_cb (WebKitURISchemeRequest *request)
   }
 
   request_view = webkit_uri_scheme_request_get_web_view (request);
-  uri = webkit_web_view_get_uri (request_view);
+  uri = ephy_engine_web_view_get_uri (request_view);
 
   /* ephy-resource:// requests bypass CORS in order to allow custom schemes to
    * access ephy-resource://. Accordingly, we need some custom security to

@@ -24,7 +24,7 @@
 
 #include <glib-object.h>
 #include <glib.h>
-#include <webkit/webkit.h>
+#include "ephy-engine-view.h"
 
 #include "ephy-bookmarks-manager.h"
 #include "ephy-embed-shell.h"
@@ -90,7 +90,7 @@ EphyEmbed               *ephy_shell_new_tab                 (EphyShell        *s
 
 EphyEmbed               *ephy_shell_new_tab_full            (EphyShell        *shell,
                                                              const char       *title,
-                                                             WebKitWebView    *related_view,
+                                                             EphyEngineView    *related_view,
                                                              EphyWindow       *parent_window,
                                                              EphyEmbed        *previous_embed,
                                                              EphyNewTabFlags   flags);

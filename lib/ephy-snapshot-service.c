@@ -29,7 +29,7 @@
 #include <unistd.h>
 
 #include <gdk-pixbuf/gdk-pixbuf.h>
-#include <webkit/webkit.h>
+#include "ephy-engine-view.h"
 
 #include "ephy-file-helpers.h"
 #include "ephy-pixbuf-utils.h"
@@ -215,14 +215,14 @@ ephy_snapshot_service_prepare_snapshot (GdkTexture *texture)
 typedef struct {
   EphySnapshotService *service;
   GdkPixbuf *snapshot;
-  WebKitWebView *web_view;
+  EphyEngineView *web_view;
   char *url;
 } SnapshotAsyncData;
 
 static SnapshotAsyncData *
 snapshot_async_data_new (EphySnapshotService *service,
                          GdkPixbuf           *snapshot,
-                         WebKitWebView       *web_view,
+                         EphyEngineView       *web_view,
                          const char          *url)
 {
   SnapshotAsyncData *data;
@@ -373,21 +373,21 @@ save_snapshot (GdkTexture *texture,
 
   ephy_snapshot_service_save_snapshot_async (g_task_get_source_object (task),
                                              data->snapshot,
-                                             webkit_web_view_get_uri (data->web_view),
+                                             ephy_engine_web_view_get_uri (data->web_view),
                                              g_task_get_cancellable (task),
                                              (GAsyncReadyCallback)snapshot_saved,
                                              task);
 }
 
 static void
-on_snapshot_ready (WebKitWebView *web_view,
+on_snapshot_ready (EphyEngineView *web_view,
                    GAsyncResult  *result,
                    GTask         *task)
 {
   g_autoptr (GdkTexture) texture = NULL;
   GError *error = NULL;
 
-  texture = webkit_web_view_get_snapshot_finish (web_view, result, &error);
+  texture = ephy_engine_web_view_get_snapshot_finish (web_view, result, &error);
   if (error) {
     g_task_return_error (task, error);
     g_object_unref (task);
@@ -412,7 +412,7 @@ retrieve_snapshot_from_web_view (GTask *task)
     return G_SOURCE_REMOVE;
   }
 
-  webkit_web_view_get_snapshot (data->web_view,
+  ephy_engine_web_view_get_snapshot (data->web_view,
                                 WEBKIT_SNAPSHOT_REGION_FULL_DOCUMENT,
                                 WEBKIT_SNAPSHOT_OPTIONS_NONE,
                                 g_task_get_cancellable (task),
@@ -433,7 +433,7 @@ webview_destroyed_cb (GtkWidget *web_view,
 }
 
 static void
-webview_load_changed_cb (WebKitWebView   *web_view,
+webview_load_changed_cb (EphyEngineView   *web_view,
                          WebKitLoadEvent  load_event,
                          GTask           *task)
 {
@@ -451,7 +451,7 @@ webview_load_changed_cb (WebKitWebView   *web_view,
 }
 
 static gboolean
-webview_load_failed_cb (WebKitWebView   *web_view,
+webview_load_failed_cb (EphyEngineView   *web_view,
                         WebKitLoadEvent  load_event,
                         const char       failing_uri,
                         GError          *error,
@@ -485,7 +485,7 @@ ephy_snapshot_service_take_from_webview (GTask *task)
     return FALSE;
   }
 
-  if (webkit_web_view_get_estimated_load_progress (WEBKIT_WEB_VIEW (data->web_view)) == 1.0)
+  if (ephy_engine_web_view_get_estimated_load_progress (EPHY_ENGINE_VIEW (data->web_view)) == 1.0)
     retrieve_snapshot_from_web_view (task);
   else {
     g_signal_connect_object (data->web_view, "destroy",
@@ -659,7 +659,7 @@ got_snapshot_path_for_url (EphySnapshotService *service,
 
 void
 ephy_snapshot_service_get_snapshot_path_async (EphySnapshotService *service,
-                                               WebKitWebView       *web_view,
+                                               EphyEngineView       *web_view,
                                                GCancellable        *cancellable,
                                                GAsyncReadyCallback  callback,
                                                gpointer             user_data)
@@ -669,13 +669,13 @@ ephy_snapshot_service_get_snapshot_path_async (EphySnapshotService *service,
   const char *path;
 
   g_assert (EPHY_IS_SNAPSHOT_SERVICE (service));
-  g_assert (WEBKIT_IS_WEB_VIEW (web_view));
-  g_assert (webkit_web_view_get_uri (web_view));
+  g_assert (EPHY_IS_ENGINE_VIEW (web_view));
+  g_assert (ephy_engine_web_view_get_uri (web_view));
 
   task = g_task_new (service, cancellable, callback, user_data);
   g_task_set_source_tag (task, ephy_snapshot_service_get_snapshot_path_async);
 
-  uri = webkit_web_view_get_uri (web_view);
+  uri = ephy_engine_web_view_get_uri (web_view);
   path = ephy_snapshot_service_lookup_cached_snapshot_path (service, uri);
 
   if (path) {

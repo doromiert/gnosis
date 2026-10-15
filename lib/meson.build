@@ -56,6 +56,7 @@ libephymisc_sources = [
 ]
 
 libephymisc_deps = [
+  ephyengine_dep,
   config_h,
   cairo_dep,
   gdk_pixbuf_dep,
@@ -88,7 +89,8 @@ libephymisc = shared_library('ephymisc',
   include_directories: libephymisc_includes,
   install: true,
   install_dir: pkglibdir,
-  install_rpath: pkglibdir
+  build_rpath: meson.project_build_root() / 'engine',
+  install_rpath: pkglibdir + ':' + pkglibdir / 'cef'
 )
 
 ephymisc_dep = declare_dependency(

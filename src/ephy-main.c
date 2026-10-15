@@ -21,6 +21,7 @@
  */
 
 #include "config.h"
+#include "ephy-engine-view.h"
 
 #include <errno.h>
 #include <signal.h>
@@ -190,6 +191,13 @@ main (int   argc,
   int status = 1;
   EphyFileHelpersFlags flags;
   GDesktopAppInfo *desktop_info = NULL;
+  gboolean engine_initialized = FALSE;
+
+  {
+    int subprocess = ephy_engine_execute_process (argc, argv);
+    if (subprocess >= 0)
+      return subprocess;
+  }
 
 #if DEVELOPER_MODE
   g_setenv ("GSETTINGS_SCHEMA_DIR", BUILD_ROOT "/data", FALSE);
@@ -456,6 +464,18 @@ main (int   argc,
   g_unix_signal_add (SIGINT, (GSourceFunc)handle_shutdown_signal, GINT_TO_POINTER (SIGINT));
   g_unix_signal_add (SIGTERM, (GSourceFunc)handle_shutdown_signal, GINT_TO_POINTER (SIGTERM));
 
+  if (!g_application_register (G_APPLICATION (ephy_shell), NULL, &error)) {
+    g_printerr ("%s\n", error->message);
+    g_clear_error (&error);
+    goto out;
+  }
+  if (!g_application_get_is_remote (G_APPLICATION (ephy_shell))) {
+    if (!ephy_engine_initialize (argc, argv, ephy_profile_dir (), FALSE)) {
+      g_printerr ("Could not initialize Chromium.\n");
+      goto out;
+    }
+    engine_initialized = TRUE;
+  }
   status = g_application_run (G_APPLICATION (ephy_shell), argc, argv);
 
   /* Ensure the EphyShell really gets destroyed. This should be the final reference. */
@@ -464,6 +484,8 @@ main (int   argc,
   g_assert (!ephy_shell);
 
 out:
+  if (engine_initialized)
+    ephy_engine_shutdown ();
   g_free (desktop_file_basename);
   g_free (profile_directory);
 

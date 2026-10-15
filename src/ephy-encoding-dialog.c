@@ -26,7 +26,7 @@
 
 #include <glib/gi18n.h>
 #include <gtk/gtk.h>
-#include <webkit/webkit.h>
+#include "ephy-engine-view.h"
 
 #include "ephy-debug.h"
 #include "ephy-embed-container.h"
@@ -127,14 +127,14 @@ sync_encoding_against_embed (EphyEncodingDialog *dialog)
 {
   const char *encoding;
   gboolean is_automatic = FALSE;
-  WebKitWebView *view;
+  EphyEngineView *view;
 
   dialog->update_embed_tag = TRUE;
 
   g_assert (EPHY_IS_EMBED (dialog->embed));
   view = EPHY_GET_WEBKIT_WEB_VIEW_FROM_EMBED (dialog->embed);
 
-  encoding = webkit_web_view_get_custom_charset (view);
+  encoding = ephy_engine_web_view_get_custom_charset (view);
   is_automatic = !encoding;
 
   clean_selected (dialog);
@@ -215,19 +215,19 @@ ephy_encoding_dialog_sync_embed (EphyWindow         *window,
 static void
 activate_choice (EphyEncodingDialog *dialog)
 {
-  WebKitWebView *view;
+  EphyEngineView *view;
 
   g_assert (EPHY_IS_EMBED (dialog->embed));
   view = EPHY_GET_WEBKIT_WEB_VIEW_FROM_EMBED (dialog->embed);
 
   if (gtk_switch_get_active (dialog->default_switch)) {
-    webkit_web_view_set_custom_charset (view, NULL);
+    ephy_engine_web_view_set_custom_charset (view, NULL);
   } else if (dialog->selected_encoding) {
     const char *code;
 
     code = dialog->selected_encoding;
 
-    webkit_web_view_set_custom_charset (view, code);
+    ephy_engine_web_view_set_custom_charset (view, code);
 
     ephy_encodings_add_recent (dialog->encodings, code);
   }
@@ -363,7 +363,7 @@ static void
 ephy_encoding_dialog_constructed (GObject *object)
 {
   EphyEncodingDialog *dialog;
-  WebKitWebView *view;
+  EphyEngineView *view;
   EphyEncoding *enc_node;
   EphyLanguageGroup groups;
   GList *recent;
@@ -375,7 +375,7 @@ ephy_encoding_dialog_constructed (GObject *object)
   g_assert (EPHY_IS_EMBED (dialog->embed));
   view = EPHY_GET_WEBKIT_WEB_VIEW_FROM_EMBED (dialog->embed);
 
-  dialog->selected_encoding = webkit_web_view_get_custom_charset (view);
+  dialog->selected_encoding = ephy_engine_web_view_get_custom_charset (view);
 
   g_object_bind_property (dialog->default_switch, "active", dialog->type_stack, "sensitive", G_BINDING_INVERT_BOOLEAN);
 

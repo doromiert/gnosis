@@ -25,7 +25,7 @@
 
 #include <gdk-pixbuf/gdk-pixbuf.h>
 #include <gio/gio.h>
-#include <webkit/webkit.h>
+#include "ephy-engine-view.h"
 
 #include "ephy-debug.h"
 #include "ephy-json-utils.h"
@@ -45,7 +45,7 @@ G_DECLARE_FINAL_TYPE (EphyWebExtension, ephy_web_extension, EPHY, WEB_EXTENSION,
  */
 typedef struct {
   EphyWebExtension *extension;
-  WebKitWebView *view;
+  EphyEngineView *view;
   guint64 frame_id;
 } EphyWebExtensionSender;
 

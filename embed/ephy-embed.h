@@ -20,6 +20,7 @@
  */
 
 #pragma once
+#include "ephy-engine-view.h"
 
 #include <gtk/gtk.h>
 
@@ -48,7 +49,7 @@ void             ephy_embed_entering_fullscreen           (EphyEmbed *embed);
 void             ephy_embed_leaving_fullscreen            (EphyEmbed *embed);
 void             ephy_embed_set_delayed_load_request      (EphyEmbed *embed,
                                                            WebKitURIRequest          *request,
-                                                           WebKitWebViewSessionState *state);
+                                                           EphyEngineSessionState *state);
 gboolean         ephy_embed_has_load_pending              (EphyEmbed *embed);
 gboolean         ephy_embed_inspector_is_loaded           (EphyEmbed *embed);
 const char      *ephy_embed_get_title                     (EphyEmbed *embed);
@@ -63,7 +64,7 @@ void             ephy_embed_set_animate_search_engine     (EphyEmbed *embed,
                                                            gboolean   animate);
 void             ephy_embed_attach_notification_container (EphyEmbed *embed);
 void             ephy_embed_detach_notification_container (EphyEmbed *embed);
-WebKitWebViewSessionState
+EphyEngineSessionState
                 *ephy_embed_get_session_state             (EphyEmbed *embed);
 
 G_END_DECLS

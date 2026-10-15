@@ -20,6 +20,7 @@
  */
 
 #pragma once
+#include "ephy-engine-view.h"
 
 #include <adwaita.h>
 
@@ -31,7 +32,7 @@ G_BEGIN_DECLS
 
 G_DECLARE_FINAL_TYPE (EphyFindToolbar, ephy_find_toolbar, EPHY, FIND_TOOLBAR, AdwBin)
 
-EphyFindToolbar *ephy_find_toolbar_new           (WebKitWebView *web_view);
+EphyFindToolbar *ephy_find_toolbar_new           (EphyEngineView *web_view);
 
 const char      *ephy_find_toolbar_get_text      (EphyFindToolbar *toolbar);
 

@@ -1,0 +1,4 @@
+<!doctype html><meta charset="utf-8"><title>Jupiter extension fixture</title><script>
+setInterval(()=>{console.log('JUPITER_EXTENSION_PROBE:'+document.documentElement.dataset.jupiterExtension);},1000);
+setTimeout(async()=>{try { await fetch('/blocked.gif?'+Date.now());console.log('JUPITER_BLOCKING_PROBE:NOT_BLOCKED');}catch{console.log('JUPITER_BLOCKING_PROBE:BLOCKED');}},5000);
+</script><h1>Jupiter extension fixture</h1>

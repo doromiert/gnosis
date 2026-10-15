@@ -1,8 +1,8 @@
-project('jupiter', 'c',
+project('jupiter', 'c', 'cpp',
   license: 'GPL3+',
   version: '51.1',
   meson_version: '>= 1.1',
-  default_options: ['c_std=gnu23',
+  default_options: ['c_std=gnu23', 'cpp_std=c++20',
                     'warning_level=2']
 )
 
@@ -163,6 +163,7 @@ subdir('data')
 subdir('help')
 subdir('po')
 subdir('third-party')
+subdir('engine')
 subdir('lib')
 subdir('embed')
 subdir('src')

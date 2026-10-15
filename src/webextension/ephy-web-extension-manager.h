@@ -20,6 +20,7 @@
 
 
 #pragma once
+#include "ephy-engine-view.h"
 
 #include <glib.h>
 
@@ -73,7 +74,7 @@ GtkWidget               *ephy_web_extension_manager_get_page_action             
 
 GListStore              *ephy_web_extension_manager_get_browser_actions             (EphyWebExtensionManager *self);
 
-WebKitWebView           *ephy_web_extension_manager_get_background_web_view         (EphyWebExtensionManager *self,
+EphyEngineView           *ephy_web_extension_manager_get_background_web_view         (EphyWebExtensionManager *self,
                                                                                      EphyWebExtension        *web_extension);
 GtkWidget               *ephy_web_extension_manager_create_browser_popup           (EphyWebExtensionManager *self,
                                                                                     EphyWebExtension        *web_extension);
@@ -100,7 +101,7 @@ void                     ephy_web_extension_manager_emit_in_tab_with_reply      
                                                                                      EphyWebExtension        *web_extension,
                                                                                      const char              *name,
                                                                                      const char              *message_json,
-                                                                                     WebKitWebView           *target_web_view,
+                                                                                     EphyEngineView           *target_web_view,
                                                                                      const char              *sender_json,
                                                                                      GTask                   *reply_task);
 void                     ephy_web_extension_manager_emit_in_background_view         (EphyWebExtensionManager *self,
@@ -121,7 +122,7 @@ void                      ephy_web_extension_manager_browseraction_set_badge_bac
                                                                                                GdkRGBA                 *text);
 
 void                      ephy_web_extension_manager_append_context_menu            (EphyWebExtensionManager *self,
-                                                                                     WebKitWebView           *web_view,
+                                                                                     EphyEngineView           *web_view,
                                                                                      WebKitContextMenu       *context_menu,
                                                                                      WebKitHitTestResult     *hit_test_result,
                                                                                      GdkModifierType          modifiers,

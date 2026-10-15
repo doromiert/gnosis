@@ -19,6 +19,7 @@
  */
 
 #include "config.h"
+#include "ephy-engine-view.h"
 
 #include "ephy-web-extension-manager.h"
 
@@ -263,7 +264,7 @@ ephy_webextension_scheme_cb (WebKitURISchemeRequest *request,
                              gpointer                user_data)
 {
   EphyWebExtensionManager *self = ephy_web_extension_manager_get_default ();
-  WebKitWebView *initiating_view;
+  EphyEngineView *initiating_view;
   EphyWebExtension *web_extension;
   EphyWebExtension *target_web_extension;
   g_autoptr (GInputStream) stream = NULL;
@@ -295,7 +296,7 @@ ephy_webextension_scheme_cb (WebKitURISchemeRequest *request,
   if (EPHY_IS_WEB_VIEW (initiating_view))
     initiating_uri_string = ephy_web_view_get_address (EPHY_WEB_VIEW (initiating_view));
   else
-    initiating_uri_string = webkit_web_view_get_uri (initiating_view);
+    initiating_uri_string = ephy_engine_web_view_get_uri (initiating_view);
   if (!initiating_uri_string) {
     webkit_uri_scheme_request_finish_error (request, g_error_new (WEB_EXTENSION_ERROR, WEB_EXTENSION_ERROR_INVALID_HOST, _("Failed to determine initiating URI")));
     return;
@@ -430,12 +431,12 @@ void
 ephy_web_extension_manager_open_inspector (EphyWebExtensionManager *self,
                                            EphyWebExtension        *web_extension)
 {
-  WebKitWebView *background_page = ephy_web_extension_manager_get_background_web_view (self, web_extension);
+  EphyEngineView *background_page = ephy_web_extension_manager_get_background_web_view (self, web_extension);
 
   if (!background_page)
     return;
 
-  webkit_web_inspector_show (webkit_web_view_get_inspector (background_page));
+  ephy_engine_web_inspector_show (ephy_engine_web_view_get_inspector (background_page));
 }
 
 /**
@@ -733,7 +734,7 @@ ephy_web_extension_manager_update_location_entry (EphyWebExtensionManager *self,
   }
 }
 
-WebKitWebView *
+EphyEngineView *
 ephy_web_extension_manager_get_background_web_view (EphyWebExtensionManager *self,
                                                     EphyWebExtension        *web_extension)
 {
@@ -743,14 +744,14 @@ ephy_web_extension_manager_get_background_web_view (EphyWebExtensionManager *sel
 static void
 ephy_web_extension_manager_set_background_web_view (EphyWebExtensionManager *self,
                                                     EphyWebExtension        *web_extension,
-                                                    WebKitWebView           *web_view)
+                                                    EphyEngineView           *web_view)
 {
   g_hash_table_insert (self->background_web_views, web_extension, web_view);
 }
 
 void
 ephy_web_extension_manager_append_context_menu (EphyWebExtensionManager *self,
-                                                WebKitWebView           *web_view,
+                                                EphyEngineView           *web_view,
                                                 WebKitContextMenu       *context_menu,
                                                 WebKitHitTestResult     *hit_test_result,
                                                 GdkModifierType          modifiers,
@@ -788,7 +789,7 @@ page_action_clicked (GtkButton *button,
   g_autofree char *encoded_json = NULL;
   g_autofree char *script = NULL;
   EphyWebExtensionManager *self = ephy_web_extension_manager_get_default ();
-  WebKitWebView *web_view = ephy_web_extension_manager_get_background_web_view (self, web_extension);
+  EphyEngineView *web_view = ephy_web_extension_manager_get_background_web_view (self, web_extension);
 
   json_builder_begin_object (builder);
   json_builder_set_member_name (builder, "url");
@@ -803,7 +804,7 @@ page_action_clicked (GtkButton *button,
   encoded_json = ephy_encode_for_js_quoted_data_value (json);
 
   script = g_strdup_printf ("window.browser.pageAction.onClicked._emit('%s');", encoded_json);
-  webkit_web_view_evaluate_javascript (web_view,
+  ephy_engine_web_view_evaluate_javascript (web_view,
                                        script, -1,
                                        NULL,
                                        NULL,
@@ -879,7 +880,7 @@ api_handler_data_free (ApiHandlerData *data)
 
 static ApiHandlerData *
 api_handler_data_new (EphyWebExtension  *extension,
-                      WebKitWebView     *view,
+                      EphyEngineView     *view,
                       guint64            frame_id,
                       WebKitUserMessage *message,
                       JsonNode          *args)
@@ -930,7 +931,7 @@ find_api_handler (const char *name)
 }
 
 static gboolean
-extension_view_handle_user_message (WebKitWebView     *web_view,
+extension_view_handle_user_message (EphyEngineView     *web_view,
                                     WebKitUserMessage *message,
                                     gpointer           user_data)
 {
@@ -1000,7 +1001,7 @@ extension_view_handle_user_message (WebKitWebView     *web_view,
 }
 
 static gboolean
-content_scripts_handle_user_message (WebKitWebView     *web_view,
+content_scripts_handle_user_message (EphyEngineView     *web_view,
                                      WebKitUserMessage *message,
                                      gpointer           user_data)
 {
@@ -1101,7 +1102,7 @@ add_content_scripts (EphyWebExtension *web_extension,
   if (!content_scripts)
     return;
 
-  ucm = webkit_web_view_get_user_content_manager (WEBKIT_WEB_VIEW (web_view));
+  ucm = ephy_engine_web_view_get_user_content_manager (EPHY_ENGINE_VIEW (web_view));
   /* NOTE: This will have to connect/disconnect script-message-recieved once we implement content-script APIs using this. */
 
   for (GList *list = content_scripts; list && list->data; list = list->next) {
@@ -1123,7 +1124,7 @@ remove_content_scripts (EphyWebExtension *self,
   if (!content_scripts)
     return;
 
-  ucm = webkit_web_view_get_user_content_manager (WEBKIT_WEB_VIEW (web_view));
+  ucm = ephy_engine_web_view_get_user_content_manager (EPHY_ENGINE_VIEW (web_view));
 
   for (GList *list = content_scripts; list && list->data; list = list->next) {
     GList *js_list = ephy_web_extension_get_content_script_js (self, list->data);
@@ -1144,7 +1145,7 @@ remove_custom_css (EphyWebExtension *self,
   if (!custom_css)
     return;
 
-  ucm = webkit_web_view_get_user_content_manager (WEBKIT_WEB_VIEW (web_view));
+  ucm = ephy_engine_web_view_get_user_content_manager (EPHY_ENGINE_VIEW (web_view));
 
   for (list = custom_css; list && list->data; list = list->next)
     webkit_user_content_manager_remove_style_sheet (WEBKIT_USER_CONTENT_MANAGER (ucm), ephy_web_extension_custom_css_style (self, list->data));
@@ -1160,11 +1161,11 @@ get_translation_contents (EphyWebExtension *web_extension)
 }
 
 static void
-send_to_page_ready_cb (WebKitWebView    *web_view,
+send_to_page_ready_cb (EphyEngineView    *web_view,
                        GAsyncResult     *result,
                        EphyWebExtension *web_extension)
 {
-  g_autoptr (WebKitUserMessage) response = webkit_web_view_send_message_to_page_finish (web_view, result, NULL);
+  g_autoptr (WebKitUserMessage) response = ephy_engine_web_view_send_message_to_page_finish (web_view, result, NULL);
   (void)response;
 
   add_content_scripts (web_extension, EPHY_WEB_VIEW (web_view));
@@ -1210,7 +1211,7 @@ ephy_web_extension_manager_add_web_extension_to_webview (EphyWebExtensionManager
                     G_CALLBACK (content_scripts_handle_user_message),
                     web_extension);
 
-  webkit_web_view_send_message_to_page (WEBKIT_WEB_VIEW (web_view),
+  ephy_engine_web_view_send_message_to_page (EPHY_ENGINE_VIEW (web_view),
                                         webkit_user_message_new ("WebExtension.Initialize",
                                                                  g_variant_new ("(sv)", ephy_web_extension_get_guid (web_extension), create_extension_data_variant (web_extension))),
                                         NULL, (GAsyncReadyCallback)send_to_page_ready_cb, web_extension);
@@ -1255,7 +1256,7 @@ init_web_extension_api (WebKitWebContext *web_context,
 }
 
 static gboolean
-decide_policy_cb (WebKitWebView            *web_view,
+decide_policy_cb (EphyEngineView            *web_view,
                   WebKitPolicyDecision     *decision,
                   WebKitPolicyDecisionType  decision_type,
                   EphyWebExtension         *web_extension)
@@ -1306,7 +1307,7 @@ ephy_web_extensions_manager_create_web_extensions_webview (EphyWebExtension *web
   g_autoptr (WebKitSettings) settings = NULL;
   WebKitWebContext *web_context = NULL;
   GtkWidget *web_view;
-  WebKitWebView *background_view;
+  EphyEngineView *background_view;
   const char *custom_user_agent;
 
   settings = webkit_settings_new_with_settings ("enable-write-console-messages-to-stdout", TRUE,
@@ -1332,7 +1333,7 @@ ephy_web_extensions_manager_create_web_extensions_webview (EphyWebExtension *web
     g_signal_connect_object (web_context, "initialize-web-process-extensions", G_CALLBACK (init_web_extension_api), web_extension, G_CONNECT_DEFAULT);
   }
 
-  web_view = g_object_new (WEBKIT_TYPE_WEB_VIEW,
+  web_view = g_object_new (EPHY_TYPE_ENGINE_VIEW,
                            "web-context", web_context,
                            "settings", settings,
                            "related-view", background_view,
@@ -1340,7 +1341,7 @@ ephy_web_extensions_manager_create_web_extensions_webview (EphyWebExtension *web
                            "web-extension-mode", WEBKIT_WEB_EXTENSION_MODE_MANIFESTV2,
                            NULL);
 
-  webkit_web_view_set_cors_allowlist (WEBKIT_WEB_VIEW (web_view), ephy_web_extension_get_host_permissions (web_extension));
+  ephy_engine_web_view_set_cors_allowlist (EPHY_ENGINE_VIEW (web_view), ephy_web_extension_get_host_permissions (web_extension));
   g_signal_connect (web_view, "user-message-received", G_CALLBACK (extension_view_handle_user_message), web_extension);
   g_signal_connect (web_view, "decide-policy", G_CALLBACK (decide_policy_cb), web_extension);
 
@@ -1348,7 +1349,7 @@ ephy_web_extensions_manager_create_web_extensions_webview (EphyWebExtension *web
 }
 
 static void
-on_popup_load_changed (WebKitWebView   *web_view,
+on_popup_load_changed (EphyEngineView   *web_view,
                        WebKitLoadEvent  load_event,
                        gpointer         user_data)
 {
@@ -1403,7 +1404,7 @@ ephy_web_extension_manager_create_browser_popup (EphyWebExtensionManager *self,
 
   popup = ephy_web_extension_get_browser_popup (web_extension);
   popup_uri = g_strdup_printf ("ephy-webextension://%s/%s", ephy_web_extension_get_guid (web_extension), popup);
-  webkit_web_view_load_uri (WEBKIT_WEB_VIEW (web_view), popup_uri);
+  ephy_engine_web_view_load_uri (EPHY_ENGINE_VIEW (web_view), popup_uri);
   g_signal_connect (web_view, "load-changed", G_CALLBACK (on_popup_load_changed), NULL);
 
   return web_view;
@@ -1544,11 +1545,11 @@ run_background_script (EphyWebExtensionManager *self,
 
   /* Create new background web_view */
   background = ephy_web_extensions_manager_create_web_extensions_webview (web_extension);
-  ephy_web_extension_manager_set_background_web_view (self, web_extension, WEBKIT_WEB_VIEW (background));
+  ephy_web_extension_manager_set_background_web_view (self, web_extension, EPHY_ENGINE_VIEW (background));
 
   if (page) {
     g_autofree char *page_uri = g_strdup_printf ("ephy-webextension://%s/%s", ephy_web_extension_get_guid (web_extension), page);
-    webkit_web_view_load_uri (WEBKIT_WEB_VIEW (background), page_uri);
+    ephy_engine_web_view_load_uri (EPHY_ENGINE_VIEW (background), page_uri);
     return;
   }
 }
@@ -1879,7 +1880,7 @@ tab_emit_ready_cb (GObject      *source,
   g_autoptr (JSCValue) value = NULL;
   GTask *pending_task;
 
-  value = webkit_web_view_evaluate_javascript_finish (WEBKIT_WEB_VIEW (source),
+  value = ephy_engine_web_view_evaluate_javascript_finish (EPHY_ENGINE_VIEW (source),
                                                       result,
                                                       &error);
 
@@ -1907,7 +1908,7 @@ ephy_web_extension_manager_emit_in_tab_with_reply (EphyWebExtensionManager *self
                                                    EphyWebExtension        *web_extension,
                                                    const char              *name,
                                                    const char              *message_json,
-                                                   WebKitWebView           *target_web_view,
+                                                   EphyEngineView           *target_web_view,
                                                    const char              *sender_json,
                                                    GTask                   *reply_task)
 {
@@ -1928,7 +1929,7 @@ ephy_web_extension_manager_emit_in_tab_with_reply (EphyWebExtensionManager *self
   tracker = g_new0 (PendingMessageReplyTracker, 1);
   tracker->web_extension = web_extension;
   tracker->message_guid = message_guid;
-  webkit_web_view_evaluate_javascript (target_web_view,
+  ephy_engine_web_view_evaluate_javascript (target_web_view,
                                        script, -1,
                                        ephy_web_extension_get_guid (web_extension),
                                        NULL,
@@ -1957,7 +1958,7 @@ on_extension_emit_ready (GObject      *source,
   g_autoptr (GError) error = NULL;
   g_autoptr (JSCValue) value = NULL;
 
-  value = webkit_web_view_evaluate_javascript_finish (WEBKIT_WEB_VIEW (source),
+  value = ephy_engine_web_view_evaluate_javascript_finish (EPHY_ENGINE_VIEW (source),
                                                       result,
                                                       &error);
 
@@ -1996,14 +1997,14 @@ ephy_web_extension_manager_emit_in_background_view (EphyWebExtensionManager *sel
                                                     const char              *json)
 {
   g_autofree char *script = NULL;
-  WebKitWebView *web_view = ephy_web_extension_manager_get_background_web_view (self, web_extension);
+  EphyEngineView *web_view = ephy_web_extension_manager_get_background_web_view (self, web_extension);
 
   if (!web_view)
     return;
 
   script = g_strdup_printf ("window.browser.%s._emit(%s);", name, json);
 
-  webkit_web_view_evaluate_javascript (web_view,
+  ephy_engine_web_view_evaluate_javascript (web_view,
                                        script, -1,
                                        NULL,
                                        NULL,
@@ -2020,7 +2021,7 @@ ephy_web_extension_manager_emit_in_extension_views_internal (EphyWebExtensionMan
                                                              const char              *message_json,
                                                              GTask                   *reply_task)
 {
-  WebKitWebView *background_view = ephy_web_extension_manager_get_background_web_view (self, web_extension);
+  EphyEngineView *background_view = ephy_web_extension_manager_get_background_web_view (self, web_extension);
   GPtrArray *popup_views = g_hash_table_lookup (self->popup_web_views, web_extension);
   g_autofree char *script = NULL;
   PendingMessageReplyTracker *tracker = NULL;
@@ -2047,7 +2048,7 @@ ephy_web_extension_manager_emit_in_extension_views_internal (EphyWebExtensionMan
 
   if (background_view) {
     if (!sender || (sender->view != background_view)) {
-      webkit_web_view_evaluate_javascript (background_view,
+      ephy_engine_web_view_evaluate_javascript (background_view,
                                            script, -1,
                                            NULL, NULL, NULL,
                                            reply_task ? on_extension_emit_ready : NULL,
@@ -2058,11 +2059,11 @@ ephy_web_extension_manager_emit_in_extension_views_internal (EphyWebExtensionMan
 
   if (popup_views) {
     for (guint i = 0; i < popup_views->len; i++) {
-      WebKitWebView *popup_view = g_ptr_array_index (popup_views, i);
+      EphyEngineView *popup_view = g_ptr_array_index (popup_views, i);
       if (!sender || (sender->view == popup_view))
         continue;
 
-      webkit_web_view_evaluate_javascript (popup_view,
+      ephy_engine_web_view_evaluate_javascript (popup_view,
                                            script, -1,
                                            NULL, NULL, NULL,
                                            reply_task ? on_extension_emit_ready : NULL,

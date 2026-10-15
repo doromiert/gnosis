@@ -19,6 +19,7 @@
  */
 
 #pragma once
+#include "ephy-engine-view.h"
 
 #include <gio/gio.h>
 
@@ -28,11 +29,11 @@ G_BEGIN_DECLS
 
 typedef struct EphyClientCertificateManager EphyClientCertificateManager;
 
-EphyClientCertificateManager *ephy_client_certificate_manager_request_certificate (WebKitWebView               *web_view,
+EphyClientCertificateManager *ephy_client_certificate_manager_request_certificate (EphyEngineView               *web_view,
                                                                                    WebKitAuthenticationRequest *request);
 
 void ephy_client_certificate_manager_request_certificate_pin (EphyClientCertificateManager *self,
-                                                              WebKitWebView                *web_view,
+                                                              EphyEngineView                *web_view,
                                                               WebKitAuthenticationRequest  *request);
 
 void

@@ -19,6 +19,7 @@
  */
 
 #pragma once
+#include "ephy-engine-view.h"
 
 #include <gtk/gtk.h>
 
@@ -33,7 +34,7 @@ G_DECLARE_FINAL_TYPE (EphyMouseGestureController, ephy_mouse_gesture_controller,
 EphyMouseGestureController *ephy_mouse_gesture_controller_new (EphyWindow *window);
 
 void ephy_mouse_gesture_controller_set_web_view (EphyMouseGestureController *self,
-                                                 WebKitWebView              *web_view);
+                                                 EphyEngineView              *web_view);
 void ephy_mouse_gesture_controller_unset_web_view (EphyMouseGestureController *self);
 
 

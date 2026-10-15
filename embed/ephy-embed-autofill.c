@@ -21,6 +21,7 @@
  */
 
 #include "config.h"
+#include "ephy-engine-view.h"
 
 #include "ephy-embed-autofill.h"
 
@@ -105,7 +106,7 @@ ephy_embed_autofill_signal_received_cb (EphyEmbedShell *shell,
   if (!g_settings_get_boolean (EPHY_SETTINGS_WEB, EPHY_PREFS_WEB_AUTOFILL_DATA))
     return;
 
-  if (webkit_web_view_get_page_id (WEBKIT_WEB_VIEW (view)) != page_id ||
+  if (ephy_engine_web_view_get_page_id (EPHY_ENGINE_VIEW (view)) != page_id ||
       !ephy_web_view_autofill_popup_enabled (view))
     return;
 

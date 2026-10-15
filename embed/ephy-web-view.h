@@ -21,7 +21,7 @@
 
 #pragma once
 
-#include <webkit/webkit.h>
+#include "ephy-engine-view.h"
 
 #include "ephy-autofill-fill-choice.h"
 #include "ephy-embed-shell.h"
@@ -32,7 +32,7 @@ G_BEGIN_DECLS
 
 #define EPHY_TYPE_WEB_VIEW (ephy_web_view_get_type ())
 
-G_DECLARE_FINAL_TYPE (EphyWebView, ephy_web_view, EPHY, WEB_VIEW, WebKitWebView)
+G_DECLARE_FINAL_TYPE (EphyWebView, ephy_web_view, EPHY, WEB_VIEW, EphyEngineView)
 
 #define EPHY_WEB_VIEW_NON_SEARCH_REGEX  "(" \
                                         "^[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9](:[0-9]+)?.*$|" \
@@ -89,7 +89,7 @@ typedef enum {
 } EphyWebViewMessageHandlerScope;
 
 GtkWidget *                ephy_web_view_new                      (void);
-GtkWidget                 *ephy_web_view_new_with_related_view    (WebKitWebView             *related_view);
+GtkWidget                 *ephy_web_view_new_with_related_view    (EphyEngineView             *related_view);
 void                       ephy_web_view_load_request             (EphyWebView               *view,
                                                                    WebKitURIRequest          *request);
 void                       ephy_web_view_load_url                 (EphyWebView               *view,

@@ -19,6 +19,7 @@
  */
 
 #include "config.h"
+#include "ephy-engine-view.h"
 
 #include <string.h>
 
@@ -68,7 +69,7 @@ server_callback (SoupServer        *server,
 }
 
 static void
-load_changed_cb (WebKitWebView   *view,
+load_changed_cb (EphyEngineView   *view,
                  WebKitLoadEvent  load_event,
                  GMainLoop       *loop)
 {
@@ -81,7 +82,7 @@ load_changed_cb (WebKitWebView   *view,
   expected_url = g_object_get_data (G_OBJECT (view), "test.expected_url");
   g_assert_nonnull (expected_url);
 
-  loaded_url = webkit_web_view_get_uri (view);
+  loaded_url = ephy_engine_web_view_get_uri (view);
   g_assert_cmpstr (loaded_url, ==, expected_url);
 
   g_signal_handlers_disconnect_by_func (view, load_changed_cb, loop);
@@ -350,7 +351,7 @@ test_ephy_web_view_normalize_or_autosearch (void)
 }
 
 static void
-quit_main_loop_when_load_finished (WebKitWebView   *view,
+quit_main_loop_when_load_finished (EphyEngineView   *view,
                                    WebKitLoadEvent  load_event,
                                    GMainLoop       *loop)
 {
@@ -364,8 +365,8 @@ quit_main_loop_when_load_finished (WebKitWebView   *view,
 static guint back_forward_list_counter = 0;
 
 static void
-back_forward_list_changed (WebKitBackForwardList     *list,
-                           WebKitBackForwardListItem *added_item,
+back_forward_list_changed (EphyEngineHistory     *list,
+                           EphyEngineHistoryItem *added_item,
                            GList                     *removed_items,
                            GMainLoop                 *loop)
 {
@@ -376,10 +377,10 @@ back_forward_list_changed (WebKitBackForwardList     *list,
 }
 
 static void
-wait_until_back_forward_list_changes (WebKitWebView *view,
+wait_until_back_forward_list_changes (EphyEngineView *view,
                                       GMainLoop     *loop)
 {
-  WebKitBackForwardList *back_forward_list = webkit_web_view_get_back_forward_list (view);
+  EphyEngineHistory *back_forward_list = ephy_engine_web_view_get_back_forward_list (view);
   g_signal_connect (back_forward_list, "changed", G_CALLBACK (back_forward_list_changed), loop);
 }
 
@@ -391,7 +392,7 @@ setup_ensure_back_forward_list_changes (EphyWebView *view)
   back_forward_list_counter = 1;
 
   loop = g_main_loop_new (NULL, FALSE);
-  wait_until_back_forward_list_changes (WEBKIT_WEB_VIEW (view), loop);
+  wait_until_back_forward_list_changes (EPHY_ENGINE_VIEW (view), loop);
 
   return loop;
 }
@@ -422,11 +423,11 @@ test_ephy_web_view_provisional_load_failure_updates_back_forward_list (void)
 
   ensure_back_forward_list_changes (loop);
 
-  g_assert_nonnull (webkit_back_forward_list_get_current_item (webkit_web_view_get_back_forward_list (WEBKIT_WEB_VIEW (view))));
+  g_assert_nonnull (ephy_engine_back_forward_list_get_current_item (ephy_engine_web_view_get_back_forward_list (EPHY_ENGINE_VIEW (view))));
 
-  g_assert_cmpstr (bad_url, ==, webkit_back_forward_list_item_get_uri (
-                     webkit_back_forward_list_get_current_item (
-                       webkit_web_view_get_back_forward_list (WEBKIT_WEB_VIEW (view)))));
+  g_assert_cmpstr (bad_url, ==, ephy_engine_back_forward_list_item_get_uri (
+                     ephy_engine_back_forward_list_get_current_item (
+                       ephy_engine_web_view_get_back_forward_list (EPHY_ENGINE_VIEW (view)))));
 
   g_object_unref (g_object_ref_sink (view));
 }

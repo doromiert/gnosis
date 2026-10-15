@@ -31,7 +31,7 @@
 #include "ephy-web-view.h"
 
 struct EphyClientCertificateManager {
-  WebKitWebView *web_view;
+  EphyEngineView *web_view;
   WebKitAuthenticationRequest *request;
   GckSession *session;
   GList *certificates;
@@ -559,7 +559,7 @@ modules_initialized_cb (GObject      *source_object,
 }
 
 EphyClientCertificateManager *
-ephy_client_certificate_manager_request_certificate (WebKitWebView               *web_view,
+ephy_client_certificate_manager_request_certificate (EphyEngineView               *web_view,
                                                      WebKitAuthenticationRequest *request)
 {
   EphyClientCertificateManager *self = g_new0 (EphyClientCertificateManager, 1);
@@ -575,12 +575,12 @@ ephy_client_certificate_manager_request_certificate (WebKitWebView              
 
 void
 ephy_client_certificate_manager_request_certificate_pin (EphyClientCertificateManager *self,
-                                                         WebKitWebView                *web_view,
+                                                         EphyEngineView                *web_view,
                                                          WebKitAuthenticationRequest  *request)
 {
   g_autoptr (WebKitCredential) credential = NULL;
 
-  if (g_strcmp0 (webkit_web_view_get_uri (self->web_view), webkit_web_view_get_uri (web_view)) == 0 && self->password) {
+  if (g_strcmp0 (ephy_engine_web_view_get_uri (self->web_view), ephy_engine_web_view_get_uri (web_view)) == 0 && self->password) {
     credential = webkit_credential_new_for_certificate_pin (self->password, self->persistence);
     webkit_authentication_request_authenticate (request, credential);
   } else {
