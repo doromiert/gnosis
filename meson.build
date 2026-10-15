@@ -1,4 +1,4 @@
-project('epiphany', 'c',
+project('jupiter', 'c',
   license: 'GPL3+',
   version: '51.1',
   meson_version: '>= 1.1',
@@ -23,9 +23,9 @@ libdir = join_paths(prefix, get_option('libdir'))
 libexecdir = join_paths(prefix, get_option('libexecdir'))
 liblocaledir = join_paths(prefix, libdir, 'locale')
 localedir = join_paths(prefix, get_option('localedir'))
-pkgdatadir = join_paths(datadir, 'epiphany')
-pkglibdir = join_paths(libdir, 'epiphany')
-pkglibexecdir = join_paths(libexecdir, 'epiphany')
+pkgdatadir = join_paths(datadir, 'jupiter')
+pkglibdir = join_paths(libdir, 'jupiter')
+pkglibexecdir = join_paths(libexecdir, 'jupiter')
 servicedir = join_paths(datadir, 'dbus-1', 'services')
 webprocessextensionsdir = join_paths(pkglibdir, 'web-process-extensions')
 
@@ -33,10 +33,10 @@ iso_codes = dependency('iso-codes')
 iso_codes_prefix = iso_codes.get_variable(pkgconfig: 'prefix')
 
 profile = get_option('profile')
-application_id = 'org.gnome.Epiphany'
+application_id = 'io.github.doromiert.Jupiter'
 
 if profile != ''
-  application_id = 'org.gnome.Epiphany.' + profile
+  application_id = 'io.github.doromiert.Jupiter.' + profile
 endif
 
 conf = configuration_data()
@@ -56,7 +56,7 @@ conf.set_quoted('SOURCE_ROOT', meson.project_source_root())
 tech_preview = get_option('tech_preview')
 conf.set10('TECH_PREVIEW', tech_preview)
 conf.set10('CANARY', profile == 'Canary')
-conf.set_quoted('G_LOG_DOMAIN', 'epiphany')
+conf.set_quoted('G_LOG_DOMAIN', 'jupiter')
 
 version_array = meson.project_version().split('.')
 conf.set('EPHY_MAJOR_VERSION', version_array[0].to_int())

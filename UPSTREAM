@@ -1,0 +1,7 @@
+GNOME Epiphany
+https://github.com/GNOME/epiphany.git
+c7be6f8581ca4e86e5373c4a65630805e2b50042
+Version 51.1
+
+UI sources, resources, icons and CSS are inherited directly from this revision.
+Keep shell changes small; engine changes belong under engine/.

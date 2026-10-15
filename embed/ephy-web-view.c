@@ -2531,8 +2531,8 @@ authenticate_succeeded_cb (WebKitAuthenticationRequest *request,
                               webkit_credential_get_username (credential),
                               webkit_credential_get_username (credential),
                               webkit_credential_get_password (credential),
-                              "org.gnome.Epiphany.HTTPAuthCredentials.Username",
-                              "org.gnome.Epiphany.HTTPAuthCredentials.Password",
+                              "io.github.doromiert.Jupiter.HTTPAuthCredentials.Username",
+                              "io.github.doromiert.Jupiter.HTTPAuthCredentials.Password",
                               TRUE);
 }
 
@@ -2636,8 +2636,8 @@ authenticate_cb (WebKitWebView               *web_view,
                                origin,
                                origin,
                                NULL,
-                               "org.gnome.Epiphany.HTTPAuthCredentials.Username",
-                               "org.gnome.Epiphany.HTTPAuthCredentials.Password",
+                               "io.github.doromiert.Jupiter.HTTPAuthCredentials.Username",
+                               "io.github.doromiert.Jupiter.HTTPAuthCredentials.Password",
                                FALSE,
                                (EphyPasswordManagerQueryCallback)auth_password_query_finished_cb,
                                data);

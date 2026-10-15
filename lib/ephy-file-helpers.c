@@ -94,7 +94,7 @@ ephy_file_tmp_dir (void)
     char *partial_name;
     char *full_name;
 
-    partial_name = g_strconcat ("epiphany-", g_get_user_name (),
+    partial_name = g_strconcat ("jupiter-", g_get_user_name (),
                                 "-XXXXXX", NULL);
     full_name = g_build_filename (g_get_tmp_dir (), partial_name,
                                   NULL);
@@ -345,7 +345,7 @@ ephy_default_profile_dir (void)
 {
   return profile_dir_type == EPHY_PROFILE_DIR_TEST ?
          g_strdup (ephy_profile_dir ()) :
-         g_build_filename (g_get_user_data_dir (), "epiphany", NULL);
+         g_build_filename (g_get_user_data_dir (), "jupiter", NULL);
 }
 
 /**
@@ -360,7 +360,7 @@ ephy_default_cache_dir (void)
 {
   return profile_dir_type == EPHY_PROFILE_DIR_TEST ?
          g_build_filename (ephy_profile_dir (), "cache", NULL) :
-         g_build_filename (g_get_user_cache_dir (), "epiphany", NULL);
+         g_build_filename (g_get_user_cache_dir (), "jupiter", NULL);
 }
 
 /**
@@ -375,7 +375,7 @@ ephy_default_config_dir (void)
 {
   return profile_dir_type == EPHY_PROFILE_DIR_TEST ?
          g_build_filename (ephy_profile_dir (), "config", NULL) :
-         g_build_filename (g_get_user_config_dir (), "epiphany", NULL);
+         g_build_filename (g_get_user_config_dir (), "jupiter", NULL);
 }
 
 /**
@@ -439,7 +439,7 @@ ephy_file_helpers_init (const char            *profile_dir,
     }
 
     profile_dir_global = g_build_filename (ephy_file_tmp_dir (),
-                                           "epiphany",
+                                           "jupiter",
                                            NULL);
     cache_dir = g_build_filename (profile_dir_global, "cache", NULL);
     config_dir = g_build_filename (profile_dir_global, "config", NULL);
@@ -780,7 +780,7 @@ ephy_open_default_instance_window (void)
 {
   GError *error = NULL;
 
-  g_spawn_command_line_async ("epiphany --new-window", &error);
+  g_spawn_command_line_async ("jupiter --new-window", &error);
 
   if (error) {
     g_warning ("Couldn't open default instance: %s", error->message);
@@ -799,9 +799,9 @@ ephy_open_incognito_window (const char *uri)
 
   if (uri) {
     g_autofree char *quoted_uri = g_shell_quote (uri);
-    command = g_strdup_printf ("epiphany --incognito-mode --profile %s -- %s", quoted_profile_dir, quoted_uri);
+    command = g_strdup_printf ("jupiter --incognito-mode --profile %s -- %s", quoted_profile_dir, quoted_uri);
   } else {
-    command = g_strdup_printf ("epiphany --incognito-mode --new-window --profile %s", quoted_profile_dir);
+    command = g_strdup_printf ("jupiter --incognito-mode --new-window --profile %s", quoted_profile_dir);
   }
 
   g_spawn_command_line_async (command, &error);

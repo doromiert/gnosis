@@ -269,7 +269,7 @@ ephy_sync_utils_make_client_record (const char *device_bso_id,
   json_object_set_string_member (object, "version", VERSION);
   json_object_set_array_member (object, "protocols", array);
   json_object_set_string_member (object, "os", "Linux");
-  json_object_set_string_member (object, "appPackage", "org.gnome.epiphany");
+  json_object_set_string_member (object, "appPackage", "io.github.doromiert.jupiter");
   json_object_set_string_member (object, "application", "Epiphany");
 
   node = json_node_new (JSON_NODE_OBJECT);

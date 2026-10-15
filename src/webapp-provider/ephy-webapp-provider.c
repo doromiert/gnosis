@@ -50,9 +50,9 @@ typedef enum {
 } EphyWebAppProviderError;
 
 static const GDBusErrorEntry ephy_webapp_provider_error_entries[] = {
-  { EPHY_WEBAPP_PROVIDER_ERROR_FAILED, "org.gnome.Epiphany.WebAppProvider.Error.Failed" },
-  { EPHY_WEBAPP_PROVIDER_ERROR_INVALID_ARGS, "org.gnome.Epiphany.WebAppProvider.Error.InvalidArgs" },
-  { EPHY_WEBAPP_PROVIDER_ERROR_NOT_INSTALLED, "org.gnome.Epiphany.WebAppProvider.Error.NotInstalled" },
+  { EPHY_WEBAPP_PROVIDER_ERROR_FAILED, "io.github.doromiert.Jupiter.WebAppProvider.Error.Failed" },
+  { EPHY_WEBAPP_PROVIDER_ERROR_INVALID_ARGS, "io.github.doromiert.Jupiter.WebAppProvider.Error.InvalidArgs" },
+  { EPHY_WEBAPP_PROVIDER_ERROR_NOT_INSTALLED, "io.github.doromiert.Jupiter.WebAppProvider.Error.NotInstalled" },
 };
 
 /* Ensure that every error code has an associated D-Bus error name */
@@ -277,7 +277,7 @@ ephy_web_app_provider_service_new (void)
   /* Note the application ID is constant for release/devel/canary builds
    * because we want to always use the same well-known D-Bus name.
    */
-  g_autofree gchar *app_id = g_strconcat ("org.gnome.Epiphany.WebAppProvider", NULL);
+  g_autofree gchar *app_id = g_strconcat ("io.github.doromiert.Jupiter.WebAppProvider", NULL);
 
   return g_object_new (EPHY_TYPE_WEB_APP_PROVIDER_SERVICE,
                        "application-id", app_id,

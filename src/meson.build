@@ -194,8 +194,8 @@ executable('epiphany-search-provider',
 )
 
 webapp_codegen = gnome.gdbus_codegen('ephy-webapp-provider-generated',
-  'webapp-provider/org.gnome.Epiphany.WebAppProvider.xml',
-  interface_prefix: 'org.gnome.Epiphany',
+  'webapp-provider/io.github.doromiert.Jupiter.WebAppProvider.xml',
+  interface_prefix: 'io.github.doromiert.Jupiter',
   namespace: 'Ephy'
 )
 
@@ -238,7 +238,7 @@ epiphany_sources = [
   readability_resources
 ]
 
-epiphany = executable('epiphany',
+epiphany = executable('jupiter',
   epiphany_sources,
   dependencies: ephymain_dep,
   install: true,

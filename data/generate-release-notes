@@ -11,8 +11,8 @@
 Automate AppStream release notes generation from the NEWS file.
 
 This script parses Epiphany's NEWS file (formatted according to GNOME conventions)
-and updates or generates the <releases> block in org.gnome.Epiphany.metainfo.xml.in.in
-(or outputs a configured org.gnome.Epiphany.metainfo.xml.in at build time).
+and updates or generates the <releases> block in io.github.doromiert.Jupiter.metainfo.xml.in.in
+(or outputs a configured io.github.doromiert.Jupiter.metainfo.xml.in at build time).
 
 GNOME Software reads these <releases> entries to display patch notes in the
 "Version History" / "What's New" UI.
@@ -288,7 +288,7 @@ def update_metainfo(metainfo_content, releases_xml, appid=None):
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 DEFAULT_NEWS = SCRIPT_DIR.parent / 'NEWS'
-DEFAULT_METAINFO = SCRIPT_DIR / 'org.gnome.Epiphany.metainfo.xml.in.in'
+DEFAULT_METAINFO = SCRIPT_DIR / 'io.github.doromiert.Jupiter.metainfo.xml.in.in'
 
 
 def main():

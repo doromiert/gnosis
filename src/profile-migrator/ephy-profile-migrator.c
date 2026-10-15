@@ -43,7 +43,7 @@ static void
 migrate_pre_flatpak_webapps (void)
 {
   /* Rename webapp folder, desktop file name and content from
-   *  org.gnome.Epiphany.WebApp-${id}
+   *  io.github.doromiert.Jupiter.WebApp-${id}
    * to
    *  ${APP_ID}.WebApp_${hash}
    *
@@ -93,11 +93,11 @@ migrate_pre_flatpak_webapps (void)
     const char *name;
 
     name = g_file_info_get_name (info);
-    if (!g_str_has_prefix (name, "org.gnome.Epiphany.WebApp-"))
+    if (!g_str_has_prefix (name, "io.github.doromiert.Jupiter.WebApp-"))
       goto next;
 
-    /* the directory is either org.gnome.Epiphany.WebApp-name-checksum or
-     * org.gnome.Epiphany.WebApp-checksum but unfortunately name can include a
+    /* the directory is either io.github.doromiert.Jupiter.WebApp-name-checksum or
+     * io.github.doromiert.Jupiter.WebApp-checksum but unfortunately name can include a
      * hyphen
      */
     {
@@ -176,7 +176,7 @@ migrate_pre_flatpak_webapps (void)
       }
       /* The StartupWMClass will not always have been corrected by the
        * find-and-replace above, since it has the form
-       * org.gnome.Epiphany.WebApp-<normalized_name>-<checksum> whereas the
+       * io.github.doromiert.Jupiter.WebApp-<normalized_name>-<checksum> whereas the
        * gapplication id sometimes omits the <normalized_name> part
        */
       g_key_file_set_string (keyfile, G_KEY_FILE_DESKTOP_GROUP, G_KEY_FILE_DESKTOP_KEY_STARTUP_WM_CLASS, new_name);

@@ -429,8 +429,8 @@ main (int   argc,
   }
 
   if (mode == EPHY_EMBED_SHELL_MODE_BROWSER || mode == EPHY_EMBED_SHELL_MODE_INCOGNITO) {
-    g_set_prgname ("epiphany");
-    g_set_application_name (_("Web"));
+    g_set_prgname ("jupiter");
+    g_set_application_name ("Jupiter");
 
     gtk_window_set_default_icon_name (APPLICATION_ID);
   }
