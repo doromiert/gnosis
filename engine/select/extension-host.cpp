@@ -357,7 +357,7 @@ void ExtensionHost::request(const Origin& origin, CefRefPtr<CefDictionaryValue> 
   auto found = std::find_if(all.begin(), all.end(), [&](const auto& t) { return t.id == tab_id; });
   if (found == all.end()) {
     if (defer && (op == "insertCSS" || op == "removeCSS" || op == "executeScript") && waiting_.size() < 256) {
-      waiting_.push_back({origin, request, g_get_monotonic_time() + 3 * G_TIME_SPAN_SECOND});
+      waiting_.push_back({origin, request->Copy(false), g_get_monotonic_time() + 3 * G_TIME_SPAN_SECOND});
       return;
     }
     reply(origin, id, result);
@@ -367,7 +367,7 @@ void ExtensionHost::request(const Origin& origin, CefRefPtr<CefDictionaryValue> 
   if (details && details->HasKey("frameId") && details->GetInt("frameId") > 0 &&
       !frame_ids_.contains({found->browser->GetIdentifier(), details->GetInt("frameId")})) {
     if (defer && waiting_.size() < 256) {
-      waiting_.push_back({origin, request, g_get_monotonic_time() + 3 * G_TIME_SPAN_SECOND});
+      waiting_.push_back({origin, request->Copy(false), g_get_monotonic_time() + 3 * G_TIME_SPAN_SECOND});
       return;
     }
     reply(origin, id, result, "The requested frame is unavailable");
@@ -425,10 +425,12 @@ void ExtensionHost::request(const Origin& origin, CefRefPtr<CefDictionaryValue> 
 }
 void ExtensionHost::css(const ExtensionTab& tab, CefRefPtr<CefDictionaryValue> details, bool remove,
                         const std::string& extension, std::function<void()> done) {
+  // Nested CEF values become invalid when the incoming request is released.
+  details = details->Copy(false);
   auto code = details->GetString("code").ToString();
   if (g_getenv("JUPITER_EXTENSION_DEBUG"))
-    g_print("CSS adapter: tab=%d ext=%s url=%s bytes=%zu\n", tab.id, extension.c_str(),
-            tab.info->GetString("url").ToString().c_str(), code.size());
+    g_print("CSS adapter: tab=%d ext=%s url=%s bytes=%zu frame=%d\n", tab.id, extension.c_str(),
+            tab.info->GetString("url").ToString().c_str(), code.size(), details->GetInt("frameId"));
   auto frame_key = details->HasKey("frameId") ? std::to_string(details->GetInt("frameId"))
                    : details->GetBool("allFrames") ? "all" : "0";
   auto key = std::to_string(tab.browser->GetIdentifier()) + ":" + extension + ":" + frame_key + ":" + code;
@@ -478,6 +480,8 @@ void ExtensionHost::css(const ExtensionTab& tab, CefRefPtr<CefDictionaryValue> d
             for (const auto& frame : frames) {
               auto args = dict();
               args->SetString("frameId", frame);
+              // Separate insertions must not overwrite each other's inspector sheet.
+              args->SetBool("force", true);
               command(tab.browser, "CSS.createStyleSheet", args,
                       [this, tab, code, key, pending, done](auto result) {
                         if (g_getenv("JUPITER_EXTENSION_DEBUG"))
@@ -504,6 +508,7 @@ void ExtensionHost::css(const ExtensionTab& tab, CefRefPtr<CefDictionaryValue> d
 void ExtensionHost::script(const ExtensionTab& tab, CefRefPtr<CefDictionaryValue> details,
                            const std::string& extension,
                            std::function<void(CefRefPtr<CefValue>, const std::string&)> done) {
+  details = details->Copy(false);
   auto result = CefValue::Create();
   auto output = CefListValue::Create();
   result->SetList(output);
