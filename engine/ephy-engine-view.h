@@ -1,7 +1,12 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 #pragma once
 #include <webkit/webkit.h>
+#include <json-glib/json-glib.h>
 #include "ephy-engine-favicon.h"
+#include "ephy-engine-session.h"
+#include "ephy-engine-response.h"
+#include "ephy-engine-settings.h"
+#include "ephy-engine-permission.h"
 G_BEGIN_DECLS
 #define EPHY_TYPE_ENGINE_VIEW (ephy_engine_web_view_get_type())
 G_DECLARE_DERIVABLE_TYPE(EphyEngineView, ephy_engine_web_view, EPHY, ENGINE_VIEW, GtkWidget)
@@ -38,7 +43,7 @@ struct _EphyEngineViewClass {
                                                 WebKitPolicyDecision        *decision,
                                                 WebKitPolicyDecisionType     type);
     gboolean   (* permission_request)          (EphyEngineView               *web_view,
-                                                WebKitPermissionRequest     *permission_request);
+                                                EphyEnginePermission        *permission_request);
     void       (* mouse_target_changed)        (EphyEngineView               *web_view,
                                                 WebKitHitTestResult         *hit_test_result,
                                                 guint                        modifiers);
@@ -84,10 +89,6 @@ struct _EphyEngineViewClass {
                                                 WebKitWebProcessTerminationReason reason);
     gboolean   (* user_message_received)       (EphyEngineView               *web_view,
                                                 WebKitUserMessage           *message);
-
-
-    gboolean   (* query_permission_state)      (EphyEngineView               *web_view,
-                                                WebKitPermissionStateQuery  *query);
 
 
 };
@@ -150,7 +151,7 @@ ephy_engine_web_inspector_close               (EphyEngineInspector *inspector);
 const gchar *
 ephy_engine_web_resource_get_uri         (EphyEngineResource  *resource);
 
-WebKitURIResponse *
+EphyEngineResponse *
 ephy_engine_web_resource_get_response    (EphyEngineResource  *resource);
 
 void
@@ -177,6 +178,11 @@ ephy_engine_web_view_try_close                            (EphyEngineView       
 void
 ephy_engine_web_view_load_uri                             (EphyEngineView             *web_view,
                                                       const gchar               *uri);
+
+/* Internal top-level documents only. The detailed page-message signal carries
+ * a borrowed JsonNode; websites and subframes cannot send these messages. */
+void ephy_engine_web_view_register_page_message_handler (EphyEngineView *view, const char *name);
+void ephy_engine_web_view_unregister_page_message_handler (EphyEngineView *view, const char *name);
 
 void
 ephy_engine_web_view_load_alternate_html                  (EphyEngineView             *web_view,
@@ -278,7 +284,11 @@ ephy_engine_web_view_evaluate_javascript                  (EphyEngineView       
                                                       GAsyncReadyCallback        callback,
                                                       gpointer                   user_data);
 
-JSCValue *
+/* Returns an owned Chromium Runtime.RemoteObject as JSON. Its type/subtype,
+ * optional value, and unserializableValue preserve undefined, null, BigInt,
+ * and non-finite numbers without creating another JavaScript engine.
+ * Remote object handles are released; this result contains serialized data. */
+JsonObject *
 ephy_engine_web_view_evaluate_javascript_finish           (EphyEngineView             *web_view,
                                                       GAsyncResult              *result,
                                                       GError                   **error);
@@ -361,8 +371,11 @@ ephy_engine_web_view_session_state_unref     (EphyEngineSessionState *state);
 
 GBytes *
 ephy_engine_web_view_session_state_serialize (EphyEngineSessionState *state);
+char *ephy_engine_dup_version_info(void);
+void ephy_engine_web_view_set_user_agent_override(EphyEngineView *, const char *);
 int ephy_engine_execute_process(int argc, char** argv);
 gboolean ephy_engine_initialize(int argc, char** argv, const char* profile, gboolean self_test);
+gboolean ephy_engine_prepare_shutdown(void);
 void ephy_engine_shutdown(void);
 void ephy_engine_web_view_print(EphyEngineView*, GtkPageSetup*, GtkPrintSettings*, GAsyncReadyCallback, gpointer);
 GtkPrintSetup* ephy_engine_web_view_print_finish(EphyEngineView*, GAsyncResult*, GError**);

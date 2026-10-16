@@ -801,16 +801,16 @@ fastly_challenge_resource_finished_cb (EphyEngineResource *resource,
                                        gpointer           user_data)
 {
   EphyFirefoxSyncDialog *sync_dialog = EPHY_FIREFOX_SYNC_DIALOG (user_data);
-  WebKitURIResponse *response = ephy_engine_web_resource_get_response (resource);
+  EphyEngineResponse *response = ephy_engine_web_resource_get_response (resource);
   const char *uri = ephy_engine_web_resource_get_uri (resource);
 
   if (!response || !strstr (uri, "fst-post-back"))
     return;
 
-  if (webkit_uri_response_get_status_code (response) != 200) {
+  if (ephy_engine_response_get_status_code (response) != 200) {
     if (!sync_dialog->fastly_challenge_retried) {
       LOG ("Fastly challenge failed (status %u), reloading once",
-           webkit_uri_response_get_status_code (response));
+           ephy_engine_response_get_status_code (response));
       sync_dialog->fastly_challenge_retried = TRUE;
       ephy_engine_web_view_reload (sync_dialog->fxa_web_view);
     } else {
@@ -887,7 +887,7 @@ static void
 sync_setup_firefox_iframe (EphyFirefoxSyncDialog *sync_dialog)
 {
   EphyEmbedShell *shell;
-  g_autoptr (WebKitNetworkSession) network_session = NULL;
+  g_autoptr (EphyEngineSession) network_session = NULL;
   WebKitWebContext *embed_context;
   WebKitWebContext *sync_context;
   const char *client_id;
@@ -939,10 +939,9 @@ sync_setup_firefox_iframe (EphyFirefoxSyncDialog *sync_dialog)
 
     shell = ephy_embed_shell_get_default ();
     embed_context = ephy_embed_shell_get_web_context (shell);
-    network_session = webkit_network_session_new_ephemeral ();
+    network_session = ephy_engine_session_new (TRUE);
     sync_context = webkit_web_context_new ();
-    webkit_web_context_set_preferred_languages (sync_context,
-                                                g_object_get_data (G_OBJECT (embed_context), "preferred-languages"));
+
 
     sync_dialog->fxa_web_view = EPHY_ENGINE_VIEW (g_object_new (EPHY_TYPE_ENGINE_VIEW,
                                                                "user-content-manager", sync_dialog->fxa_manager,

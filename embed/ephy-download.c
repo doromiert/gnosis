@@ -39,7 +39,7 @@
 struct _EphyDownload {
   GObject parent_instance;
 
-  WebKitDownload *download;
+  EphyEngineDownload *download;
   GCancellable *cancellable;
 
   char *content_type;
@@ -100,7 +100,7 @@ ephy_download_get_property (GObject    *object,
 
   switch ((EphyDownloadProps)property_id) {
     case PROP_DOWNLOAD:
-      g_value_set_object (value, ephy_download_get_webkit_download (download));
+      g_value_set_object (value, ephy_download_get_engine_download (download));
       break;
     case PROP_DESTINATION:
       g_value_set_string (value, ephy_download_get_destination (download));
@@ -244,7 +244,7 @@ set_destination_for_suggested_filename (EphyDownload *download,
   }
 
   /* Append (n) as needed. */
-  if (!webkit_download_get_allow_overwrite (download->download) && g_file_test (destination_filename, G_FILE_TEST_EXISTS)) {
+  if (!ephy_engine_download_get_allow_overwrite (download->download) && ephy_engine_download_destination_exists (download->download, destination_filename)) {
     int i = 1;
     const char *dot_pos;
     gssize position;
@@ -266,13 +266,13 @@ set_destination_for_suggested_filename (EphyDownload *download,
       g_string_insert (tmp_filename, position, serial);
 
       g_free (serial);
-    } while (g_file_test (tmp_filename->str, G_FILE_TEST_EXISTS));
+    } while (ephy_engine_download_destination_exists (download->download, tmp_filename->str));
 
     g_set_str (&destination_filename, tmp_filename->str);
     g_string_free (tmp_filename, TRUE);
   }
 
-  webkit_download_set_destination (download->download, destination_filename);
+  ephy_engine_download_set_destination (download->download, destination_filename);
 
   return TRUE;
 }
@@ -291,7 +291,7 @@ ephy_download_set_destination (EphyDownload *download,
   g_assert (EPHY_IS_DOWNLOAD (download));
   g_assert (destination);
 
-  webkit_download_set_destination (download->download, destination);
+  ephy_engine_download_set_destination (download->download, destination);
   g_object_notify_by_pspec (G_OBJECT (download), obj_properties[PROP_DESTINATION]);
 }
 
@@ -315,15 +315,15 @@ ephy_download_set_action (EphyDownload           *download,
 }
 
 /**
- * ephy_download_get_webkit_download:
+ * ephy_download_get_engine_download:
  * @download: an #EphyDownload
  *
- * Gets the #WebKitDownload being wrapped by @download.
+ * Gets the #EphyEngineDownload being wrapped by @download.
  *
- * Returns: (transfer none): a #WebKitDownload.
+ * Returns: (transfer none): a #EphyEngineDownload.
  **/
-WebKitDownload *
-ephy_download_get_webkit_download (EphyDownload *download)
+EphyEngineDownload *
+ephy_download_get_engine_download (EphyDownload *download)
 {
   g_assert (EPHY_IS_DOWNLOAD (download));
 
@@ -343,7 +343,7 @@ ephy_download_get_destination (EphyDownload *download)
 {
   g_assert (EPHY_IS_DOWNLOAD (download));
 
-  return webkit_download_get_destination (download->download);
+  return ephy_engine_download_get_destination (download->download);
 }
 
 /**
@@ -369,14 +369,14 @@ ephy_download_get_action (EphyDownload *download)
  * ephy_download_cancel:
  * @download: an #EphyDownload
  *
- * Cancels the wrapped #WebKitDownload.
+ * Cancels the wrapped #EphyEngineDownload.
  **/
 void
 ephy_download_cancel (EphyDownload *download)
 {
   g_assert (EPHY_IS_DOWNLOAD (download));
 
-  webkit_download_cancel (download->download);
+  ephy_engine_download_cancel (download->download);
 }
 
 gboolean
@@ -429,7 +429,7 @@ ephy_download_do_download_action (EphyDownload           *download,
   const char *destination_path;
   gboolean ret = FALSE;
 
-  destination_path = webkit_download_get_destination (download->download);
+  destination_path = ephy_engine_download_get_destination (download->download);
   destination = g_file_new_for_path (destination_path);
 
   switch ((action ? action : download->action)) {
@@ -497,12 +497,12 @@ ephy_download_class_init (EphyDownloadClass *klass)
   /**
    * EphyDownload::download:
    *
-   * Internal WebKitDownload.
+   * Internal EphyEngineDownload.
    */
   obj_properties[PROP_DOWNLOAD] =
     g_param_spec_object ("download",
                          NULL, NULL,
-                         WEBKIT_TYPE_DOWNLOAD,
+                         EPHY_TYPE_ENGINE_DOWNLOAD,
                          G_PARAM_READABLE |
                          G_PARAM_STATIC_STRINGS);
 
@@ -545,7 +545,7 @@ ephy_download_class_init (EphyDownloadClass *klass)
    * EphyDownload::filename-suggested:
    *
    * The ::filename-suggested signal is emitted when we have received the
-   * suggested filename from WebKit. Return %TRUE if you will provide a
+   * suggested filename from Chromium. Return %TRUE if you will provide a
    * destination or will %FALSE otherwise. If the destination is not
    * provided before the signal handler returns, the download will not
    * start until provided.
@@ -659,15 +659,12 @@ filename_suggested_dialog_cb (AdwAlertDialog        *dialog,
 {
   if (strcmp (response, "download") == 0) {
     g_autofree gchar *directory = g_file_get_path (data->directory);
-    WebKitDownload *webkit_download = ephy_download_get_webkit_download (data->download);
 
     if (!set_destination_for_suggested_filename (data->download, directory, data->suggested_filename)) {
       ephy_download_cancel (data->download);
       suggested_filename_data_free (data);
       return;
     }
-
-    webkit_download_set_allow_overwrite (webkit_download, TRUE);
 
     ephy_downloads_manager_add_download (ephy_embed_shell_get_downloads_manager (ephy_embed_shell_get_default ()),
                                          data->download);
@@ -760,8 +757,7 @@ open_download_confirmation_dialog (EphyDownload *download,
   GtkWidget *button;
   GtkWidget *button_box;
   GtkWidget *button_label;
-  WebKitDownload *webkit_download;
-  WebKitURIResponse *response;
+  EphyEngineDownload *engine_download;
   g_autofree gchar *type_text = NULL;
   g_autofree gchar *source_text = NULL;
   g_autofree gchar *content_length = NULL;
@@ -781,15 +777,14 @@ open_download_confirmation_dialog (EphyDownload *download,
                                   "download", _("_Download"),
                                   NULL);
 
-  webkit_download = ephy_download_get_webkit_download (download);
-  response = webkit_download_get_response (webkit_download);
+  engine_download = ephy_download_get_engine_download (download);
 
   grid = gtk_grid_new ();
   gtk_grid_set_column_spacing (GTK_GRID (grid), 6);
   gtk_widget_set_margin_top (grid, 6);
   adw_alert_dialog_set_extra_child (ADW_ALERT_DIALOG (dialog), grid);
 
-  content_length = g_format_size (webkit_uri_response_get_content_length (response));
+  content_length = g_format_size (ephy_engine_download_get_content_length (engine_download));
   content_type = ephy_download_get_content_type (download);
 
   /* Icon */
@@ -812,7 +807,7 @@ open_download_confirmation_dialog (EphyDownload *download,
   gtk_grid_attach (GTK_GRID (grid), type_label, 1, 1, 1, 1);
 
   /* Source */
-  source_text = g_strdup_printf (_("Source: %s"), ephy_string_get_host_name (webkit_uri_response_get_uri (response)));
+  source_text = g_strdup_printf (_("Source: %s"), ephy_string_get_host_name (ephy_engine_download_get_response_uri (engine_download)));
   source_label = gtk_label_new (source_text);
   gtk_label_set_xalign (GTK_LABEL (source_label), 0);
   gtk_grid_attach (GTK_GRID (grid), source_label, 1, 2, 1, 1);
@@ -869,25 +864,24 @@ open_download_confirmation_dialog (EphyDownload *download,
 }
 
 static void
-download_response_changed_cb (WebKitDownload *wk_download,
+download_response_changed_cb (EphyEngineDownload *wk_download,
                               GParamSpec     *spec,
                               EphyDownload   *download)
 {
-  WebKitURIResponse *response;
   const char *mime_type;
 
-  response = webkit_download_get_response (download->download);
-  mime_type = webkit_uri_response_get_mime_type (response);
+  mime_type = ephy_engine_download_get_mime_type (download->download);
   if (!mime_type)
     return;
 
+  g_free (download->content_type);
   download->content_type = g_content_type_from_mime_type (mime_type);
   if (download->content_type)
     g_object_notify_by_pspec (G_OBJECT (download), obj_properties[PROP_CONTENT_TYPE]);
 }
 
 static gboolean
-download_decide_destination_cb (WebKitDownload *wk_download,
+download_decide_destination_cb (EphyEngineDownload *wk_download,
                                 const gchar    *wk_suggestion,
                                 EphyDownload   *download)
 {
@@ -897,7 +891,7 @@ download_decide_destination_cb (WebKitDownload *wk_download,
   if (download->suggested_filename)
     suggested_filename = download->suggested_filename;
 
-  if (webkit_download_get_destination (wk_download))
+  if (ephy_engine_download_get_destination (wk_download))
     return TRUE;
 
   g_signal_emit (download, signals[FILENAME_SUGGESTED], 0, suggested_filename, &will_provide_destination);
@@ -915,7 +909,7 @@ download_decide_destination_cb (WebKitDownload *wk_download,
 }
 
 static void
-download_created_destination_cb (WebKitDownload *wk_download,
+download_created_destination_cb (EphyEngineDownload *wk_download,
                                  const char     *destination,
                                  EphyDownload   *download)
 {
@@ -961,7 +955,7 @@ download_created_destination_cb (WebKitDownload *wk_download,
 }
 
 static void
-display_download_finished_notification (WebKitDownload *download)
+display_download_finished_notification (EphyEngineDownload *download)
 {
   GApplication *application;
   GtkWindow *toplevel;
@@ -969,7 +963,7 @@ display_download_finished_notification (WebKitDownload *download)
 
   application = G_APPLICATION (ephy_embed_shell_get_default ());
   toplevel = gtk_application_get_active_window (GTK_APPLICATION (application));
-  dest = webkit_download_get_destination (download);
+  dest = ephy_engine_download_get_destination (download);
 
   if (!gtk_window_is_active (toplevel) && dest) {
     char *filename;
@@ -998,7 +992,7 @@ download_file_monitor_changed (GFileMonitor      *monitor,
                                EphyDownload      *download)
 {
   /* Skip messages for <file>.wkdownload */
-  if (strcmp (g_file_peek_path (file), webkit_download_get_destination (download->download)) != 0)
+  if (strcmp (g_file_peek_path (file), ephy_engine_download_get_destination (download->download)) != 0)
     return;
 
   download->was_moved = TRUE;
@@ -1008,7 +1002,7 @@ download_file_monitor_changed (GFileMonitor      *monitor,
 }
 
 static void
-download_finished_cb (WebKitDownload *wk_download,
+download_finished_cb (EphyEngineDownload *wk_download,
                       EphyDownload   *download)
 {
   g_autoptr (GError) error = NULL;
@@ -1024,7 +1018,7 @@ download_finished_cb (WebKitDownload *wk_download,
 
   g_signal_emit (download, signals[COMPLETED], 0);
 
-  file = g_file_new_for_path (webkit_download_get_destination (wk_download));
+  file = g_file_new_for_path (ephy_engine_download_get_destination (wk_download));
   download->file_monitor = g_file_monitor (file, G_FILE_MONITOR_NONE, NULL, &error);
   if (!download->file_monitor)
     g_warning ("Could not add a file monitor for %s, error: %s", g_file_get_uri (file), error->message);
@@ -1033,7 +1027,7 @@ download_finished_cb (WebKitDownload *wk_download,
 }
 
 static void
-download_failed_cb (WebKitDownload *wk_download,
+download_failed_cb (EphyEngineDownload *wk_download,
                     GError         *error,
                     EphyDownload   *download)
 {
@@ -1047,15 +1041,15 @@ download_failed_cb (WebKitDownload *wk_download,
 }
 
 EphyDownload *
-ephy_download_new_internal (WebKitDownload *download)
+ephy_download_new_internal (EphyEngineDownload *download)
 {
   EphyDownload *ephy_download;
 
-  g_assert (WEBKIT_IS_DOWNLOAD (download));
+  g_assert (EPHY_IS_ENGINE_DOWNLOAD (download));
 
   ephy_download = g_object_new (EPHY_TYPE_DOWNLOAD, NULL);
 
-  g_signal_connect_object (download, "notify::response",
+  g_signal_connect_object (download, "notify::mime-type",
                            G_CALLBACK (download_response_changed_cb),
                            ephy_download, G_CONNECT_DEFAULT);
   g_signal_connect_object (download, "created-destination",
@@ -1076,14 +1070,14 @@ ephy_download_new_internal (WebKitDownload *download)
 
 /**
  * ephy_download_new:
- * @download: a #WebKitDownload to wrap
+ * @download: a #EphyEngineDownload to wrap
  *
  * Wraps @download in an #EphyDownload.
  *
  * Returns: an #EphyDownload.
  **/
 EphyDownload *
-ephy_download_new (WebKitDownload *download)
+ephy_download_new (EphyEngineDownload *download)
 {
   EphyDownload *ephy_download;
 
@@ -1108,12 +1102,12 @@ EphyDownload *
 ephy_download_new_for_uri (const char *uri)
 {
   EphyDownload *ephy_download;
-  WebKitDownload *download;
+  EphyEngineDownload *download;
   EphyEmbedShell *shell = ephy_embed_shell_get_default ();
 
   g_assert (uri);
 
-  download = webkit_network_session_download_uri (ephy_embed_shell_get_network_session (shell), uri);
+  download = ephy_embed_shell_download_uri (shell, uri);
   ephy_download = ephy_download_new (download);
   g_object_unref (download);
 
@@ -1124,12 +1118,12 @@ EphyDownload *
 ephy_download_new_for_uri_internal (const char *uri)
 {
   EphyDownload *ephy_download;
-  g_autoptr (WebKitDownload) download = NULL;
+  g_autoptr (EphyEngineDownload) download = NULL;
   EphyEmbedShell *shell = ephy_embed_shell_get_default ();
 
   g_assert (uri);
 
-  download = webkit_network_session_download_uri (ephy_embed_shell_get_network_session (shell), uri);
+  download = ephy_embed_shell_download_uri (shell, uri);
   ephy_download = ephy_download_new_internal (download);
 
   return ephy_download;
@@ -1194,7 +1188,7 @@ ephy_download_set_choose_filename (EphyDownload *download,
  * If @suggested_directory is %NULL the globally configured download
  * directory is used.
  *
- * If @suggested_filename is %NULL the WebKit recommended filename
+ * If @suggested_filename is %NULL the Chromium recommended filename
  * is used.
  *
  * Note that this does not override EphyDownload:destination and only
@@ -1225,7 +1219,7 @@ ephy_download_set_allow_overwrite (EphyDownload *download,
 {
   g_assert (EPHY_IS_DOWNLOAD (download));
 
-  webkit_download_set_allow_overwrite (download->download, allow_overwrite);
+  ephy_engine_download_set_allow_overwrite (download->download, allow_overwrite);
 }
 
 /**

@@ -169,7 +169,7 @@ sync_features (EphyPrefsDialog *self)
     self->features_page = g_object_new (EPHY_TYPE_PREFS_FEATURES_PAGE, "dialog", self, NULL);
     adw_preferences_dialog_add (ADW_PREFERENCES_DIALOG (self),
                                 ADW_PREFERENCES_PAGE (self->features_page));
-  } else if (self->features_page) {
+  } else if (!enable_features && self->features_page) {
     adw_preferences_dialog_remove (ADW_PREFERENCES_DIALOG (self),
                                    ADW_PREFERENCES_PAGE (self->features_page));
     self->features_page = NULL;

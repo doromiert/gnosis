@@ -1,6 +1,6 @@
 project('jupiter', 'c', 'cpp',
   license: 'GPL3+',
-  version: '51.1',
+  version: '0.1.0',
   meson_version: '>= 1.1',
   default_options: ['c_std=gnu23', 'cpp_std=c++20',
                     'warning_level=2']
@@ -65,7 +65,7 @@ if version_array[1] in ['alpha', 'beta', 'rc']
 else
   conf.set('EPHY_MINOR_VERSION', version_array[1].to_int())
 endif
-conf.set('EPHY_MICRO_VERSION', 0)
+conf.set('EPHY_MICRO_VERSION', version_array[2].to_int())
 
 conf.set_quoted('EPHY_VERSION', meson.project_version())
 conf.set_quoted('VERSION', '@VCS_TAG@')

@@ -5,10 +5,11 @@ inline void configure_extensions(CefRefPtr<CefCommandLine> command, const std::s
   command->AppendSwitchWithValue("load-extension", paths);
   command->AppendSwitch("allow-legacy-extension-manifests");
   command->AppendSwitch("enable-unsafe-extension-debugging");
-  command->AppendSwitchWithValue("enable-features", "AllowLegacyMV2Extensions");
+  auto enabled = command->GetSwitchValue("enable-features").ToString();
+  command->AppendSwitchWithValue("enable-features", enabled.empty() ? "AllowLegacyMV2Extensions" : enabled + ",AllowLegacyMV2Extensions");
   command->AppendSwitchWithValue(
       "disable-features",
-      "ExtensionManifestV2Disabled,ExtensionManifestV2Unsupported,ExtensionManifestV2DeprecationWarning");
+      command->GetSwitchValue("disable-features").ToString() + ",ExtensionManifestV2Disabled,ExtensionManifestV2Unsupported,ExtensionManifestV2DeprecationWarning");
 }
 inline bool enable_extension_developer_mode() {
   auto value = CefValue::Create();

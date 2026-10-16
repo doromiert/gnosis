@@ -24,6 +24,9 @@ let
       runHook preInstall
       mkdir -p "$out"
       cp -r . "$out/"
+      # Chromium's bundled loader does not search NixOS's graphics-driver path.
+      rm "$out/Release/libvulkan.so.1"
+      ln -s ${pkgs.vulkan-loader}/lib/libvulkan.so.1 "$out/Release/libvulkan.so.1"
       runHook postInstall
     '';
     meta = {
@@ -49,12 +52,19 @@ let
   package = pkgs.epiphany.overrideAttrs (old: {
     pname = "jupiter";
     version = "0.1.0";
-    src = lib.cleanSource ./.;
+    src = lib.cleanSourceWith {
+      src = lib.cleanSource ./.;
+      filter = path: type: baseNameOf path != "JUPITER-TODO.md";
+    };
     patches = [];
     nativeBuildInputs = old.nativeBuildInputs ++ [ pkgs.cmake ];
     buildInputs = old.buildInputs ++ [ pkgs.libpwquality pkgs.libepoxy ] ++ chromiumLibraries;
     mesonFlags = [ "-Dgranite=disabled" "-Dunit_tests=enabled" "-Dman-pages=disabled" "-Dcef_root=${cefSdk}" "-Dublock_dir=${ublock}" ];
     passthru = (old.passthru or {}) // { inherit cefSdk ublock; };
-    meta = old.meta // { description = "GNOME Web shell being ported to Chromium Embedded Framework"; mainProgram = "jupiter"; };
+    meta = old.meta // {
+      description = "GNOME Web shell being ported to Chromium Embedded Framework";
+      homepage = "https://github.com/doromiert/jupiter-browser";
+      mainProgram = "jupiter";
+    };
   });
 in package

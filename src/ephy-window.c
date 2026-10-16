@@ -47,7 +47,6 @@
 #include "ephy-embed-type-builtins.h"
 #include "ephy-embed-utils.h"
 #include "ephy-file-helpers.h"
-#include "ephy-filters-manager.h"
 #include "ephy-find-toolbar.h"
 #include "ephy-flatpak-utils.h"
 #include "ephy-fullscreen-box.h"
@@ -187,8 +186,6 @@ struct _EphyWindow {
 
   GListModel *search_engine_model;
 
-  GList *pending_decisions;
-  gulong filters_initialized_id;
 
   gint current_width;
   gint current_height;
@@ -2219,38 +2216,6 @@ create_web_view_cb (EphyEngineView          *web_view,
   return new_web_view;
 }
 
-typedef struct {
-  EphyWindow *window;
-  EphyEngineView *web_view;
-  WebKitPolicyDecision *decision;
-  WebKitPolicyDecisionType decision_type;
-} VerifyUrlAsyncData;
-
-static inline VerifyUrlAsyncData *
-verify_url_async_data_new (EphyWindow               *window,
-                           EphyEngineView            *web_view,
-                           WebKitPolicyDecision     *decision,
-                           WebKitPolicyDecisionType  decision_type)
-{
-  VerifyUrlAsyncData *data = g_new (VerifyUrlAsyncData, 1);
-
-  data->window = g_object_ref (window);
-  data->web_view = g_object_ref (web_view);
-  data->decision = g_object_ref (decision);
-  data->decision_type = decision_type;
-
-  return data;
-}
-
-static inline void
-verify_url_async_data_free (VerifyUrlAsyncData *data)
-{
-  g_object_unref (data->window);
-  g_object_unref (data->web_view);
-  g_object_unref (data->decision);
-  g_free (data);
-}
-
 static gboolean
 accept_navigation_policy_decision (EphyWindow           *window,
                                    EphyEngineView        *web_view,
@@ -2258,7 +2223,6 @@ accept_navigation_policy_decision (EphyWindow           *window,
                                    const char           *uri)
 {
   g_autoptr (WebKitWebsitePolicies) website_policies = NULL;
-  EphyPermission adblock_permission = EPHY_PERMISSION_UNDECIDED;
   EphyPermission autoplay_permission = EPHY_PERMISSION_UNDECIDED;
   EphyEmbedShell *shell;
   g_autofree char *origin = ephy_uri_to_security_origin (uri);
@@ -2266,18 +2230,10 @@ accept_navigation_policy_decision (EphyWindow           *window,
   shell = ephy_embed_shell_get_default ();
 
   if (origin) {
-    adblock_permission = ephy_permissions_manager_get_permission (ephy_embed_shell_get_permissions_manager (shell),
-                                                                  EPHY_PERMISSION_TYPE_SHOW_ADS,
-                                                                  origin);
-
     autoplay_permission = ephy_permissions_manager_get_permission (ephy_embed_shell_get_permissions_manager (shell),
                                                                    EPHY_PERMISSION_TYPE_AUTOPLAY_POLICY,
                                                                    origin);
   }
-
-  ephy_filters_manager_refresh_ucm_filters (ephy_embed_shell_get_filters_manager (shell),
-                                            ephy_engine_web_view_get_user_content_manager (web_view),
-                                            adblock_permission == EPHY_PERMISSION_DENY || adblock_permission == EPHY_PERMISSION_UNDECIDED);
 
   switch (autoplay_permission) {
     case EPHY_PERMISSION_UNDECIDED:
@@ -2619,63 +2575,16 @@ decide_navigation_policy (EphyEngineView            *web_view,
   return accept_navigation_policy_decision (window, web_view, decision, request_uri);
 }
 
-static void
-resolve_pending_decision (VerifyUrlAsyncData *async_data)
-{
-  decide_navigation_policy (async_data->web_view, async_data->decision, async_data->decision_type, async_data->window);
-}
-
-static void
-filters_initialized_cb (EphyFiltersManager *filters_manager,
-                        GParamSpec         *pspec,
-                        EphyWindow         *window)
-{
-  /* This function is only ever invoked after initialization has completed. */
-  g_assert (ephy_filters_manager_get_is_initialized (filters_manager));
-
-  g_signal_handler_disconnect (filters_manager, window->filters_initialized_id);
-
-  g_list_foreach (window->pending_decisions, (GFunc)resolve_pending_decision, NULL);
-  g_clear_list (&window->pending_decisions, (GDestroyNotify)verify_url_async_data_free);
-}
-
 static gboolean
 decide_policy_cb (EphyEngineView            *web_view,
                   WebKitPolicyDecision     *decision,
                   WebKitPolicyDecisionType  decision_type,
                   EphyWindow               *window)
 {
-  const char *uri;
-
   /* Response policy decisions are handled in EphyWebView instead. */
   if (decision_type != WEBKIT_POLICY_DECISION_TYPE_NAVIGATION_ACTION &&
       decision_type != WEBKIT_POLICY_DECISION_TYPE_NEW_WINDOW_ACTION)
     return FALSE;
-
-  /* We don't want to allow HTTP requests before the adblocker is ready, except
-   * for internal Epiphany pages, which should never be delayed.
-   */
-  uri = ephy_engine_web_view_get_uri (web_view);
-  if (uri && !g_str_has_prefix (uri, "ephy-about:")) {
-    EphyFiltersManager *filters_manager = ephy_embed_shell_get_filters_manager (ephy_embed_shell_get_default ());
-    if (!ephy_filters_manager_get_is_initialized (filters_manager)) {
-      /* Queue request while filters initialization is in progress. */
-      VerifyUrlAsyncData *async_data = verify_url_async_data_new (window,
-                                                                  web_view,
-                                                                  decision,
-                                                                  decision_type);
-      window->pending_decisions = g_list_append (window->pending_decisions,
-                                                 async_data);
-      if (!window->filters_initialized_id) {
-        window->filters_initialized_id =
-          g_signal_connect_object (filters_manager,
-                                   "notify::is-initialized",
-                                   G_CALLBACK (filters_initialized_cb),
-                                   window, G_CONNECT_DEFAULT);
-      }
-      return TRUE;
-    }
-  }
 
   return decide_navigation_policy (web_view, decision, decision_type, window);
 }
@@ -3204,13 +3113,13 @@ reader_mode_cb (EphyWebView *view,
 }
 
 typedef struct {
-  WebKitPermissionRequest *request;
+  EphyEnginePermission *request;
   EphyPermissionType permission_type;
   char *origin;
 } EphyPermissionRequestData;
 
 static EphyPermissionRequestData *
-ephy_permission_request_data_new (WebKitPermissionRequest *request,
+ephy_permission_request_data_new (EphyEnginePermission *request,
                                   EphyPermissionType       permission_type,
                                   const char              *origin)
 {
@@ -3233,49 +3142,31 @@ ephy_permission_request_data_free (EphyPermissionRequestData *data)
 }
 
 static void
-set_permission (EphyPermissionRequestData *data,
-                gboolean                   response)
+on_permission_response (AdwAlertDialog            *self,
+                        char                      *response,
+                        EphyPermissionRequestData *data)
 {
-  EphyEmbedShell *shell = ephy_embed_shell_get_default ();
-  EphyPermissionsManager *permissions_manager = ephy_embed_shell_get_permissions_manager (shell);
-
-  if (ephy_permission_is_stored_by_permissions_manager (data->permission_type)) {
-    ephy_permissions_manager_set_permission (permissions_manager,
-                                             data->permission_type, data->origin,
-                                             response ? EPHY_PERMISSION_PERMIT
-                                                      : EPHY_PERMISSION_DENY);
-  } else if (EPHY_PERMISSION_TYPE_ACCESS_WEBCAM_AND_MICROPHONE) {
-    ephy_permissions_manager_set_permission (permissions_manager,
-                                             EPHY_PERMISSION_TYPE_ACCESS_WEBCAM,
-                                             data->origin,
-                                             response ? EPHY_PERMISSION_PERMIT
-                                                      : EPHY_PERMISSION_DENY);
-    ephy_permissions_manager_set_permission (permissions_manager,
-                                             EPHY_PERMISSION_TYPE_ACCESS_MICROPHONE,
-                                             data->origin,
-                                             response ? EPHY_PERMISSION_PERMIT
-                                                      : EPHY_PERMISSION_DENY);
+  if (strcmp (response, "allow") == 0) {
+    ephy_engine_permission_decide (data->request, EPHY_ENGINE_PERMISSION_ALLOW);
+  } else if (strcmp (response, "deny") == 0) {
+    ephy_engine_permission_decide (data->request, EPHY_ENGINE_PERMISSION_DENY);
+  } else {
+    ephy_engine_permission_decide (data->request, EPHY_ENGINE_PERMISSION_DISMISS);
   }
+}
 
+static void
+on_permission_finished (EphyEnginePermission *request,
+                        AdwDialog            *dialog)
+{
+  adw_dialog_force_close (dialog);
+}
+
+static void
+permission_response_data_free (gpointer data,
+                               GClosure *closure)
+{
   ephy_permission_request_data_free (data);
-}
-
-static void
-on_permission_allow (AdwAlertDialog            *self,
-                     char                      *response,
-                     EphyPermissionRequestData *data)
-{
-  webkit_permission_request_allow (data->request);
-  set_permission (data, TRUE);
-}
-
-static void
-on_permission_deny (AdwAlertDialog            *self,
-                    char                      *response,
-                    EphyPermissionRequestData *data)
-{
-  webkit_permission_request_deny (data->request);
-  set_permission (data, FALSE);
 }
 
 static void
@@ -3286,6 +3177,9 @@ permission_dialog_get_text (EphyPermissionRequestData  *data,
   const char *requesting_domain = NULL;
   const char *current_domain = NULL;
   g_autofree char *bold_origin = NULL;
+  g_autofree char *escaped_requester = NULL;
+  g_autofree char *escaped_top = NULL;
+  g_autofree char *escaped_description = NULL;
 
   bold_origin = g_markup_printf_escaped ("<b>%s</b>", data->origin);
   switch (data->permission_type) {
@@ -3332,13 +3226,15 @@ permission_dialog_get_text (EphyPermissionRequestData  *data,
                                   bold_origin);
       break;
     case EPHY_PERMISSION_TYPE_WEBSITE_DATA_ACCESS:
-      requesting_domain = webkit_website_data_access_permission_request_get_requesting_domain (WEBKIT_WEBSITE_DATA_ACCESS_PERMISSION_REQUEST (data->request));
-      current_domain = webkit_website_data_access_permission_request_get_current_domain (WEBKIT_WEBSITE_DATA_ACCESS_PERMISSION_REQUEST (data->request));
+      requesting_domain = ephy_engine_permission_get_origin (data->request);
+      current_domain = ephy_engine_permission_get_top_origin (data->request);
+      escaped_requester = g_markup_escape_text (requesting_domain, -1);
+      escaped_top = g_markup_escape_text (current_domain, -1);
       /* Translators: Storage access policy for a specific site. */
       *title = g_strdup (_("Website Data Access Request"));
       /* Translators: Storage access policy for a specific site. */
       *message = g_strdup_printf (_("The page at “%s” would like to access its own data (including cookies) while browsing “%s”. This will allow “%s” to track your activity on “%s”."),
-                                  requesting_domain, current_domain, requesting_domain, current_domain);
+                                  escaped_requester, escaped_top, escaped_requester, escaped_top);
       break;
     case EPHY_PERMISSION_TYPE_CLIPBOARD:
       /* Translators: Clipboard policy for a specific site. */
@@ -3346,6 +3242,11 @@ permission_dialog_get_text (EphyPermissionRequestData  *data,
       /* Translators: Clipboard policy for a specific site. */
       *message = g_strdup_printf (_("The page at “%s” would like to access your clipboard"),
                                   bold_origin);
+      break;
+    case EPHY_PERMISSION_TYPE_OTHER:
+      *title = g_strdup (_("Website Permission Request"));
+      escaped_description = g_markup_escape_text (ephy_engine_permission_get_description (data->request), -1);
+      *message = g_strdup_printf (_("The page at “%s” would like to:\n%s"), bold_origin, escaped_description);
       break;
     default:
       g_assert_not_reached ();
@@ -3355,7 +3256,7 @@ permission_dialog_get_text (EphyPermissionRequestData  *data,
 static void
 permission_requested_cb (EphyWebView             *view,
                          EphyPermissionType       permission_type,
-                         WebKitPermissionRequest *request,
+                         EphyEnginePermission *request,
                          const char              *origin,
                          EphyWindow              *window)
 {
@@ -3364,8 +3265,10 @@ permission_requested_cb (EphyWebView             *view,
   g_autofree char *title = NULL;
   g_autofree char *message = NULL;
 
-  if (!gtk_widget_is_visible (GTK_WIDGET (window)))
+  if (!gtk_widget_is_visible (GTK_WIDGET (window))) {
+    ephy_engine_permission_decide (request, EPHY_ENGINE_PERMISSION_DISMISS);
     return;
+  }
 
   data = ephy_permission_request_data_new (request, permission_type, origin);
   permission_dialog_get_text (data, &title, &message);
@@ -3383,8 +3286,9 @@ permission_requested_cb (EphyWebView             *view,
   adw_alert_dialog_set_default_response (ADW_ALERT_DIALOG (dialog), "close");
   adw_alert_dialog_set_close_response (ADW_ALERT_DIALOG (dialog), "close");
 
-  g_signal_connect (dialog, "response::allow", G_CALLBACK (on_permission_allow), data);
-  g_signal_connect (dialog, "response::deny", G_CALLBACK (on_permission_deny), data);
+  g_signal_connect_data (dialog, "response", G_CALLBACK (on_permission_response), data,
+                         permission_response_data_free, 0);
+  g_signal_connect_object (request, "finished", G_CALLBACK (on_permission_finished), dialog, 0);
 
   adw_dialog_present (dialog, GTK_WIDGET (window));
 }

@@ -25,7 +25,6 @@ libephyembed_sources = [
   'ephy-encoding.c',
   'ephy-encodings.c',
   'ephy-file-monitor.c',
-  'ephy-filters-manager.c',
   'ephy-find-toolbar.c',
   'ephy-floating-bar.c',
   'ephy-reader-handler.c',

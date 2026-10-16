@@ -309,16 +309,15 @@ download_get_filename (EphyDownload *download)
 static const char *
 download_get_url (EphyDownload *download)
 {
-  WebKitDownload *wk_dl = ephy_download_get_webkit_download (download);
-  WebKitURIRequest *request = webkit_download_get_request (wk_dl);
-  return webkit_uri_request_get_uri (request);
+  EphyEngineDownload *wk_dl = ephy_download_get_engine_download (download);
+  return ephy_engine_download_get_uri (wk_dl);
 }
 
 static guint64
 download_get_received_size (EphyDownload *download)
 {
-  WebKitDownload *wk_dl = ephy_download_get_webkit_download (download);
-  return webkit_download_get_received_data_length (wk_dl);
+  EphyEngineDownload *wk_dl = ephy_download_get_engine_download (download);
+  return ephy_engine_download_get_received_data_length (wk_dl);
 }
 
 static gboolean

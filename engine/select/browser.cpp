@@ -1,11 +1,14 @@
 #include "browser.hpp"
 #include "application.hpp"
 #include "clipboard.hpp"
+#include "page-messages.hpp"
 #include "cursor.hpp"
 #include "extension-tab-id.hpp"
 #include "policy.hpp"
+#include "ephy-engine-settings.h"
 
 #include "include/cef_parser.h"
+#include "include/cef_task.h"
 #include "include/wrapper/cef_helpers.h"
 #include <algorithm>
 #include <cmath>
@@ -14,7 +17,22 @@
 #include <map>
 
 unsigned Browser::active_count = 0;
+bool Browser::OnCertificateError(CefRefPtr<CefBrowser> source, cef_errorcode_t, const CefString& uri,
+                                 CefRefPtr<CefSSLInfo> info, CefRefPtr<CefCallback> callback) {
+  if (!owns(source) || !host || !ephy_engine_session_certificate_allowed(host->session, uri, info->GetX509Certificate()))
+    return false;
+  callback->Continue();
+  return true;
+}
 namespace {
+class ResponseTask final : public CefTask {
+public:
+  explicit ResponseTask(std::function<void()> callback) : callback_(std::move(callback)) {}
+  void Execute() override { callback_(); }
+private:
+  std::function<void()> callback_;
+  IMPLEMENT_REFCOUNTING(ResponseTask);
+};
 uint32_t modifiers(GdkModifierType state) {
   uint32_t result = 0;
   if (state & GDK_SHIFT_MASK)
@@ -206,7 +224,11 @@ Browser::Browser(std::string address, bool software) : url(std::move(address)), 
                      self->set_visible(true);
                    }),
                    this);
-  g_signal_connect(area_, "unmap", G_CALLBACK(+[](GtkWidget*, Browser* self) { self->set_visible(false); }),
+  g_signal_connect(area_, "unmap", G_CALLBACK(+[](GtkWidget*, Browser* self) {
+                     // A chooser can keep its parent alive past window destruction.
+                     self->cancel_file_dialogs();
+                     self->set_visible(false);
+                   }),
                    this);
   thumbnail_source_ = gtk_widget_paintable_new(overlay_);
   g_signal_connect(thumbnail_source_, "invalidate-contents",
@@ -278,18 +300,29 @@ void Browser::changed() {
 }
 
 void Browser::start() {
-  if (loaded || creating_ || browser_ || closing || (owner() && (owner()->closing || owner()->destroyed)))
+  if (loaded || creating_ || waiting_context_ || browser_ || closing || (owner() && (owner()->closing || owner()->destroyed)))
     return;
+  auto context = ephy_engine_session_context(host && host->session ? host->session : ephy_engine_session_get_default());
+  if (!context) {
+    waiting_context_ = true;
+    CefRefPtr<Browser> self = this;
+    CefPostDelayedTask(TID_UI, new ResponseTask([self] {
+      self->waiting_context_ = false;
+      self->start();
+    }), 10);
+    return;
+  }
   loaded = true;
   creating_ = true;
+  ++active_count;
   CefWindowInfo info;
   info.SetAsWindowless(0);
   info.shared_texture_enabled = !software_;
   CefBrowserSettings settings;
   settings.windowless_frame_rate = 60;
   settings.background_color = CefColorSetARGB(255, 255, 255, 255);
-  auto context = host ? host->context : nullptr;
   if (!CefBrowserHost::CreateBrowser(info, this, "", settings, nullptr, context)) {
+    --active_count;
     creating_ = false;
     loaded = false;
     show_error("Could Not Start Browser", "Close this tab and try again.");
@@ -307,8 +340,9 @@ void Browser::OnAfterCreated(CefRefPtr<CefBrowser> browser) {
   creating_ = false;
   browser_ = browser;
   browser_id_ = browser->GetIdentifier();
+  cookie_filter_ = ephy_engine_session_cookie_filter(host && host->session ? host->session : ephy_engine_session_get_default());
   loaded = true;
-  ++active_count;
+  if (!requested) ++active_count;
   if (host) {
     held_app_ = G_APPLICATION(g_object_ref(host->app.gtk_app));
     g_application_hold(held_app_);
@@ -325,13 +359,14 @@ void Browser::OnAfterCreated(CefRefPtr<CefBrowser> browser) {
   set_visible(gtk_widget_get_mapped(area_));
   refresh_theme();
   set_permissions();
+  changed();
   // Native creations start blank: load only the latest requested address once
   // creation finishes. Popups retain Chromium's opener and initial navigation.
+  if (prepare_navigation) prepare_navigation();
   if (requested || !pending_navigation_.empty()) {
     pending_navigation_.clear();
     browser_->GetMainFrame()->LoadURL(url);
   }
-  changed();
 }
 bool Browser::owns(CefRefPtr<CefBrowser> source) const {
   return source && browser_id_ && source->GetIdentifier() == browser_id_;
@@ -339,6 +374,10 @@ bool Browser::owns(CefRefPtr<CefBrowser> source) const {
 void Browser::OnBeforeClose(CefRefPtr<CefBrowser> source) {
   if (!owns(source))
     return;
+  closing = true;
+  cancel_file_dialogs();
+  cancel_permissions();
+  ephy_engine_download_browser_closed(browser_id_);
   CefRefPtr<Browser> keep_alive = this;
   Window* win = owner();
   if (attached_host_) { attached_host_->detach(browser_id_); attached_host_ = nullptr; }
@@ -347,27 +386,35 @@ void Browser::OnBeforeClose(CefRefPtr<CefBrowser> source) {
   loaded = false;
   creating_ = false;
   --active_count;
-  if (on_closed)
-    on_closed();
+  auto closed = on_closed;
+  if (closed)
+    closed();
   else if (win)
     win->browser_closed(this);
   if (held_app_) { g_application_release(held_app_); g_clear_object(&held_app_); }
 }
 void Browser::detach_callbacks() {
+  on_permission = nullptr;
+  on_page_message = nullptr;
   on_changed = nullptr;
   on_favicon = nullptr;
   on_closed = nullptr;
   on_close_cancelled = nullptr;
   on_load_end = nullptr;
+  on_load_error = nullptr;
   on_load_start = nullptr;
+  prepare_navigation = nullptr;
+  on_response = nullptr;
 }
 void Browser::close() {
+  cancel_file_dialogs();
+  cancel_permissions();
   if (closing)
     return;
   gtk_im_context_focus_out(im_);
   gtk_im_context_set_client_widget(im_, nullptr);
   closing = true;
-  if (browser_)
+  if (browser_ && downloads_.empty())
     browser_->GetHost()->CloseBrowser(false);
   else if (!loaded) {
     if (on_closed)
@@ -375,6 +422,13 @@ void Browser::close() {
     else if (owner())
       owner()->browser_closed(this);
   }
+}
+void Browser::shutdown() {
+  detach_callbacks();
+  cancel_file_dialogs();
+  cancel_permissions();
+  closing = true;
+  if (browser_) browser_->GetHost()->CloseBrowser(true);
 }
 void Browser::navigate(const std::string& address) {
   url = address;
@@ -742,8 +796,7 @@ void Browser::setup_input() {
   gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(click), 0);
   g_signal_connect(click, "pressed",
                    G_CALLBACK(+[](GtkGestureClick* c, int n, double x, double y, Browser* self) {
-                     self->clipboard_until_ = g_get_monotonic_time() + 5 * G_TIME_SPAN_SECOND;
-                     gtk_widget_grab_focus(self->area_);
+                     self->activate_clipboard();
                      self->mouse_x_ = x;
                      self->mouse_y_ = y;
                      const guint button = gtk_gesture_single_get_current_button(GTK_GESTURE_SINGLE(c));
@@ -846,8 +899,10 @@ CefMouseEvent Browser::mouse(GdkModifierType state) {
   return e;
 }
 void Browser::send_key(guint keyval, guint keycode, GdkModifierType state, bool release) {
-  if (!release)
+  if (!release) {
     clipboard_until_ = g_get_monotonic_time() + 5 * G_TIME_SPAN_SECOND;
+    if (!closing && browser_ && clipboard_allowed()) browser_->GetHost()->SetFocus(true);
+  }
   if (!browser_)
     return;
   CefKeyEvent e;
@@ -908,9 +963,6 @@ void Browser::OnAddressChange(CefRefPtr<CefBrowser> source, CefRefPtr<CefFrame> 
                               const CefString& address) {
   if (!owns(source) || !frame->IsMain() || (address == "about:blank" && url != "about:blank"))
     return;
-  if (owner() && url != address.ToString())
-    std::erase_if(owner()->app.extension_host->active_grants,
-                  [&](const auto& grant) { return grant.second == native_tab_id; });
   bool navigated = url != address.ToString();
   url = address;
   if (navigated && on_favicon) on_favicon(url, "", nullptr);
@@ -926,19 +978,31 @@ void Browser::OnLoadingStateChange(CefRefPtr<CefBrowser> source, bool value, boo
   if (!owns(source))
     return;
   loading = value;
-  if (value && on_load_start) on_load_start();
+  if (!value) navigation_started_ = false;
   changed();
+}
+void Browser::OnLoadStart(CefRefPtr<CefBrowser> source, CefRefPtr<CefFrame> frame, TransitionType) {
+  if (!owns(source) || !frame->IsMain() || closing || (frame->GetURL() == "about:blank" && url != "about:blank")) return;
+  if (!navigation_started_ && on_load_start) {
+    auto callback = on_load_start;
+    callback(frame->GetURL());
+  }
+  navigation_started_ = false;
 }
 void Browser::OnLoadEnd(CefRefPtr<CefBrowser> source, CefRefPtr<CefFrame> frame, int status) {
   if (!owns(source) || !frame->IsMain())
+    return;
+  if (frame->GetURL() == "about:blank" && url != "about:blank")
     return;
   if (on_load_end)
     on_load_end(status);
 }
 void Browser::OnLoadError(CefRefPtr<CefBrowser> source, CefRefPtr<CefFrame> frame, ErrorCode error,
-                          const CefString& text, const CefString&) {
-  if (owns(source) && frame->IsMain() && error != ERR_ABORTED)
-    show_error("Unable to Display This Website", text.ToString());
+                          const CefString& text, const CefString& failed_url) {
+  if (!owns(source) || !frame->IsMain() || error == ERR_ABORTED || closing) return;
+  auto callback = on_load_error;
+  if (callback && callback(failed_url, text)) return;
+  show_error("Unable to Display This Website", text.ToString());
 }
 void Browser::OnFullscreenModeChange(CefRefPtr<CefBrowser> source, bool fullscreen) {
   if (!owns(source))
@@ -958,7 +1022,7 @@ bool Browser::OnProcessMessageReceived(CefRefPtr<CefBrowser> source_browser, Cef
                                        CefProcessId source, CefRefPtr<CefProcessMessage> message) {
   if (!owns(source_browser))
     return false;
-  return Clipboard::receive(*this, frame, source, message);
+  return PageMessages::receive(*this, frame, source, message) || Clipboard::receive(*this, frame, source, message);
 }
 bool Browser::OnConsoleMessage(CefRefPtr<CefBrowser>, cef_log_severity_t, const CefString& message,
                                const CefString& source, int) {
@@ -1025,17 +1089,13 @@ bool Browser::OnCursorChange(CefRefPtr<CefBrowser> source, CefCursorHandle, cef_
   gtk_widget_set_cursor_from_name(area_, cursor);
   return true;
 }
-bool Browser::OnShowPermissionPrompt(CefRefPtr<CefBrowser>, uint64_t, const CefString& origin,
+bool Browser::OnShowPermissionPrompt(CefRefPtr<CefBrowser> source, uint64_t id, const CefString& origin,
                                      uint32_t permissions, CefRefPtr<CefPermissionPromptCallback> callback) {
-  if (!owner()) {
+  if (!owns(source) || closing || !owner()) {
     callback->Continue(CEF_PERMISSION_RESULT_DENY);
     return true;
   }
-  auto* dialog = adw_alert_dialog_new("Allow Website Permission?", origin.ToString().c_str());
-  adw_alert_dialog_add_responses(ADW_ALERT_DIALOG(dialog), "deny", "Deny", "allow", "Allow", nullptr);
-  adw_alert_dialog_set_default_response(ADW_ALERT_DIALOG(dialog), "deny");
-  adw_alert_dialog_set_close_response(ADW_ALERT_DIALOG(dialog), "deny");
-  std::string detail = origin.ToString() + " wants to:\n";
+  std::string detail;
   const std::pair<uint32_t, const char*> descriptions[] = {
       {CEF_PERMISSION_TYPE_CAMERA_STREAM, "Use your camera"},
       {CEF_PERMISSION_TYPE_MIC_STREAM, "Use your microphone"},
@@ -1066,21 +1126,91 @@ bool Browser::OnShowPermissionPrompt(CefRefPtr<CefBrowser>, uint64_t, const CefS
       {CEF_PERMISSION_TYPE_PROTECTED_MEDIA_IDENTIFIER, "Use protected media"},
       {CEF_PERMISSION_TYPE_SENSORS, "Read device sensors"},
       {CEF_PERMISSION_TYPE_LOCAL_NETWORK_ACCESS_DEPRECATED, "Access your local network"}};
-  for (auto [flag, label] : descriptions)
+  uint32_t known = 0;
+  for (auto [flag, label] : descriptions) {
+    known |= flag;
     if (permissions & flag)
-      detail += "\n• " + std::string(label);
-  adw_alert_dialog_set_body(ADW_ALERT_DIALOG(dialog), detail.c_str());
-  auto* cb = new CefRefPtr<CefPermissionPromptCallback>(callback);
-  g_signal_connect_data(
-      dialog, "response", G_CALLBACK(+[](AdwAlertDialog*, const char* response, gpointer p) {
-        (*static_cast<CefRefPtr<CefPermissionPromptCallback>*>(p))
-            ->Continue(!strcmp(response, "allow") ? CEF_PERMISSION_RESULT_ACCEPT
-                                                  : CEF_PERMISSION_RESULT_DENY);
-      }),
-      cb, +[](gpointer p, GClosure*) { delete static_cast<CefRefPtr<CefPermissionPromptCallback>*>(p); },
-      G_CONNECT_DEFAULT);
-  adw_dialog_present(dialog, GTK_WIDGET(owner()->window));
+      detail += (detail.empty() ? "" : "\n") + std::string("• ") + label;
+  }
+  if (!permissions || (permissions & ~known)) {
+    callback->Continue(CEF_PERMISSION_RESULT_DENY);
+    return true;
+  }
+  EphyEnginePermissionKind kind = EPHY_ENGINE_PERMISSION_OTHER;
+  switch (permissions) {
+    case CEF_PERMISSION_TYPE_NOTIFICATIONS: kind = EPHY_ENGINE_PERMISSION_NOTIFICATIONS; break;
+    case CEF_PERMISSION_TYPE_GEOLOCATION: kind = EPHY_ENGINE_PERMISSION_LOCATION; break;
+    case CEF_PERMISSION_TYPE_CLIPBOARD: kind = EPHY_ENGINE_PERMISSION_CLIPBOARD; break;
+    case CEF_PERMISSION_TYPE_STORAGE_ACCESS:
+    case CEF_PERMISSION_TYPE_TOP_LEVEL_STORAGE_ACCESS: kind = EPHY_ENGINE_PERMISSION_STORAGE_ACCESS; break;
+  }
+  auto *request = ephy_engine_permission_new(kind, origin.ToString().c_str(),
+    source->GetMainFrame()->GetURL().ToString().c_str(), host->session, detail.c_str(),
+    [callback](auto decision) {
+      callback->Continue(decision == EPHY_ENGINE_PERMISSION_ALLOW ? CEF_PERMISSION_RESULT_ACCEPT :
+                         decision == EPHY_ENGINE_PERMISSION_DENY ? CEF_PERMISSION_RESULT_DENY : CEF_PERMISSION_RESULT_IGNORE);
+    });
+  if (!request) return true;
+  auto owned = std::shared_ptr<EphyEnginePermission>(request, g_object_unref);
+  permission_prompts_[id] = owned;
+  present_permission(request);
   return true;
+}
+void Browser::present_permission(EphyEnginePermission *request) {
+  if (!on_permission || !on_permission(request))
+    ephy_engine_permission_decide(request, EPHY_ENGINE_PERMISSION_DISMISS);
+}
+void Browser::OnDismissPermissionPrompt(CefRefPtr<CefBrowser> source, uint64_t id, cef_permission_request_result_t) {
+  if (!owns(source)) return;
+  auto it = permission_prompts_.find(id);
+  if (it == permission_prompts_.end()) return;
+  auto request = std::move(it->second); permission_prompts_.erase(it);
+  if (ephy_engine_permission_get_kind(request.get()) == EPHY_ENGINE_PERMISSION_CLIPBOARD) {
+    auto context = source->GetHost()->GetRequestContext();
+    std::string origin = ephy_engine_permission_get_origin(request.get());
+    std::string top = ephy_engine_permission_get_top_origin(request.get());
+    // Chromium records the decision after OnDismiss returns; clipboard choices are per request.
+    CefPostTask(TID_UI, new ResponseTask([context, origin, top] {
+      if (context) context->SetContentSetting(origin, top, CEF_CONTENT_SETTING_TYPE_CLIPBOARD_READ_WRITE, CEF_CONTENT_SETTING_VALUE_DEFAULT);
+    }));
+  }
+  ephy_engine_permission_cancel(request.get());
+}
+bool Browser::OnRequestMediaAccessPermission(CefRefPtr<CefBrowser> source, CefRefPtr<CefFrame> frame,
+  const CefString& origin, uint32_t permissions, CefRefPtr<CefMediaAccessCallback> callback) {
+  const uint32_t devices = CEF_MEDIA_PERMISSION_DEVICE_AUDIO_CAPTURE | CEF_MEDIA_PERMISSION_DEVICE_VIDEO_CAPTURE;
+  // Display capture needs a real source chooser; never grant a default screen.
+  if (!owns(source) || closing || !owner() || !permissions || (permissions & ~devices)) return false;
+  auto kind = permissions == devices ? EPHY_ENGINE_PERMISSION_CAMERA_AND_MICROPHONE :
+    permissions == CEF_MEDIA_PERMISSION_DEVICE_AUDIO_CAPTURE ? EPHY_ENGINE_PERMISSION_MICROPHONE : EPHY_ENGINE_PERMISSION_CAMERA;
+  auto *request = ephy_engine_permission_new(kind, origin.ToString().c_str(),
+    source->GetMainFrame()->GetURL().ToString().c_str(), host->session, nullptr,
+    [callback, permissions](auto decision) { callback->Continue(decision == EPHY_ENGINE_PERMISSION_ALLOW ? permissions : 0); });
+  if (!request) return true;
+  std::erase_if(media_requests_, [](const auto& entry) { return ephy_engine_permission_is_resolved(entry.request.get()); });
+  auto owned = std::shared_ptr<EphyEnginePermission>(request, g_object_unref);
+  media_requests_.push_back({frame->GetIdentifier(), owned});
+  auto state = ephy_engine_permission_get_state(request);
+  if (state == EPHY_ENGINE_PERMISSION_STATE_ASK) present_permission(request);
+  else ephy_engine_permission_decide(request, state == EPHY_ENGINE_PERMISSION_STATE_ALLOW ? EPHY_ENGINE_PERMISSION_ALLOW : EPHY_ENGINE_PERMISSION_DENY);
+  return true;
+}
+void Browser::cancel_permissions() {
+  auto prompts = std::move(permission_prompts_);
+  auto media = std::move(media_requests_);
+  for (auto& [id, request] : prompts) ephy_engine_permission_decide(request.get(), EPHY_ENGINE_PERMISSION_DISMISS);
+  for (auto& entry : media) ephy_engine_permission_decide(entry.request.get(), EPHY_ENGINE_PERMISSION_DISMISS);
+}
+void Browser::cancel_media_permissions(const std::string& frame) {
+  std::vector<std::shared_ptr<EphyEnginePermission>> cancelled;
+  std::erase_if(media_requests_, [&](const auto& entry) {
+    if (entry.frame != frame) return false;
+    cancelled.push_back(entry.request); return true;
+  });
+  for (auto& request : cancelled) ephy_engine_permission_decide(request.get(), EPHY_ENGINE_PERMISSION_DISMISS);
+}
+void Browser::OnFrameDetached(CefRefPtr<CefBrowser> source, CefRefPtr<CefFrame> frame) {
+  if (owns(source) && !media_requests_.empty()) cancel_media_permissions(frame->GetIdentifier());
 }
 bool Browser::route(const std::string& target, bool user_gesture, bool new_tab) {
   if (!owner())
@@ -1097,8 +1227,44 @@ bool Browser::route(const std::string& target, bool user_gesture, bool new_tab) 
   return true;
 }
 bool Browser::OnBeforeBrowse(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame> frame, CefRefPtr<CefRequest> request,
-                             bool user_gesture, bool) {
-  return frame->IsMain() && route(request->GetURL(), user_gesture, false);
+                             bool user_gesture, bool is_redirect) {
+  if (frame->IsMain()) cancel_permissions();
+  else if (!media_requests_.empty()) cancel_media_permissions(frame->GetIdentifier());
+  auto target = request->GetURL().ToString();
+  const bool handled = frame->IsMain() && route(target, user_gesture, false);
+  // Overall loading also changes for fragments and subframes, which keep the document.
+  if (!handled && frame->IsMain() && !is_redirect && on_load_start &&
+      (target != "about:blank" || url == "about:blank")) {
+    navigation_started_ = true;
+    auto callback = on_load_start;
+    callback(target);
+  }
+  return handled;
+}
+CefRefPtr<CefResourceRequestHandler> Browser::GetResourceRequestHandler(CefRefPtr<CefBrowser>,
+    CefRefPtr<CefFrame> frame, CefRefPtr<CefRequest> request, bool, bool, const CefString&, bool&) {
+  if (frame && frame->IsMain() && request->GetResourceType() == RT_MAIN_FRAME)
+    main_request_.store(request->GetIdentifier());
+  return this;
+}
+cef_return_value_t Browser::OnBeforeResourceLoad(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame>,
+    CefRefPtr<CefRequest> request, CefRefPtr<CefCallback>) {
+  auto agent = request_user_agent_.load();
+  ephy_engine_settings_apply_request(request, agent.get());
+  return RV_CONTINUE;
+}
+bool Browser::OnResourceResponse(CefRefPtr<CefBrowser> source, CefRefPtr<CefFrame> frame,
+    CefRefPtr<CefRequest> request, CefRefPtr<CefResponse> response) {
+  if (!frame || !frame->IsMain() || request->GetResourceType() != RT_MAIN_FRAME) return false;
+  // CEF delivers network callbacks on IO; GTK and view callbacks run on UI.
+  CefRefPtr<Browser> self = this;
+  auto uri = request->GetURL().ToString();
+  auto id = request->GetIdentifier();
+  CefPostTask(TID_UI, new ResponseTask([self, source, response, uri, id] {
+    if (self->owns(source) && !self->closing && self->main_request_.load() == id && self->on_response)
+      self->on_response(uri, response);
+  }));
+  return false;
 }
 bool Browser::OnOpenURLFromTab(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame>, const CefString& target,
                                cef_window_open_disposition_t, bool user_gesture) {
@@ -1119,45 +1285,23 @@ bool Browser::OnBeforePopup(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame>, int, con
   info.shared_texture_enabled = !software_;
   return false;
 }
-bool Browser::OnBeforeDownload(CefRefPtr<CefBrowser>, CefRefPtr<CefDownloadItem>, const CefString& suggested,
+bool Browser::OnBeforeDownload(CefRefPtr<CefBrowser> source, CefRefPtr<CefDownloadItem> item, const CefString& suggested,
                                CefRefPtr<CefBeforeDownloadCallback> callback) {
-  if (!owner())
-    return true;
-  GtkFileDialog* dialog = gtk_file_dialog_new();
-  gtk_file_dialog_set_title(dialog, "Save File");
-  char* basename = g_path_get_basename(suggested.ToString().c_str());
-  gtk_file_dialog_set_initial_name(dialog, basename);
-  g_free(basename);
-  GFile* folder = g_file_new_for_path(owner()->app.download_folder.c_str());
-  gtk_file_dialog_set_initial_folder(dialog, folder);
-  g_object_unref(folder);
-  auto* cb = new CefRefPtr<CefBeforeDownloadCallback>(callback);
-  gtk_file_dialog_save(
-      dialog, owner()->window, nullptr,
-      +[](GObject* object, GAsyncResult* result, gpointer data) {
-        auto* callback = static_cast<CefRefPtr<CefBeforeDownloadCallback>*>(data);
-        GFile* file = gtk_file_dialog_save_finish(GTK_FILE_DIALOG(object), result, nullptr);
-        if (file) {
-          char* path = g_file_get_path(file);
-          if (path)
-            (*callback)->Continue(path, false);
-          g_free(path);
-          g_object_unref(file);
-        }
-        delete callback;
-        g_object_unref(object);
-      },
-      cb);
+  if (!owns(source)) return false;
+  downloads_.insert(item->GetId());
+  auto *session = host && host->session ? host->session : ephy_engine_session_get_default();
+  ephy_engine_download_before(session, source, item, suggested, callback);
   return true;
 }
-void Browser::OnDownloadUpdated(CefRefPtr<CefBrowser>, CefRefPtr<CefDownloadItem> item,
-                                CefRefPtr<CefDownloadItemCallback>) {
-  if (!owner())
-    return;
-  if (item->IsComplete())
-    owner()->app.export_completed(item->GetFullPath(), url, name);
-  else if (item->IsCanceled())
-    owner()->toast("Download cancelled");
+void Browser::OnDownloadUpdated(CefRefPtr<CefBrowser> source, CefRefPtr<CefDownloadItem> item,
+                                CefRefPtr<CefDownloadItemCallback> callback) {
+  if (!owns(source)) return;
+  if (item->IsInProgress()) downloads_.insert(item->GetId());
+  else downloads_.erase(item->GetId());
+  auto *session = host && host->session ? host->session : ephy_engine_session_get_default();
+  ephy_engine_download_updated(session, source, item, callback);
+  // Closing a tab must not detach CEF's download handler from an active transfer.
+  if (closing && downloads_.empty()) source->GetHost()->CloseBrowser(false);
 }
 void Browser::OnBeforeContextMenu(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame>, CefRefPtr<CefContextMenuParams>,
                                   CefRefPtr<CefMenuModel>) {}

@@ -20,6 +20,7 @@
  */
 
 #include "config.h"
+#include "ephy-json-utils.h"
 
 #include "ephy-find-toolbar.h"
 
@@ -525,26 +526,19 @@ ephy_find_toolbar_selection_async (GObject      *source_object,
   EphyEngineView *web_view = EPHY_ENGINE_VIEW (source_object);
   EphyFindToolbar *toolbar = EPHY_FIND_TOOLBAR (user_data);
   g_autoptr (GError) error = NULL;
-  g_autoptr (JSCValue) value = NULL;
+  g_autoptr (JsonObject) script_result = NULL;
+  const char *selection;
 
-  value = ephy_engine_web_view_evaluate_javascript_finish (web_view, res, &error);
-  if (!value) {
+  script_result = ephy_engine_web_view_evaluate_javascript_finish (web_view, res, &error);
+  if (!script_result) {
     g_warning ("Error running javascript: %s", error->message);
     return;
   }
 
-  if (jsc_value_is_string (value)) {
-    JSCException *exception;
-    g_autofree gchar *str_value = NULL;
-
-    str_value = jsc_value_to_string (value);
-    exception = jsc_context_get_exception (jsc_value_get_context (value));
-    if (exception) {
-      g_warning ("Error running javascript: %s", jsc_exception_get_message (exception));
-    } else if (strlen (str_value)) {
-      gtk_editable_set_text (GTK_EDITABLE (toolbar->entry), str_value);
-      gtk_editable_select_region (GTK_EDITABLE (toolbar->entry), 0, -1);
-    }
+  selection = ephy_json_object_get_string (script_result, "value");
+  if (selection && *selection) {
+    gtk_editable_set_text (GTK_EDITABLE (toolbar->entry), selection);
+    gtk_editable_select_region (GTK_EDITABLE (toolbar->entry), 0, -1);
   }
 }
 

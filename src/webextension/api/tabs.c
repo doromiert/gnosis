@@ -393,9 +393,10 @@ on_execute_script_ready (GObject      *source,
                          GAsyncResult *result,
                          gpointer      user_data)
 {
-  g_autoptr (JSCValue) value = NULL;
+  g_autoptr (JsonObject) value = NULL;
   g_autoptr (GError) error = NULL;
   GTask *task = user_data;
+  JsonNode *payload;
 
   value = ephy_engine_web_view_evaluate_javascript_finish (EPHY_ENGINE_VIEW (source),
                                                       result,
@@ -406,7 +407,8 @@ on_execute_script_ready (GObject      *source,
     return;
   }
 
-  g_task_return_pointer (task, jsc_value_to_json (value, 0), g_free);
+  payload = json_object_get_member (value, "value");
+  g_task_return_pointer (task, payload ? json_to_string (payload, FALSE) : NULL, g_free);
 }
 
 static void

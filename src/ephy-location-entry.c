@@ -169,7 +169,7 @@ do_dns_prefetch (PrefetchHelper *helper)
 {
   if (helper->uri) {
     EphyEmbedShell *shell = ephy_embed_shell_get_default ();
-    webkit_network_session_prefetch_dns (ephy_embed_shell_get_network_session (shell), g_uri_get_host (helper->uri));
+    ephy_engine_session_prefetch_dns (ephy_embed_shell_get_network_session (shell), g_uri_get_host (helper->uri));
   }
 
   helper->entry->dns_prefetch_handle_id = 0;

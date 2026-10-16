@@ -193,6 +193,11 @@
 			<summary>Hide cookie banner</summary>
 			<description>Hide cookie banners.</description>
 		</key>
+		<key type="a{sb}" name="chromium-feature-overrides">
+			<default>{}</default>
+			<summary>Chromium feature overrides</summary>
+			<description>Feature settings that take effect after restarting Jupiter.</description>
+		</key>
 		<key type="s" name="user-agent">
 			<default>''</default>
 			<summary>User agent</summary>

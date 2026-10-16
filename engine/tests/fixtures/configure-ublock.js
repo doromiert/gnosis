@@ -2,6 +2,7 @@
 (async () => {
   const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
   for (let i = 0; i < 30 && !globalThis.vAPI?.messaging; i++) await wait(200);
+  if (!globalThis.vAPI?.messaging) throw new Error('uBlock dashboard messaging did not initialize: '+JSON.stringify({url:location.href,title:document.title,state:document.readyState,runtime:globalThis.chrome?.runtime?.id,scripts:document.scripts.length,body:document.body?.innerText.slice(0,300)}));
   await wait(6000);
   await vAPI.messaging.send('dashboard', {
     what: 'writeUserFilters', enabled: true, trusted: false,

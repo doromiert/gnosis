@@ -3,18 +3,12 @@
 <component type="desktop-application">
   <id>@appid@</id>
   <metadata_license>CC0-1.0</metadata_license>
-  <name>Web</name>
+  <name>Jupiter</name>
   <summary>Browse the web</summary>
   <description>
-    <p>
-      The web browser for GNOME, featuring tight integration with the desktop
-      and a simple and intuitive user interface that allows you to focus on your
-      web pages. If you’re looking for a simple, clean, beautiful view of the
-      web, this is the browser for you.
-    </p>
-    <p>
-      Web is often referred to by its code name, Epiphany.
-    </p>
+    <p>Jupiter brings the GNOME Web interface to Chromium Embedded Framework.</p>
+    <p>Based on Epiphany, with its native GTK and libadwaita interface.
+       The engine replacement is under development.</p>
   </description>
   <screenshots>
     <screenshot type="default">
@@ -22,7 +16,6 @@
       <image>https://gitlab.gnome.org/GNOME/epiphany/raw/HEAD/data/screenshot.png</image>
     </screenshot>
   </screenshots>
-  <update_contact>mcatanzaro_at_gnome.org</update_contact>
   <kudos>
     <kudo>AppMenu</kudo>
     <kudo>HiDpiIcon</kudo>
@@ -30,24 +23,18 @@
     <kudo>SearchProvider</kudo>
     <kudo>UserDocs</kudo>
   </kudos>
-  <project_group>GNOME</project_group>
   <project_license>GPL-3.0+</project_license>
   <!-- developer_name tag deprecated with Appstream 1.0 -->
-  <developer_name>The GNOME Project</developer_name>
-  <developer id="org.gnome">
-    <name>The GNOME Project</name>
+  <developer_name>Jupiter contributors</developer_name>
+  <developer id="io.github.doromiert">
+    <name>Jupiter contributors</name>
   </developer>
-  <url type="homepage">https://apps.gnome.org/Epiphany</url>
-  <url type="bugtracker">https://gitlab.gnome.org/GNOME/epiphany/issues</url>
-  <url type="donation">https://www.gnome.org/donate/</url>
-  <url type="help">https://help.gnome.org/users/epiphany/stable/</url>
-  <url type="translate">https://l10n.gnome.org/module/epiphany</url>
-  <url type="vcs-browser">https://gitlab.gnome.org/GNOME/epiphany</url>
-  <url type="contribute">https://welcome.gnome.org/app/Epiphany</url>
-  <url type="contact">https://matrix.to/#/#epiphany:gnome.org</url>
-  <translation type="gettext">epiphany</translation>
+  <url type="homepage">https://github.com/doromiert/jupiter-browser</url>
+  <url type="bugtracker">https://github.com/doromiert/jupiter-browser/issues</url>
+  <url type="vcs-browser">https://github.com/doromiert/jupiter-browser</url>
+  <translation type="gettext">jupiter</translation>
   <provides>
-    <binary>epiphany</binary>
+    <binary>jupiter</binary>
   </provides>
   <launchable type="desktop-id">@appid@.desktop</launchable>
   <content_rating type="oars-1.1" />
@@ -60,336 +47,10 @@
     <display_length compare="ge">360</display_length>
   </requires>
   <releases>
-    <release date="2026-09-24" version="51.1">
+    <release date="2026-10-15" version="0.1.0" type="development">
       <description>
-        <p>Bugs fixed:</p>
-        <ul>
-          <li>#2883 Wrong position of the suggestion popover at the first time (John Cardullo)</li>
-          <li>#2905 Refilter, do not clear SearchEntry when using the "Clear" action in History dialog (Arak)</li>
-          <li>#2952 (CVE-2026-94291) Epiphany allows insecure iframe through view-source / ephy-reader scheme (Michael Catanzaro)</li>
-          <li>#2958 Bookmark search does not work when a tag is viewed (Arak)</li>
-          <li>!2215 Pantheon: Revive about menuitem for debugging information (Ryo Nakano)</li>
-        </ul>
-        <p>Updated translations for: German, Norwegian Nynorsk, Portuguese.</p>
-      </description>
-      <issues>
-        <issue type="cve">CVE-2026-94291</issue>
-      </issues>
-    </release>
-    <release date="2026-09-10" version="51.0">
-      <description>
-        <p>Bugs fixed:</p>
-        <ul>
-          <li>#2617 session: Append closed tab at end if recorded position is out of bounds (John Cardullo)</li>
-          <li>#2897 (CVE-2026-18487) Address Bar / Host Spoofing via userinfo in ephy_uri_get_decoded_host (Michael Catanzaro)</li>
-          <li>#2931 Code Injection via ephy_web_view_get_best_web_app_icon in `data:` URI (Michael Catanzaro)</li>
-          <li>#2934 `data` URI prettification returns invalid domain (Michael Catanzaro)</li>
-          <li>!2144 Some fixes for EphyHistoryDialogRow (Michael Catanzaro)</li>
-        </ul>
-        <p>Updated translations for: Basque, Danish, English (United Kingdom), French, Hungarian, Korean, Norwegian Bokmål, Serbian, Spanish, Turkish.</p>
-      </description>
-      <issues>
-        <issue type="cve">CVE-2026-18487</issue>
-      </issues>
-    </release>
-    <release date="2026-08-27" version="51~rc">
-      <description>
-        <p>Bugs fixed:</p>
-        <ul>
-          <li>#2898 Invalid bookmark import crashes browser (Fernando Muñoz)</li>
-          <li>#2903 XSS/HTML injection in error page (Michael Catanzaro)</li>
-          <li>#2921 (CVE-2026-77682) Autofill JS Code Injection via CSS Selector (Michael Catanzaro)</li>
-          <li>#2922 (CVE-2026-77679) WebExtension XPI Path Traversal ZIPSLIP (Fernando Muñoz)</li>
-          <li>#2928 Link clicked in another app opens in the fullscreen window during fullscreen video (Semen Fomchenkov)</li>
-          <li>#2929 Caret in the address bar jumps to the start when I switch keyboard layout (Semen Fomchenkov)</li>
-          <li>#2938 "Not Secure" label in the address bar is truncated and glued to the domain in translated locales (Semen Fomchenkov)</li>
-          <li>#2940 Epiphany offers to save a password that it just autofilled itself (after CSV import) (Semen Fomchenkov)</li>
-          <li>!2145 Update to highlight.js 11.2.0 (Michael Catanzaro)</li>
-          <li>!2148 web-process-extension: Target active frame when generating password from context menu (John Cardullo)</li>
-          <li>!2152 Canary: Fix WebKitGTK injected bundle path (Philippe Normand)</li>
-          <li>!2159 Do not trigger downloads on missing MIME type or failed HTTP responses (John Cardullo)</li>
-        </ul>
-        <p>Updated translations for: Bulgarian, Catalan, Chinese (Taiwan), Finnish, Kazakh, Lithuanian, Portuguese (Brazil), Romanian, Swedish, Uighur.</p>
-      </description>
-      <issues>
-        <issue type="cve">CVE-2026-77682</issue>
-        <issue type="cve">CVE-2026-77679</issue>
-      </issues>
-    </release>
-    <release date="2026-08-10" version="51~beta">
-      <description>
-        <p>Bugs fixed:</p>
-        <ul>
-          <li>#1671 Colons in URL for Epiphany's app mode are converted to "A" (John Cardullo)</li>
-          <li>#2892 Compile failures against libnettle 4.0 (Fernando Muñoz)</li>
-          <li>#2901 Memory leak in the core string utility function ephy_string_shorten() (Michael Catanzaro)</li>
-          <li>#2902 Out-of-bounds crash/assert failure in ephy_json_array_get_string_with_default (Michael Catanzaro)</li>
-          <li>#2904 Invalid view-source: crashes browser (John Cardullo)</li>
-          <li>!2079 CI: Add gobject-linter (Jan-Michael Brummer)</li>
-          <li>!2109 add pinning support for URLs in history and overview model (John Cardullo)</li>
-          <li>!2110 window: update message when saving a password (Michael Catanzaro)</li>
-          <li>!2111 Remove incorrect use of G_GNUC_CONST for get_type() functions (Michael Catanzaro)</li>
-          <li>!2112 Update highlight.js to 11.11.2 (Michael Catanzaro)</li>
-          <li>!2113 Add libpwquality to Canary manifest (Michael Catanzaro)</li>
-          <li>!2114 history-service: use G_SOURCE_REMOVE (Michael Catanzaro)</li>
-          <li>!2117 fix: check for invalid icon (Fernando Munoz)</li>
-          <li>!2121 Fix code style check (Michael Catanzaro)</li>
-          <li>!2125 Adjust Reader Mode Line Spacing (John Cardullo)</li>
-          <li>!2130 view-source-handler: fix crash when loading invalid URI (jcardullo)</li>
-          <li>!2134 Fix CI failures (Jan-Michael Brummer)</li>
-          <li>!2136 Canary: Disable WebRTC for now (Philippe Normand)</li>
-          <li>!2138 Reland property registration code style changes (Michael Catanzaro)</li>
-          <li>!2139 ci: move check-potfiles to lint stage (Michael Catanzaro)</li>
-          <li>!2140 ci: ignore blueprint-compiler failures during style check (Michael Catanzaro)</li>
-          <li>!2141 Canary: Re-enable WebRTC (Philippe Normand)</li>
-        </ul>
-        <p>Updated translations for: Basque, Belarusian, Bulgarian, Catalan, Chinese (China), Czech, Dutch, Galician, Georgian, German, Hebrew, Indonesian, Italian, Kazakh, Norwegian Bokmål, Occitan (post 1500), Persian, Romanian, Russian, Slovenian, Ukrainian.</p>
+        <p>Initial development version of the CEF port, based on Epiphany 51.1.</p>
       </description>
     </release>
-    <release date="2026-06-25" version="51~alpha">
-      <description>
-        <p>Bugs fixed:</p>
-        <ul>
-          <li>#2712 Crash when opening preferences dialog after deleting default search engine (Michael Catanzaro)</li>
-          <li>#2769 [Feature Request] Keyboard shortcut to copy the current page URL (Aygyun)</li>
-          <li>#2834 Search engine suggestions in addressbar autocompletion dropdown are visually overloading due to their URLs being shown (ARAKHNID)</li>
-          <li>#2868 Addressbar URL prettification does not understand IPv6 addresses (Achu94)</li>
-          <li>#2875 Editing password username creates duplicate entries (Michael Catanzaro)</li>
-          <li>!1987 webextension: Replace EphyWebExtension with WebKitWebExtension (Jamie Murphy)</li>
-          <li>!2052 Firefox sync OAuth token flow (Dyego Aurélio)</li>
-          <li>!2077 Use libportal API to detect sandbox (ARAKHNID)</li>
-          <li>!2082 window-commands: improve notification when failing to install (Simon Pena)</li>
-          <li>!2085 Change default adblock filters back to bnema (Michael Catanzaro)</li>
-          <li>!2086 window: Set devel CSS also for Canary builds (Philippe Normand)</li>
-          <li>!2089 canary: Disable Vulkan support (Philippe Normand)</li>
-          <li>!2090 site-menu-button: add rudimentary debug logging (Michael Catanzaro)</li>
-          <li>!2091 password-manager: fix crash when deleting password record (Michael Catanzaro)</li>
-          <li>!2094 Quote command line input before passing to shell (Michael Catanzaro)</li>
-          <li>!2098 password-manager: avoid duplicate record when changing username (Michael Catanzaro)</li>
-          <li>!2099 Fix crash when opening preferences dialog after deleting a search engine (Michael Catanzaro)</li>
-          <li>!2100 bookmark-props: Save bookmark on Ctrl + Enter (Zoey Ahmed)</li>
-          <li>!2101 bookmark-props: Select tag when row is clicked on (Zoey Ahmed)</li>
-          <li>!2102 web-view: fix memory corruption caused by previous memory corruption fix (Michael Catanzaro)</li>
-          <li>!2103 docs: clarify HiDPI snapshot sizing requirements and refactor about.css for readability (IGS_GIT)</li>
-          <li>!2104 Fix crash after adding a new OpenSearch engine (Michael Catanzaro)</li>
-          <li>!2105 feat: add undo functionality to overview item removal via toast notifications (IGS_GIT)</li>
-          <li>!2106 site-menu-button: remove unused function (Michael Catanzaro)</li>
-          <li>!2107 shortcuts: document F6 shortcut (YukiCodepth)</li>
-          <li>!2108 Allow user to generate secure passwords with libpwquality (Michael Catanzaro, IGS_GIT, John Cardullo)</li>
-        </ul>
-        <p>Updated translations for: Belarusian, Czech, Lao, Persian, Polish, Romanian, Slovak, Slovenian, Thai.</p>
-      </description>
-    </release>
-    <release date="2026-04-23" version="50.4">
-      <description>
-        <p>Bugs fixed:</p>
-        <ul>
-          <li>#2851 No way to "not" quit a webapp through keyboard shortcuts when "Run in background" is enabled (ARAKHNID)</li>
-          <li>#2857 adw_tab_view_get_page: assertion 'child_belongs_to_this_view (self, child)' failed (Michael Catanzaro)</li>
-          <li>#2858 Crash when passing invalid command line option (Michael Catanzaro)</li>
-          <li>#2859 URLs containing various characters cannot be deleted from history (Michael Catanzaro)</li>
-          <li>#2862 ephy_site_menu_button_update_search_engine_item crash on 32 bit (Michael Catanzaro)</li>
-          <li>#2863 Epiphany 49.7 crashes at launch (Michael Catanzaro)</li>
-          <li>!2073 Fix failure to delete URLs from history (Michael Catanzaro)</li>
-          <li>!2076 shell: keep going until all windows are destroyed (Michael Catanzaro)</li>
-          <li>!2083 Fix more problems in the filters manager, including crash on startup (Michael Catanzaro)</li>
-        </ul>
-        <p>Updated translations for: Dutch, German, Polish, Slovak, Turkish.</p>
-      </description>
-    </release>
-    <release date="2026-03-24" version="50.3">
-      <description>
-        <p>This release reverts back to the original adblock filters used before 50.rc.</p>
-        <p>Bugs fixed:</p>
-        <ul>
-          <li>#2848 Regression in site compatibility due to adblocking (Michael Catanzaro)</li>
-          <li>!2065 ci: Remove workflow:rules (Jordan Petridis)</li>
-          <li>!2067 filters-manager: fix disabling adblocker (Michael Catanzaro)</li>
-          <li>!2068 Switch back to easylist-downloads.adblockplus.org (Michael Catanzaro)</li>
-        </ul>
-      </description>
-    </release>
-    <release date="2026-03-20" version="50.2">
-      <description>
-        <p>Bugs fixed:</p>
-        <ul>
-          <li>#2847 Crash in ephy_window_set_active_tab() (ARAKHNID)</li>
-          <li>!2059 Add 15 second timeout when fetching adblock filters (Michael Catanzaro)</li>
-          <li>!2063 shell: fix crash when invalid URL passed on command line (Michael Catanzaro)</li>
-          <li>!2064 Many fixes for the adblocker (Michael Catanzaro)</li>
-        </ul>
-        <p>Updated translations for: Occitan (post 1500).</p>
-      </description>
-    </release>
-    <release date="2026-03-18" version="50.1">
-      <description>
-        <p>Bugs fixed:</p>
-        <ul>
-          <li>!2060 Remove ublock filter rules (Michael Catanzaro)</li>
-        </ul>
-        <p>Updated translations for: Italian, Occitan (post 1500), Serbian.</p>
-      </description>
-    </release>
-    <release date="2026-03-12" version="50.0">
-      <description>
-        <p>Bugs fixed:</p>
-        <ul>
-          <li>#2175 When closing a newly created tab, focus is reset to the last tab, instead of the previously focused tab (ARAKHNID)</li>
-          <li>#2825 Bugs may cause session state to be deleted (Michael Catanzaro)</li>
-          <li>#2838 epiphany-browser 49.2 build error against Nettle 4.0 (Michael Catanzaro)</li>
-          <li>#2842 Outdated comment for translators (ARAKHNID)</li>
-          <li>#2843 UI Bug: Imported bookmarks only show one link per tag (stacked on top of each other) &amp; Drag-and-Drop is broken (ARAKHNID)</li>
-          <li>#2844 Allow web apps to run in the background, with configurable toggle and quit action, even when not sandboxed by flatpak (ARAKHNID)</li>
-          <li>!2048 Fix crash when opening javascript: URLs in new tab (Michael Catanzaro)</li>
-          <li>!2049 Fix -Wdiscarded-qualifiers warnings (Michael Catanzaro)</li>
-          <li>!2050 web-view: fix security status when restoring pages from session state (Michael Catanzaro)</li>
-          <li>!2053 session: refuse to save window without tabs (Michael Catanzaro)</li>
-          <li>!2058 Revert "Fetch locale specific adlock list" (Michael Catanzaro)</li>
-        </ul>
-        <p>Updated translations for: Catalan, Danish, English (United Kingdom), Occitan (post 1500), Polish, Uighur.</p>
-      </description>
-    </release>
-    <release date="2026-03-02" version="50~rc"/>
-    <release date="2026-01-29" version="50~beta"/>
-    <release date="2026-01-05" version="50~alpha"/>
-    <release date="2025-10-10" version="49.1"/>
-    <release date="2025-09-11" version="49.0"/>
-    <release date="2025-08-27" version="49~rc"/>
-    <release date="2025-08-01" version="49~beta"/>
-    <release date="2025-06-26" version="49~alpha"/>
-    <release date="2025-04-24" version="48.3"/>
-    <release date="2025-04-22" version="48.2"/>
-    <release date="2025-04-21" version="48.1"/>
-    <release date="2025-03-13" version="48.0"/>
-    <release date="2025-02-26" version="48~rc"/>
-    <release date="2025-01-31" version="48~beta"/>
-    <release date="2025-01-09" version="48~alpha"/>
-    <release date="2024-10-22" version="47.2"/>
-    <release date="2024-10-14" version="47.1"/>
-    <release date="2024-09-12" version="47.0"/>
-    <release date="2024-08-30" version="47~rc"/>
-    <release date="2024-08-02" version="47~beta"/>
-    <release date="2024-06-29" version="47~alpha"/>
-    <release date="2024-06-29" version="46.2"/>
-    <release date="2024-05-29" version="46.1"/>
-    <release date="2024-03-15" version="46.0"/>
-    <release date="2024-02-29" version="46~rc"/>
-    <release date="2024-02-10" version="46~beta"/>
-    <release date="2024-01-05" version="46~alpha"/>
-    <release date="2024-01-05" version="45.2"/>
-    <release date="2023-11-06" version="45.1"/>
-    <release date="2023-09-15" version="45.0"/>
-    <release date="2023-07-28" version="45~beta"/>
-    <release date="2023-06-29" version="45~alpha"/>
-    <release date="2023-06-29" version="44.4"/>
-    <release date="2023-05-25" version="44.3"/>
-    <release date="2023-04-20" version="44.2"/>
-    <release date="2023-04-02" version="44.1"/>
-    <release date="2023-03-17" version="44.0"/>
-    <release date="2023-03-03" version="44~rc"/>
-    <release date="2023-02-11" version="44~beta"/>
-    <release date="2023-01-05" version="44~alpha"/>
-    <release date="2022-09-15" version="43.0"/>
-    <release date="2022-09-01" version="43~rc"/>
-    <release date="2022-08-05" version="43~beta"/>
-    <release date="2022-07-08" version="43~alpha"/>
-    <release date="2022-07-08" version="42.3"/>
-    <release date="2022-04-21" version="42.2"/>
-    <release date="2022-04-12" version="42.1"/>
-    <release date="2022-03-17" version="42.0"/>
-    <release date="2022-02-11" version="42~beta"/>
-    <release date="2022-01-06" version="42~alpha"/>
-    <release date="2021-12-20" version="41.3"/>
-    <release date="2021-12-16" version="41.2"/>
-    <release date="2021-12-16" version="41.1"/>
-    <release date="2021-09-16" version="41.0"/>
-    <release date="2021-09-02" version="41~rc"/>
-    <release date="2021-08-12" version="41~beta"/>
-    <release date="2021-07-02" version="41~alpha"/>
-    <release date="2021-06-04" version="40.2"/>
-    <release date="2021-04-29" version="40.1"/>
-    <release date="2021-03-19" version="40.0"/>
-    <release date="2021-03-12" version="40~rc"/>
-    <release date="2021-02-11" version="40~beta"/>
-    <release date="2021-01-07" version="40~alpha"/>
-    <release date="2020-12-01" version="3.38.2"/>
-    <release date="2020-10-06" version="3.38.1"/>
-    <release date="2020-09-11" version="3.38.0"/>
-    <release date="2020-09-04" version="3.37.92"/>
-    <release date="2020-08-20" version="3.37.91"/>
-    <release date="2020-08-06" version="3.37.90"/>
-    <release date="2020-07-02" version="3.37.3"/>
-    <release date="2020-05-29" version="3.37.2"/>
-    <release date="2020-04-25" version="3.37.1"/>
-    <release date="2020-03-27" version="3.36.1"/>
-    <release date="2020-03-07" version="3.36.0"/>
-    <release date="2020-02-27" version="3.35.92"/>
-    <release date="2020-02-14" version="3.35.91"/>
-    <release date="2020-02-01" version="3.35.90"/>
-    <release date="2020-01-03" version="3.35.3"/>
-    <release date="2019-11-22" version="3.35.2"/>
-    <release date="2019-10-11" version="3.35.1"/>
-    <release date="2019-10-04" version="3.34.1"/>
-    <release date="2019-09-07" version="3.34.0"/>
-    <release date="2019-09-01" version="3.33.92"/>
-    <release date="2019-08-16" version="3.33.91"/>
-    <release date="2019-08-05" version="3.33.90"/>
-    <release date="2019-07-14" version="3.33.4"/>
-    <release date="2019-06-14" version="3.33.3"/>
-    <release date="2019-06-06" version="3.33.2"/>
-    <release date="2019-05-02" version="3.33.1"/>
-    <release date="2019-05-02" version="3.32.2"/>
-    <release date="2019-03-21" version="3.32.1.2"/>
-    <release date="2019-03-20" version="3.32.1.1"/>
-    <release date="2019-03-20" version="3.32.1"/>
-    <release date="2019-03-11" version="3.32.0"/>
-    <release date="2019-03-04" version="3.31.92"/>
-    <release date="2019-02-18" version="3.31.91"/>
-    <release date="2019-02-04" version="3.31.90"/>
-    <release date="2019-01-07" version="3.31.4"/>
-    <release date="2018-12-10" version="3.31.3"/>
-    <release date="2018-11-11" version="3.31.2"/>
-    <release date="2018-10-10" version="3.31.1"/>
-    <release date="2018-09-21" version="3.30.1"/>
-    <release date="2018-09-02" version="3.30.0"/>
-    <release date="2018-08-27" version="3.29.92"/>
-    <release date="2018-08-12" version="3.29.91"/>
-    <release date="2018-07-26" version="3.29.90"/>
-    <release date="2018-07-16" version="3.29.4"/>
-    <release date="2018-06-18" version="3.29.3"/>
-    <release date="2018-05-22" version="3.29.2"/>
-    <release date="2018-04-16" version="3.29.1"/>
-    <release date="2018-04-10" version="3.28.1"/>
-    <release date="2018-03-10" version="3.28.0.1"/>
-    <release date="2018-03-10" version="3.28.0"/>
-    <release date="2018-03-02" version="3.27.92"/>
-    <release date="2018-02-12" version="3.27.90"/>
-    <release date="2018-01-06" version="3.27.4"/>
-    <release date="2017-12-11" version="3.27.3"/>
-    <release date="2017-11-13" version="3.27.2"/>
-    <release date="2017-10-16" version="3.27.1"/>
-    <release date="2017-09-08" version="3.26.0"/>
-    <release date="2017-09-03" version="3.25.92"/>
-    <release date="2017-08-21" version="3.25.91"/>
-    <release date="2017-08-08" version="3.25.90"/>
-    <release date="2017-07-17" version="3.25.4"/>
-    <release date="2017-06-21" version="3.25.3"/>
-    <release date="2017-05-20" version="3.25.2"/>
-    <release date="2017-04-26" version="3.25.1"/>
-    <release date="2017-04-10" version="3.24.1"/>
-    <release date="2017-03-19" version="3.24.0"/>
-    <release date="2017-03-12" version="3.23.93"/>
-    <release date="2017-03-11" version="3.23.92"/>
-    <release date="2017-02-27" version="3.23.91.1"/>
-    <release date="2017-02-27" version="3.23.91"/>
-    <release date="2017-02-13" version="3.23.90"/>
-    <release date="2017-02-03" version="3.23.5"/>
-    <release date="2017-01-16" version="3.23.4"/>
-    <release date="2016-12-12" version="3.23.3"/>
-    <release date="2016-11-21" version="3.23.2.1"/>
-    <release date="2016-11-20" version="3.23.2"/>
-    <release date="2016-10-27" version="3.23.1.2"/>
-    <release date="2016-10-25" version="3.23.1.1"/>
-    <release date="2016-10-24" version="3.23.1"/>
   </releases>
 </component>

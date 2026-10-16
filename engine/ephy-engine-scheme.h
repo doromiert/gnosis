@@ -14,7 +14,8 @@ void ephy_engine_uri_scheme_request_finish_error(EphyEngineSchemeRequest*,GError
 G_END_DECLS
 #ifdef __cplusplus
 #include "include/cef_scheme.h"
+#include "include/cef_request_context.h"
 void ephy_engine_register_schemes(CefRawPtr<CefSchemeRegistrar>);
-void ephy_engine_install_scheme_handlers();
+void ephy_engine_install_scheme_handlers(CefRefPtr<CefRequestContext> context = nullptr);
 void ephy_engine_clear_scheme_handlers();
 #endif

@@ -5,7 +5,9 @@
   "permissions": [
     "storage",
     "tabs",
-    "webRequest"
+    "webRequest",
+    "scripting",
+    "declarativeNetRequest"
   ],
   "content_scripts": [
     {
@@ -23,5 +25,14 @@
   ],
   "background": {
     "service_worker": "background.js"
+  },
+  "declarative_net_request": {
+    "rule_resources": [
+      {
+        "id": "fixture",
+        "enabled": true,
+        "path": "rules.json"
+      }
+    ]
   }
 }

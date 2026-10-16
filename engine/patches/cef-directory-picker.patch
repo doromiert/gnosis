@@ -1,0 +1,11 @@
+diff --git a/libcef/browser/file_dialog_manager.cc b/libcef/browser/file_dialog_manager.cc
+--- a/libcef/browser/file_dialog_manager.cc
++++ b/libcef/browser/file_dialog_manager.cc
+@@ -121,5 +121,7 @@ FileChooserParams SelectFileToFileChooserParams(
+   std::optional<FileChooserParams::Mode> mode;
+   switch (type) {
++    case ui::SelectFileDialog::Type::SELECT_FOLDER:
++    case ui::SelectFileDialog::Type::SELECT_EXISTING_FOLDER:
+     case ui::SelectFileDialog::Type::SELECT_UPLOAD_FOLDER:
+       mode = FileChooserParams::Mode::kUploadFolder;
+       break;

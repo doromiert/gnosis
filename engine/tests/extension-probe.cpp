@@ -1,6 +1,8 @@
+#include "diagnostic-process.hpp"
 #include "extension-host.hpp"
 #include "extension-runtime.hpp"
 #include "extension-tab-id.hpp"
+#include "extensions.hpp"
 #include <glib.h>
 static bool finished = false;
 #include "include/cef_app.h"
@@ -13,6 +15,7 @@ static bool finished = false;
 #include <fstream>
 #include <iterator>
 #include <string>
+#include <set>
 #include <unistd.h>
 class Client final : public CefClient,
                      public CefRenderHandler,
@@ -40,22 +43,14 @@ public:
     host = new ExtensionHost;
     std::string path = getenv("JUPITER_PROBE_EXTENSION");
     path = path.substr(0, path.find(','));
-    char* hash = g_compute_checksum_for_string(G_CHECKSUM_SHA256, path.c_str(), -1);
-    std::string ext;
-    for (int i = 0; i < 32; i++)
-      ext += char('a' + g_ascii_xdigit_value(hash[i]));
-    g_free(hash);
+    auto extension = Extensions::read_manifest(path);
+    auto ext = extension.id;
     std::string paths = getenv("JUPITER_PROBE_EXTENSION");
     auto split = paths.find(',');
-    if (split != std::string::npos) {
-      auto bridge = paths.substr(split + 1);
-      char* sum = g_compute_checksum_for_string(G_CHECKSUM_SHA256, bridge.c_str(), -1);
-      for (int i = 0; i < 32; i++)
-        host->tab_bridge_id += char('a' + g_ascii_xdigit_value(sum[i]));
-      g_free(sum);
-    }
+    if (split != std::string::npos)
+      host->tab_bridge_id = Extensions::id_for_path(paths.substr(split + 1));
     host->extension_ids.insert(ext);
-    host->permissions[ext] = {"<all_urls>", "tabs"};
+    host->permissions[ext] = extension.permissions;
     host->extension_paths[ext] = path;
     host->tabs = [this] {
       std::vector<ExtensionTab> all;
@@ -76,17 +71,29 @@ public:
     browser = nullptr;
     finished = true;
   }
-  bool OnConsoleMessage(CefRefPtr<CefBrowser>, cef_log_severity_t, const CefString& m, const CefString&,
-                        int) override {
+  bool OnConsoleMessage(CefRefPtr<CefBrowser>, cef_log_severity_t severity, const CefString& m, const CefString& source,
+                        int line) override {
     if (m.ToString().starts_with("JUPITER_NATIVE_TAB_ID:"))
       native_id = atoi(m.ToString().substr(sizeof("JUPITER_NATIVE_TAB_ID:") - 1).c_str());
     printf("%s\n", m.ToString().c_str());
+    if (severity >= LOGSEVERITY_ERROR)
+      printf("Extension console source: %s:%d\n", source.ToString().c_str(), line);
     fflush(stdout);
+    const std::set<std::string> expected = getenv("JUPITER_PROBE_SCRIPT") ?
+      std::set<std::string>{"UBO_NETWORK", "UBO_COSMETIC", "UBO_SCRIPTLET", "UBO_FRAME"} :
+      std::set<std::string>{"EXTENSION_RUNTIME", "EXTENSION_BLOCKING", "EXTENSION_HOST_ISOLATION"};
+    for (const auto& marker : expected) {
+      if (m == marker + ":FAIL") {
+        if (browser) browser->GetHost()->CloseBrowser(true);
+      } else if (m == marker + ":PASS") passed.insert(marker);
+    }
+    if (passed.size() == expected.size() && browser) browser->GetHost()->CloseBrowser(true);
     return true;
   }
   CefRefPtr<CefBrowser> browser;
   int native_id = -1;
   CefRefPtr<ExtensionHost> host;
+  std::set<std::string> passed;
 
 private:
   IMPLEMENT_REFCOUNTING(Client);
@@ -95,8 +102,10 @@ class Exit final : public CefTask {
 public:
   explicit Exit(CefRefPtr<Client> c) : client(c) {}
   void Execute() override {
-    if (client->browser)
+    if (client->browser) {
+      fprintf(stderr, "Extension probe timed out waiting for its result markers\n");
       client->browser->GetHost()->CloseBrowser(true);
+    }
   }
 
 private:
@@ -137,7 +146,7 @@ public:
     CefBrowserHost::CreateBrowser(w, client, getenv("JUPITER_PROBE_URL"), s, nullptr, nullptr);
     if (getenv("JUPITER_PROBE_SCRIPT"))
       CefPostDelayedTask(TID_UI, new Reload(client), 8000);
-    CefPostDelayedTask(TID_UI, new Exit(client), getenv("JUPITER_PROBE_SCRIPT") ? 30000 : 12000);
+    CefPostDelayedTask(TID_UI, new Exit(client), 35000);
   }
   CefRefPtr<Client> client;
 
@@ -145,6 +154,7 @@ private:
   IMPLEMENT_REFCOUNTING(App);
 };
 int main(int argc, char** argv) {
+  disable_diagnostic_core_dumps();
   CefMainArgs args(argc, argv);
   CefRefPtr<App> app = new App;
   int sub = CefExecuteProcess(args, app, nullptr);
@@ -165,6 +175,7 @@ int main(int argc, char** argv) {
   CefString(&s.log_file) = std::string(profile) + "/cef.log";
   if (!CefInitialize(args, s, app, nullptr))
     return 2;
+  disable_diagnostic_core_dumps();
   while (!finished) {
     CefDoMessageLoopWork();
     while (g_main_context_iteration(nullptr, false)) {

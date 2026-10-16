@@ -1366,7 +1366,7 @@ ephy_web_process_extension_initialize (EphyWebProcessExtension   *extension,
 
   extension->should_remember_passwords = should_remember_passwords;
 
-  extension->permissions_manager = ephy_permissions_manager_new ();
+  extension->permissions_manager = ephy_permissions_manager_new (NULL);
 
   g_signal_connect_swapped (extension->extension, "user-message-received",
                             G_CALLBACK (ephy_web_process_extension_user_message_received_cb),

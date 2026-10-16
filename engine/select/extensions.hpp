@@ -13,6 +13,7 @@ public:
   std::vector<Extension> installed;
   std::string load_paths() const;
   Extension inspect(const std::string& path) const;
+  static Extension read_manifest(const std::string& path);
   void install(const std::string& path);
   void set_enabled(const Extension&, bool);
   static std::string id_for_path(const std::string& path);

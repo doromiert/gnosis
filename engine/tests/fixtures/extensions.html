@@ -1,4 +1,23 @@
-<!doctype html><meta charset="utf-8"><title>Jupiter extension fixture</title><script>
-setInterval(()=>{console.log('JUPITER_EXTENSION_PROBE:'+document.documentElement.dataset.jupiterExtension);},1000);
-setTimeout(async()=>{try { await fetch('/blocked.gif?'+Date.now());console.log('JUPITER_BLOCKING_PROBE:NOT_BLOCKED');}catch{console.log('JUPITER_BLOCKING_PROBE:BLOCKED');}},5000);
-</script><h1>Jupiter extension fixture</h1>
+<!doctype html><meta charset="utf-8"><title>Jupiter extension fixture</title>
+<div class="jupiter-ad">Must be hidden by the extension</div><iframe></iframe>
+<script>
+const child=document.querySelector('iframe');
+child.src=`http://localhost:${location.port}/extension-child.html`;
+const timer=setInterval(()=>{
+ const raw=document.documentElement.dataset.jupiterExtension;
+ if(!raw)return;
+ const reply=JSON.parse(raw);
+ console.log('JUPITER_EXTENSION_PROBE:'+raw);
+ if(reply.background && reply.storage && reply.script && reply.css && getComputedStyle(document.querySelector('.jupiter-ad')).display==='none') {
+  console.log('EXTENSION_RUNTIME:PASS');clearInterval(timer);
+ }
+},500);
+setTimeout(async()=>{try {await fetch('/blocked.gif?'+Date.now());console.log('EXTENSION_BLOCKING:FAIL');}catch{console.log('EXTENSION_BLOCKING:PASS');}},6000);
+let checked=false;
+addEventListener('message',e=>{
+ if(e.source!==child.contentWindow || e.origin!==`http://localhost:${location.port}` || checked)return;
+ if(document.documentElement.dataset.jupiterInjected==='yes') {
+  console.log('EXTENSION_HOST_ISOLATION:'+(e.data.injected?'FAIL':'PASS'));checked=true;
+ }
+});
+</script>

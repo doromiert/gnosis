@@ -22,7 +22,6 @@
 
 #include "ephy-user-agent.h"
 
-#include <webkit/webkit.h>
 
 #include "ephy-file-helpers.h"
 #include "ephy-settings.h"
@@ -31,21 +30,12 @@ const char *
 ephy_user_agent_get (void)
 {
   static char *user_agent = NULL;
-  WebKitSettings *settings;
-
-  if (user_agent)
-    return user_agent;
-
+  g_free (user_agent);
   user_agent = g_settings_get_string (EPHY_SETTINGS_WEB, EPHY_PREFS_WEB_USER_AGENT);
-  if (user_agent) {
-    if (user_agent[0])
-      return user_agent;
+  if (!user_agent || !*user_agent) {
     g_free (user_agent);
+    user_agent = g_strdup ("Jupiter/" EPHY_VERSION);
   }
-
-  settings = webkit_settings_new ();
-  user_agent = g_strdup (webkit_settings_get_user_agent (settings));
-  g_object_unref (settings);
 
   return user_agent;
 }

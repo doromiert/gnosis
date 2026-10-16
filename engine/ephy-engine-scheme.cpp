@@ -127,8 +127,11 @@ void ephy_engine_register_schemes(CefRawPtr<CefSchemeRegistrar> registrar) {
   registrar->AddCustomScheme("ephy-reader",CEF_SCHEME_OPTION_DISPLAY_ISOLATED|CEF_SCHEME_OPTION_SECURE);
   registrar->AddCustomScheme("ephy-resource",CEF_SCHEME_OPTION_SECURE);
 }
-void ephy_engine_install_scheme_handlers() {
-  for(auto* name:{"ephy-about","ephy-reader","ephy-resource"})CefRegisterSchemeHandlerFactory(name,"",new Factory);
+void ephy_engine_install_scheme_handlers(CefRefPtr<CefRequestContext> context) {
+  for(auto* name:{"ephy-about","ephy-reader","ephy-resource"}) {
+    if (context) context->RegisterSchemeHandlerFactory(name,"",new Factory);
+    else CefRegisterSchemeHandlerFactory(name,"",new Factory);
+  }
 }
 void ephy_engine_clear_scheme_handlers() {
   std::map<std::string,Handler> old;
@@ -143,8 +146,10 @@ const char* ephy_engine_uri_scheme_request_get_uri(EphyEngineSchemeRequest* r){r
 const char* ephy_engine_uri_scheme_request_get_path(EphyEngineSchemeRequest* r){return r->path;}
 EphyEngineView* ephy_engine_uri_scheme_request_get_web_view(EphyEngineSchemeRequest* r){return r->view;}
 void ephy_engine_uri_scheme_request_finish(EphyEngineSchemeRequest* r,GInputStream* stream,gint64,const char* mime) {
+  g_autofree char* content_type = mime ? nullptr : g_content_type_guess(r->path, nullptr, 0, nullptr);
+  g_autofree char* inferred_mime = content_type ? g_content_type_get_mime_type(content_type) : nullptr;
   auto body=*r->body;
-  { std::lock_guard lock(body->mutex);body->mime=mime?mime:"application/octet-stream"; }
+  { std::lock_guard lock(body->mutex);body->mime=mime?mime:inferred_mime?inferred_mime:"application/octet-stream"; }
   read_next(new Read{EPHY_ENGINE_SCHEME_REQUEST(g_object_ref(r)),G_INPUT_STREAM(g_object_ref(stream))});
 }
 void ephy_engine_uri_scheme_request_finish_error(EphyEngineSchemeRequest* r,GError*) {(*r->body)->finish(true);}

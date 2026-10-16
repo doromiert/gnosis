@@ -1158,6 +1158,7 @@ window_cmd_show_about (GSimpleAction *action,
   EphyWindow *window = EPHY_WINDOW (user_data);
   AdwAboutDialog *dialog;
   char *debug_info;
+  g_autofree char *engine_version = ephy_engine_dup_version_info ();
   GKeyFile *key_file;
   GBytes *bytes;
   GError *error = NULL;
@@ -1185,14 +1186,12 @@ window_cmd_show_about (GSimpleAction *action,
   documenters = g_key_file_get_string_list (key_file, ABOUT_GROUP, "Documenters", NULL, NULL);
   g_key_file_free (key_file);
 
-  debug_info = g_strdup_printf ("WebKitGTK %d.%d.%d" WEBKIT_REVISION "\n"
+  debug_info = g_strdup_printf ("%s\n"
                                 "%s\n"
                                 "GTK %d.%d.%d\n"
                                 "Libadwaita %d.%d.%d\n"
                                 "Distributor: %s",
-                                webkit_get_major_version (),
-                                webkit_get_minor_version (),
-                                webkit_get_micro_version (),
+                                engine_version,
                                 gst_version_string (),
                                 gtk_get_major_version (),
                                 gtk_get_minor_version (),
@@ -1225,13 +1224,15 @@ window_cmd_show_about (GSimpleAction *action,
   dialog = ADW_ABOUT_DIALOG (adw_about_dialog_new_from_appdata ("/org/gnome/Epiphany/io.github.doromiert.Jupiter.metainfo.xml", NULL));
 
   if (g_str_equal (PROFILE, "Canary"))
-    adw_about_dialog_set_application_name (dialog, _("Epiphany Canary"));
+    adw_about_dialog_set_application_name (dialog, _("Jupiter Canary"));
 #if TECH_PREVIEW
   else
-    adw_about_dialog_set_application_name (dialog, _("Epiphany Technology Preview"));
+    adw_about_dialog_set_application_name (dialog, _("Jupiter Technology Preview"));
 #endif
 
-  adw_about_dialog_set_version (dialog, VERSION);
+  adw_about_dialog_set_version (dialog, EPHY_VERSION);
+  adw_about_dialog_add_link (dialog, _("Based on GNOME Web (Epiphany)"),
+                             "https://apps.gnome.org/Epiphany");
   adw_about_dialog_set_copyright (dialog,
                                   "Copyright © 2002–2004 Marco Pesenti Gritti\n"
                                   "Copyright © 2003–2026 The GNOME Web Developers");
@@ -1575,7 +1576,7 @@ typedef struct {
   GCancellable *cancellable;
   EphyWebApplicationOptions webapp_options;
   gboolean webapp_options_set;
-  WebKitDownload *download;
+  EphyEngineDownload *download;
   EphyWindow *window;
   EphyDownload *download_manifest;
 } EphyApplicationDialogData;
@@ -1621,10 +1622,10 @@ ephy_focus_desktop_app (const char *webapp_id)
   g_bus_get (G_BUS_TYPE_SESSION, NULL, session_bus_ready_cb, g_steal_pointer (&desktop_path));
 }
 
-static void download_finished_cb (WebKitDownload            *download,
+static void download_finished_cb (EphyEngineDownload            *download,
                                   EphyApplicationDialogData *data);
 
-static void download_failed_cb (WebKitDownload            *download,
+static void download_failed_cb (EphyEngineDownload            *download,
                                 GError                    *error,
                                 EphyApplicationDialogData *data);
 
@@ -1845,22 +1846,22 @@ set_app_icon_from_filename (EphyApplicationDialogData *data,
 }
 
 static void
-download_finished_cb (WebKitDownload            *download,
+download_finished_cb (EphyEngineDownload            *download,
                       EphyApplicationDialogData *data)
 {
-  set_app_icon_from_filename (data, webkit_download_get_destination (download));
+  set_app_icon_from_filename (data, ephy_engine_download_get_destination (download));
 }
 
 static void
-download_failed_cb (WebKitDownload            *download,
+download_failed_cb (EphyEngineDownload            *download,
                     GError                    *error,
                     EphyApplicationDialogData *data)
 {
-  WebKitURIRequest *request = webkit_download_get_request (download);
+  const char *uri = ephy_engine_download_get_uri (download);
 
   /* favicon.ico is our last resort fallback. It's not expected to necessarily exist. */
-  if (!g_str_has_suffix (webkit_uri_request_get_uri (request), "favicon.ico"))
-    g_warning ("Failed to download web app icon %s: %s", webkit_uri_request_get_uri (request), error->message);
+  if (!g_str_has_suffix (uri, "favicon.ico"))
+    g_warning ("Failed to download web app icon %s: %s", uri, error->message);
 
   g_signal_handlers_disconnect_by_func (download, download_finished_cb, data);
 
@@ -1875,9 +1876,9 @@ download_icon_and_set_image (EphyApplicationDialogData *data)
   g_autofree char *filename = NULL;
   EphyEmbedShell *shell = ephy_embed_shell_get_default ();
 
-  data->download = webkit_network_session_download_uri (ephy_embed_shell_get_network_session (shell),
+  data->download = ephy_embed_shell_download_uri (shell,
                                                         data->icon_href);
-  webkit_download_set_allow_overwrite (data->download, TRUE);
+  ephy_engine_download_set_allow_overwrite (data->download, TRUE);
 
   /* We do not want this download to show up in the UI, so let's
    * set 'ephy-download-set' to make Epiphany think this is
@@ -1888,7 +1889,7 @@ download_icon_and_set_image (EphyApplicationDialogData *data)
 
   filename = ephy_file_tmp_filename (".ephy-web-app-icon-XXXXXX", NULL);
   destination = g_build_filename (ephy_file_tmp_dir (), filename, NULL);
-  webkit_download_set_destination (data->download, destination);
+  ephy_engine_download_set_destination (data->download, destination);
 
   g_signal_connect (data->download, "finished",
                     G_CALLBACK (download_finished_cb), data);
@@ -2273,10 +2274,10 @@ download_manifest_failed_cb (EphyDownload              *download,
                              GError                    *error,
                              EphyApplicationDialogData *data)
 {
-  WebKitDownload *webkit_download = ephy_download_get_webkit_download (download);
-  WebKitURIRequest *request = webkit_download_get_request (webkit_download);
+  EphyEngineDownload *webkit_download = ephy_download_get_engine_download (download);
+  const char *uri = ephy_engine_download_get_uri (webkit_download);
 
-  g_warning ("Could not download manifest from %s", webkit_uri_request_get_uri (request));
+  g_warning ("Could not download manifest from %s", uri);
   start_fallback (data);
 }
 
@@ -2290,7 +2291,7 @@ download_and_use_manifest (EphyApplicationDialogData *data,
   LOG ("%s: manifest url %s", __FUNCTION__, manifest_url);
   data->manifest_url = g_strdup (manifest_url);
   data->download_manifest = ephy_download_new_for_uri_internal (manifest_url);
-  webkit_download_set_allow_overwrite (ephy_download_get_webkit_download (data->download_manifest), TRUE);
+  ephy_engine_download_set_allow_overwrite (ephy_download_get_engine_download (data->download_manifest), TRUE);
   tmp_filename = ephy_file_tmp_filename (".ephy-download-XXXXXX", NULL);
   destination = g_build_filename (ephy_file_tmp_dir (), tmp_filename, NULL);
   ephy_download_set_destination (data->download_manifest, destination);
@@ -2354,7 +2355,7 @@ get_suggested_filename (EphyEmbed  *embed,
   const char *suggested_filename;
   const char *mimetype;
   const char *page_title;
-  WebKitURIResponse *response;
+  EphyEngineResponse *response;
   EphyEngineResource *web_resource;
   g_autoptr (GUri) uri = NULL;
   g_autofree char *filename = NULL;
@@ -2365,7 +2366,7 @@ get_suggested_filename (EphyEmbed  *embed,
   if (!response)
     return g_strdup (file_extension);
 
-  mimetype = webkit_uri_response_get_mime_type (response);
+  mimetype = ephy_engine_response_get_mime_type (response);
   uri = g_uri_parse (ephy_engine_web_resource_get_uri (web_resource), G_URI_FLAGS_PARSE_RELAXED | G_URI_FLAGS_SCHEME_NORMALIZE, NULL);
   page_title = ephy_embed_get_title (embed);
   filename = g_strconcat (page_title, file_extension, NULL);
@@ -2375,7 +2376,7 @@ get_suggested_filename (EphyEmbed  *embed,
     return g_steal_pointer (&filename);
   }
 
-  suggested_filename = webkit_uri_response_get_suggested_filename (response);
+  suggested_filename = ephy_engine_response_get_suggested_filename (response);
   if (!suggested_filename) {
     const char *path = g_uri_get_path (uri);
     const char *last_slash = strrchr (path, '/');

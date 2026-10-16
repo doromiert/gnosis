@@ -20,7 +20,7 @@
 
 #include "prefs-features-page.h"
 
-#include <webkit/webkit.h>
+#include "ephy-engine-settings.h"
 
 #include "ephy-adaptive-mode.h"
 #include "ephy-embed-prefs.h"
@@ -116,16 +116,16 @@ feature_switch_notify_active_cb (GtkSwitch  *switch_widget,
 {
   gboolean enabled = gtk_switch_get_active (switch_widget);
   GtkWidget *row = gtk_widget_get_ancestor (reset_button, ADW_TYPE_ACTION_ROW);
-  WebKitFeature *feature = g_object_get_data (G_OBJECT (row), "feature");
-  gboolean is_default = enabled == webkit_feature_get_default_value (feature);
-  WebKitSettings *settings = ephy_embed_prefs_get_settings ();
+  const EphyEngineFeature *feature = g_object_get_data (G_OBJECT (row), "feature");
+  gboolean is_default = enabled == feature->default_value;
+  EphyEngineSettings *settings = ephy_embed_prefs_get_settings ();
 
-  if (enabled != webkit_settings_get_feature_enabled (settings, feature)) {
+  if (enabled != ephy_engine_settings_get_feature_enabled (settings, feature)) {
     PrefsFeaturesPage *self = EPHY_PREFS_FEATURES_PAGE (gtk_widget_get_ancestor (
                                                           reset_button,
                                                           EPHY_TYPE_PREFS_FEATURES_PAGE));
 
-    webkit_settings_set_feature_enabled (settings, feature, enabled);
+    ephy_engine_settings_set_feature_enabled (settings, feature, enabled);
     gtk_widget_set_sensitive (reset_button, !is_default);
 
     if (is_default && self->non_default_values)
@@ -138,21 +138,21 @@ feature_switch_notify_active_cb (GtkSwitch  *switch_widget,
 
 static void
 feature_switch_reset_cb (GtkWidget     *button,
-                         WebKitFeature *feature)
+                         const EphyEngineFeature *feature)
 {
-  WebKitSettings *settings = ephy_embed_prefs_get_settings ();
-  gboolean enabled = webkit_feature_get_default_value (feature);
+  EphyEngineSettings *settings = ephy_embed_prefs_get_settings ();
+  gboolean enabled = feature->default_value;
 
-  if (enabled != webkit_settings_get_feature_enabled (settings, feature)) {
+  if (enabled != ephy_engine_settings_get_feature_enabled (settings, feature)) {
     GtkWidget *parent = gtk_widget_get_ancestor (button, ADW_TYPE_ACTION_ROW);
     PrefsFeaturesPage *self = EPHY_PREFS_FEATURES_PAGE (gtk_widget_get_ancestor (
                                                           button,
                                                           EPHY_TYPE_PREFS_FEATURES_PAGE));
 
     GtkWidget *switch_widget = adw_action_row_get_activatable_widget (ADW_ACTION_ROW (parent));
-    webkit_settings_set_feature_enabled (settings, feature, enabled);
+    ephy_engine_settings_set_feature_enabled (settings, feature, enabled);
     gtk_switch_set_active (GTK_SWITCH (switch_widget), enabled);
-    gtk_widget_set_sensitive (button, !enabled);
+    gtk_widget_set_sensitive (button, FALSE);
     self->non_default_values--;
     gtk_widget_set_sensitive (self->reset_all_row, self->non_default_values);
   }
@@ -184,14 +184,13 @@ subtitle_transform_cb (GBinding     *binding,
                        gpointer      user_data)
 {
   EphyAdaptiveMode mode = g_value_get_enum (from_value);
-  WebKitFeature *feature = user_data;
-  g_autoptr (GEnumClass) status_enum = g_type_class_ref (WEBKIT_TYPE_FEATURE_STATUS);
+  const EphyEngineFeature *feature = user_data;
   const char *description;
 
   if (mode == EPHY_ADAPTIVE_MODE_NARROW)
-    description = g_enum_get_value (status_enum, webkit_feature_get_status (feature))->value_nick;
+    description = _("Restart required");
   else
-    description = webkit_feature_get_details (feature);
+    description = feature->details;
 
   if (description) {
     g_value_set_string (to_value, description);
@@ -204,7 +203,7 @@ subtitle_transform_cb (GBinding     *binding,
 static void
 reset_all_toast_button_clicked_cb (PrefsFeaturesPage *self)
 {
-  WebKitSettings *settings = ephy_embed_prefs_get_settings ();
+  EphyEngineSettings *settings = ephy_embed_prefs_get_settings ();
   AdwPreferencesGroup *group;
   int i = 1;
 
@@ -214,8 +213,8 @@ reset_all_toast_button_clicked_cb (PrefsFeaturesPage *self)
 
     while ((row = adw_preferences_group_get_row (group, j++))) {
       GtkWidget *switch_widget = adw_action_row_get_activatable_widget (ADW_ACTION_ROW (row));
-      GtkWidget *button = gtk_widget_get_last_child (gtk_widget_get_last_child (gtk_widget_get_first_child (row)));
-      WebKitFeature *feature = g_object_get_data (G_OBJECT (row), "feature");
+      GtkWidget *button = g_object_get_data (G_OBJECT (row), "reset-button");
+      const EphyEngineFeature *feature = g_object_get_data (G_OBJECT (row), "feature");
       const char *prev_value = g_object_steal_data (G_OBJECT (row), "prev-value");
       gboolean enabled;
 
@@ -223,7 +222,7 @@ reset_all_toast_button_clicked_cb (PrefsFeaturesPage *self)
         continue;
 
       enabled = !g_strcmp0 (prev_value, "active");
-      webkit_settings_set_feature_enabled (settings, feature, enabled);
+      ephy_engine_settings_set_feature_enabled (settings, feature, enabled);
       gtk_switch_set_active (GTK_SWITCH (switch_widget), enabled);
       gtk_widget_set_sensitive (button, TRUE);
       self->non_default_values++;
@@ -238,7 +237,7 @@ static void
 reset_all_row_activated_cb (AdwButtonRow      *row,
                             PrefsFeaturesPage *self)
 {
-  WebKitSettings *settings = ephy_embed_prefs_get_settings ();
+  EphyEngineSettings *settings = ephy_embed_prefs_get_settings ();
   AdwPreferencesGroup *group;
   int i = 1;
   AdwToast *toast;
@@ -249,10 +248,10 @@ reset_all_row_activated_cb (AdwButtonRow      *row,
 
     while ((row = adw_preferences_group_get_row (group, j++))) {
       GtkWidget *switch_widget = adw_action_row_get_activatable_widget (ADW_ACTION_ROW (row));
-      GtkWidget *button = gtk_widget_get_last_child (gtk_widget_get_last_child (gtk_widget_get_first_child (row)));
-      WebKitFeature *feature = g_object_get_data (G_OBJECT (row), "feature");
+      GtkWidget *button = g_object_get_data (G_OBJECT (row), "reset-button");
+      const EphyEngineFeature *feature = g_object_get_data (G_OBJECT (row), "feature");
       gboolean active = gtk_switch_get_active (GTK_SWITCH (switch_widget));
-      gboolean enabled = webkit_feature_get_default_value (feature);
+      gboolean enabled = feature->default_value;
 
       if (active == enabled)
         continue;
@@ -262,7 +261,7 @@ reset_all_row_activated_cb (AdwButtonRow      *row,
       else
         g_object_set_data (G_OBJECT (row), "prev-value", "inactive");
 
-      webkit_settings_set_feature_enabled (settings, feature, enabled);
+      ephy_engine_settings_set_feature_enabled (settings, feature, enabled);
       gtk_switch_set_active (GTK_SWITCH (switch_widget), enabled);
       gtk_widget_set_sensitive (button, FALSE);
     }
@@ -284,12 +283,10 @@ prefs_feature_page_constructed (GObject *object)
 {
   PrefsFeaturesPage *self = EPHY_PREFS_FEATURES_PAGE (object);
   g_autoptr (GPtrArray) groups = g_ptr_array_new_full (10, NULL);
-  g_autoptr (GEnumClass) status_enum = g_type_class_ref (WEBKIT_TYPE_FEATURE_STATUS);
-  g_autoptr (WebKitFeatureList) feature_list = webkit_settings_get_all_features ();
+  gsize feature_count;
+  const EphyEngineFeature *features = ephy_engine_settings_get_features (&feature_count);
   AdwBreakpoint *breakpoint;
-  WebKitSettings *settings = ephy_embed_prefs_get_settings ();
-  gboolean show_internal = g_settings_get_boolean (EPHY_SETTINGS_UI,
-                                                   EPHY_PREFS_UI_WEBKIT_INTERNAL_FEATURES);
+  EphyEngineSettings *settings = ephy_embed_prefs_get_settings ();
 
   G_OBJECT_CLASS (prefs_features_page_parent_class)->constructed (object);
 
@@ -297,33 +294,35 @@ prefs_feature_page_constructed (GObject *object)
 
   prefs_feature_page_set_adaptive_mode (self, EPHY_ADAPTIVE_MODE_NORMAL);
 
-  for (size_t i = 0; i < webkit_feature_list_get_length (feature_list); i++) {
-    WebKitFeature *feature = webkit_feature_list_get (feature_list, i);
-    WebKitFeatureStatus status = webkit_feature_get_status (feature);
-    if (status != WEBKIT_FEATURE_STATUS_EMBEDDER && (show_internal || status != WEBKIT_FEATURE_STATUS_INTERNAL)) {
-      AdwPreferencesGroup *group = get_or_create_group (groups, webkit_feature_get_category (feature));
+  for (size_t i = 0; i < feature_count; i++) {
+    const EphyEngineFeature *feature = &features[i];
+    {
+      AdwPreferencesGroup *group = get_or_create_group (groups, feature->category);
       GtkWidget *row = adw_action_row_new ();
       GtkWidget *switch_widget = gtk_switch_new ();
       GtkWidget *reset = gtk_button_new_from_icon_name ("edit-undo-symbolic");
-      GtkWidget *label = gtk_label_new (g_enum_get_value (status_enum, webkit_feature_get_status (feature))->value_nick);
-      gboolean enabled = webkit_settings_get_feature_enabled (settings, feature);
-      const char *details = webkit_feature_get_details (feature);
+      GtkWidget *label = gtk_label_new (_("Restart required"));
+      gboolean enabled = ephy_engine_settings_get_feature_enabled (settings, feature);
+      const char *details = feature->details;
 
       g_object_bind_property_full (self, "adaptive-mode", label, "visible", G_BINDING_SYNC_CREATE, feature_status_transform_cb, NULL, self, NULL);
-      g_object_bind_property_full (self, "adaptive-mode", row, "subtitle", G_BINDING_SYNC_CREATE, subtitle_transform_cb, NULL, feature, NULL);
+      g_object_bind_property_full (self, "adaptive-mode", row, "subtitle", G_BINDING_SYNC_CREATE, subtitle_transform_cb, NULL, (gpointer)feature, NULL);
 
       adw_preferences_row_set_use_markup (ADW_PREFERENCES_ROW (row), FALSE);
       adw_preferences_row_set_title (ADW_PREFERENCES_ROW (row),
-                                     webkit_feature_get_name (feature));
+                                     feature->name);
 
       if (details)
         adw_action_row_set_subtitle (ADW_ACTION_ROW (row), details);
 
-      g_object_set_data (G_OBJECT (row), "feature", feature);
+      g_object_set_data (G_OBJECT (row), "feature", (gpointer)feature);
+      g_object_set_data (G_OBJECT (row), "reset-button", reset);
 
       gtk_widget_set_valign (switch_widget, GTK_ALIGN_CENTER);
       gtk_switch_set_active (GTK_SWITCH (switch_widget), enabled);
-      gtk_widget_set_sensitive (reset, enabled != webkit_feature_get_default_value (feature));
+      if (enabled != feature->default_value)
+        self->non_default_values++;
+      gtk_widget_set_sensitive (reset, enabled != feature->default_value);
 
       gtk_widget_set_tooltip_text (reset, _("Reset to default"));
       gtk_widget_set_valign (reset, GTK_ALIGN_CENTER);
@@ -333,19 +332,11 @@ prefs_feature_page_constructed (GObject *object)
       gtk_widget_add_css_class (label, "dim-label");
       gtk_widget_add_css_class (label, "caption");
 
-      g_signal_connect_data (reset,
-                             "clicked",
-                             G_CALLBACK (feature_switch_reset_cb),
-                             webkit_feature_ref (feature),
-                             (GClosureNotify)webkit_feature_unref,
-                             G_CONNECT_DEFAULT);
+      g_signal_connect (reset, "clicked", G_CALLBACK (feature_switch_reset_cb), (gpointer)feature);
 
-      g_signal_connect_data (switch_widget,
-                             "notify::active",
-                             G_CALLBACK (feature_switch_notify_active_cb),
-                             reset,
-                             (GClosureNotify)webkit_feature_unref,
-                             G_CONNECT_DEFAULT);
+      g_signal_connect_object (switch_widget, "notify::active",
+                               G_CALLBACK (feature_switch_notify_active_cb), reset,
+                               G_CONNECT_DEFAULT);
 
       adw_action_row_add_suffix (ADW_ACTION_ROW (row), label);
       adw_action_row_add_suffix (ADW_ACTION_ROW (row), switch_widget);
@@ -355,6 +346,7 @@ prefs_feature_page_constructed (GObject *object)
     }
   }
 
+  gtk_widget_set_sensitive (self->reset_all_row, self->non_default_values > 0);
   g_ptr_array_sort (groups, (GCompareFunc)compare_groups_cb);
 
   for (unsigned i = 0; i < groups->len; i++) {

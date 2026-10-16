@@ -1,5 +1,7 @@
+#include "diagnostic-process.hpp"
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 #include "ephy-engine-view.h"
+#include "script-result.hpp"
 #include "browser.hpp"
 #include "include/cef_api_hash.h"
 #include <cstring>
@@ -8,7 +10,7 @@ static void maybe_finish(Test* t) {
   if (!t->passed || (g_getenv("JUPITER_TEST_URL") && !t->favicon)) return;
   if (g_getenv("JUPITER_TEST_URL") && !t->private_started) {
     t->private_started=true;
-    auto* session=webkit_network_session_new_ephemeral();
+    auto* session=ephy_engine_session_new(true);
     t->view=EPHY_ENGINE_VIEW(g_object_new(EPHY_TYPE_ENGINE_VIEW,"network-session",session,nullptr));
     g_object_unref(session);
     g_signal_connect(t->view,"notify::favicon",G_CALLBACK(+[](EphyEngineView* view,GParamSpec*,Test* t){
@@ -27,12 +29,14 @@ static void maybe_finish(Test* t) {
   g_timeout_add(50,+[](gpointer p)->gboolean{auto*t=static_cast<Test*>(p);if(Browser::active_count)return G_SOURCE_CONTINUE;g_main_loop_quit(t->loop);return G_SOURCE_REMOVE;},t);
 }
 int main(int argc, char** argv) {
+  disable_diagnostic_core_dumps();
   if (!cef_api_hash(CEF_API_VERSION, 0)) return 1;
   int sub=ephy_engine_execute_process(argc,argv);if(sub>=0)return sub;
   auto* app=adw_application_new("io.github.doromiert.Jupiter.EngineTest",G_APPLICATION_NON_UNIQUE);
   GError* error=nullptr;if(!g_application_register(G_APPLICATION(app),nullptr,&error)){g_printerr("%s\n",error->message);return 1;}
   char profile[]="/tmp/jupiter-native-engine-XXXXXX";if(!mkdtemp(profile))return 1;
   if(!ephy_engine_initialize(argc,argv,profile,true))return 1;
+  disable_diagnostic_core_dumps();
   Test test;
   test.loop=g_main_loop_new(nullptr,false);
   test.window=GTK_WINDOW(adw_application_window_new(GTK_APPLICATION(app)));
@@ -57,11 +61,11 @@ int main(int argc, char** argv) {
       +[](GObject* obj,GAsyncResult* result,gpointer user){
         auto* t=static_cast<Test*>(user);GError* error=nullptr;
         auto* value=ephy_engine_web_view_evaluate_javascript_finish(EPHY_ENGINE_VIEW(obj),result,&error);
-        bool ok=value&&jsc_value_is_object(value);
-        if(ok){auto* title=jsc_value_object_get_property(value,"title");char* text=jsc_value_to_string(title);ok=!strcmp(text,"CEF native contract");g_free(text);g_object_unref(title);}
+        bool ok=value && json_object_has_member(value,"value") && JSON_NODE_HOLDS_OBJECT(json_object_get_member(value,"value"));
+        if(ok){auto* object=json_object_get_object_member(value,"value");ok=!g_strcmp0(json_object_get_string_member(object,"title"),"CEF native contract");}
         if(!ok){g_printerr("CEF DOM: FAIL %s\n",error?error->message:"");t->failed=true;gtk_window_destroy(t->window);g_main_loop_quit(t->loop);}
         else {g_print("CEF DOM: PASS\n");t->passed=true;maybe_finish(t);}
-        g_clear_error(&error);g_clear_object(&value);
+        g_clear_error(&error);g_clear_pointer(&value,json_object_unref);
       },t);
     }
   }),&test);

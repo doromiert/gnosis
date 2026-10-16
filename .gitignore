@@ -1,3 +1,5 @@
 build*/
 .deps/
 /result
+/.nix-dev-profile*
+__pycache__/

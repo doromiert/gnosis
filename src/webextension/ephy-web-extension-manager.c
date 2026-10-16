@@ -19,6 +19,7 @@
  */
 
 #include "config.h"
+#include "ephy-json-utils.h"
 #include "ephy-engine-scheme.h"
 #include "ephy-engine-view.h"
 
@@ -1305,24 +1306,13 @@ GtkWidget *
 ephy_web_extensions_manager_create_web_extensions_webview (EphyWebExtension *web_extension)
 {
   EphyWebExtensionManager *manager = ephy_web_extension_manager_get_default ();
-  g_autoptr (WebKitSettings) settings = NULL;
   WebKitWebContext *web_context = NULL;
   GtkWidget *web_view;
   EphyEngineView *background_view;
   const char *custom_user_agent;
 
-  settings = webkit_settings_new_with_settings ("enable-write-console-messages-to-stdout", TRUE,
-                                                "enable-developer-extras", TRUE,
-                                                "enable-fullscreen", FALSE,
-                                                "javascript-can-access-clipboard", ephy_web_extension_has_permission (web_extension, "clipboardWrite"),
-                                                "hardware-acceleration-policy", WEBKIT_HARDWARE_ACCELERATION_POLICY_NEVER, /* Reduces memory usage. */
-                                                NULL);
   custom_user_agent = g_hash_table_lookup (manager->user_agent_overrides,
                                            ephy_web_extension_get_name (web_extension));
-  if (custom_user_agent)
-    webkit_settings_set_user_agent (settings, custom_user_agent);
-  else
-    webkit_settings_set_user_agent_with_application_details (settings, "Epiphany", EPHY_VERSION);
 
   /* If there is a background view the web context is shared with the related-view property. */
   background_view = ephy_web_extension_manager_get_background_web_view (manager, web_extension);
@@ -1336,11 +1326,14 @@ ephy_web_extensions_manager_create_web_extensions_webview (EphyWebExtension *web
 
   web_view = g_object_new (EPHY_TYPE_ENGINE_VIEW,
                            "web-context", web_context,
-                           "settings", settings,
+                           "settings", ephy_embed_prefs_get_settings (),
                            "related-view", background_view,
                            "default-content-security-policy", ephy_web_extension_get_content_security_policy (web_extension),
                            "web-extension-mode", WEBKIT_WEB_EXTENSION_MODE_MANIFESTV2,
                            NULL);
+
+  if (custom_user_agent)
+    ephy_engine_web_view_set_user_agent_override (EPHY_ENGINE_VIEW (web_view), custom_user_agent);
 
   ephy_engine_web_view_set_cors_allowlist (EPHY_ENGINE_VIEW (web_view), ephy_web_extension_get_host_permissions (web_extension));
   g_signal_connect (web_view, "user-message-received", G_CALLBACK (extension_view_handle_user_message), web_extension);
@@ -1878,7 +1871,7 @@ tab_emit_ready_cb (GObject      *source,
   PendingMessageReplyTracker *tracker = user_data;
   GHashTable *pending_messages;
   g_autoptr (GError) error = NULL;
-  g_autoptr (JSCValue) value = NULL;
+  g_autoptr (JsonObject) value = NULL;
   GTask *pending_task;
 
   value = ephy_engine_web_view_evaluate_javascript_finish (EPHY_ENGINE_VIEW (source),
@@ -1887,7 +1880,7 @@ tab_emit_ready_cb (GObject      *source,
 
   /* If it returned true it will be asynchronously handled later. Otherwise we
    * complete it now with undefined. */
-  if (error || !jsc_value_to_boolean (value)) {
+  if (error || !ephy_json_object_get_boolean (value, "value", FALSE)) {
     pending_messages = g_hash_table_lookup (manager->pending_messages, tracker->web_extension);
     pending_task = g_hash_table_lookup (pending_messages, tracker->message_guid);
     if (pending_task) {
@@ -1957,13 +1950,13 @@ on_extension_emit_ready (GObject      *source,
   PendingMessageReplyTracker *tracker = user_data;
   GHashTable *pending_messages;
   g_autoptr (GError) error = NULL;
-  g_autoptr (JSCValue) value = NULL;
+  g_autoptr (JsonObject) value = NULL;
 
   value = ephy_engine_web_view_evaluate_javascript_finish (EPHY_ENGINE_VIEW (source),
                                                       result,
                                                       &error);
 
-  if (!error && jsc_value_to_boolean (value))
+  if (!error && ephy_json_object_get_boolean (value, "value", FALSE))
     tracker->handled = TRUE;
 
   /* Once all views have been notified it will either be handled by one of them, in which case

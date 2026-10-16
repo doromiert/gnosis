@@ -20,6 +20,7 @@
  */
 
 #include "config.h"
+#include "ephy-json-utils.h"
 
 #include "ephy-web-view.h"
 
@@ -28,7 +29,6 @@
 #include <glib/gi18n.h>
 #include <glib/gstdio.h>
 #include <gtk/gtk.h>
-#include <jsc/jsc.h>
 #include "ephy-engine-view.h"
 
 #include "ephy-about-handler.h"
@@ -46,7 +46,6 @@
 #include "ephy-favicon-helpers.h"
 #include "ephy-file-helpers.h"
 #include "ephy-file-monitor.h"
-#include "ephy-filters-manager.h"
 #include "ephy-history-service.h"
 #include "ephy-lib-type-builtins.h"
 #include "ephy-opensearch-autodiscovery-link.h"
@@ -104,6 +103,8 @@ struct _EphyWebView {
   gboolean entering_reader_mode;
   gboolean reader_mode_available;
   guint reader_js_timeout;
+  char *reader_html;
+  char *reader_uri;
 
   /* Local file watch. */
   EphyFileMonitor *file_monitor;
@@ -629,20 +630,17 @@ readability_js_finish_cb (GObject      *object,
                           gpointer      user_data)
 {
   EphyWebView *view = EPHY_WEB_VIEW (user_data);
-  g_autoptr (JSCValue) jsc_value = NULL;
+  g_autoptr (JsonObject) script_result = NULL;
   g_autoptr (GError) error = NULL;
 
-  jsc_value = ephy_engine_web_view_evaluate_javascript_finish (EPHY_ENGINE_VIEW (object), result, &error);
-  if (!jsc_value) {
+  script_result = ephy_engine_web_view_evaluate_javascript_finish (EPHY_ENGINE_VIEW (object), result, &error);
+  if (!script_result) {
     if (!g_error_matches (error, G_IO_ERROR, G_IO_ERROR_CANCELLED))
       g_warning ("Error running javascript: %s", error->message);
     return;
   }
 
-  if (!jsc_value_is_boolean (jsc_value))
-    return;
-
-  view->reader_mode_available = jsc_value_to_boolean (jsc_value);
+  view->reader_mode_available = ephy_json_object_get_boolean (script_result, "value", FALSE);
 
   g_object_notify_by_pspec (G_OBJECT (view), obj_properties[PROP_READER_MODE]);
 }
@@ -886,143 +884,44 @@ ephy_web_view_set_document_type (EphyWebView *web_view,
 }
 
 static gboolean
-decide_policy_cb (EphyEngineView            *web_view,
-                  WebKitPolicyDecision     *decision,
-                  WebKitPolicyDecisionType  decision_type,
-                  gpointer                  user_data)
-{
-  WebKitResponsePolicyDecision *response_decision;
-  WebKitURIResponse *response;
-  const char *mime_type;
-  gboolean is_main_resource;
-
-  /* Non-response policy decisions are handled in EphyWindow instead. */
-  if (decision_type != WEBKIT_POLICY_DECISION_TYPE_RESPONSE)
-    return FALSE;
-
-  response_decision = WEBKIT_RESPONSE_POLICY_DECISION (decision);
-  response = webkit_response_policy_decision_get_response (response_decision);
-  mime_type = webkit_uri_response_get_mime_type (response);
-
-  is_main_resource = webkit_response_policy_decision_is_main_frame_main_resource (response_decision);
-
-  /* If WebKit can handle the MIME type, let it... */
-  if (webkit_response_policy_decision_is_mime_type_supported (response_decision)) {
-    if (is_main_resource)
-      ephy_web_view_set_document_type (EPHY_WEB_VIEW (web_view), mime_type);
-    return FALSE;
-  }
-
-  /* ...otherwise, we'll start a download if it's the main resource. */
-  if (is_main_resource) {
-    const char *uri = webkit_uri_response_get_uri (response);
-    guint status_code = webkit_uri_response_get_status_code (response);
-
-    /* Do not start a download if there is no valid MIME type, or if an HTTP
-     * response failed (status 0 / client error / server error).
-     */
-    if (!mime_type || *mime_type == '\0')
-      return FALSE;
-
-    if (uri && (g_str_has_prefix (uri, "http://") || g_str_has_prefix (uri, "https://")) &&
-        (status_code < 200 || status_code >= 400))
-      return FALSE;
-
-    webkit_policy_decision_download (decision);
-    return TRUE;
-  }
-
-  return FALSE;
-}
-
-static gboolean
 permission_request_cb (EphyEngineView           *web_view,
-                       WebKitPermissionRequest *request)
+                       EphyEnginePermission    *request)
 {
-  const char *address;
   char *origin;
   EphyEmbedShell *shell;
-  EphyPermissionsManager *permissions_manager;
-  EphyPermission permission;
+  EphyEnginePermissionState permission;
   EphyPermissionType permission_type = EPHY_PERMISSION_TYPE_SHOW_NOTIFICATIONS;
 
   shell = ephy_embed_shell_get_default ();
 
-  if (WEBKIT_IS_GEOLOCATION_PERMISSION_REQUEST (request)) {
-    permission_type = EPHY_PERMISSION_TYPE_ACCESS_LOCATION;
-  } else if (WEBKIT_IS_NOTIFICATION_PERMISSION_REQUEST (request)) {
-    permission_type = EPHY_PERMISSION_TYPE_SHOW_NOTIFICATIONS;
-  } else if (WEBKIT_IS_CLIPBOARD_PERMISSION_REQUEST (request)) {
-    permission_type = EPHY_PERMISSION_TYPE_CLIPBOARD;
-  } else if (WEBKIT_IS_WEBSITE_DATA_ACCESS_PERMISSION_REQUEST (request)) {
-    permission_type = EPHY_PERMISSION_TYPE_WEBSITE_DATA_ACCESS;
-  } else if (WEBKIT_IS_USER_MEDIA_PERMISSION_REQUEST (request)) {
-    gboolean is_for_audio_device = webkit_user_media_permission_is_for_audio_device (WEBKIT_USER_MEDIA_PERMISSION_REQUEST (request));
-    gboolean is_for_video_device = webkit_user_media_permission_is_for_video_device (WEBKIT_USER_MEDIA_PERMISSION_REQUEST (request));
-    gboolean is_for_display_device = webkit_user_media_permission_is_for_display_device (WEBKIT_USER_MEDIA_PERMISSION_REQUEST (request));
-
-    if (is_for_audio_device) {
-      if (is_for_video_device)
-        permission_type = EPHY_PERMISSION_TYPE_ACCESS_WEBCAM_AND_MICROPHONE;
-      else
-        permission_type = EPHY_PERMISSION_TYPE_ACCESS_MICROPHONE;
-    } else if (is_for_video_device) {
-      permission_type = EPHY_PERMISSION_TYPE_ACCESS_WEBCAM;
-    } else if (is_for_display_device) {
-      permission_type = EPHY_PERMISSION_TYPE_ACCESS_DISPLAY;
-    } else {
-      return FALSE;
-    }
-  } else {
-    return FALSE;
+  switch (ephy_engine_permission_get_kind (request)) {
+    case EPHY_ENGINE_PERMISSION_NOTIFICATIONS: permission_type = EPHY_PERMISSION_TYPE_SHOW_NOTIFICATIONS; break;
+    case EPHY_ENGINE_PERMISSION_LOCATION: permission_type = EPHY_PERMISSION_TYPE_ACCESS_LOCATION; break;
+    case EPHY_ENGINE_PERMISSION_CLIPBOARD: permission_type = EPHY_PERMISSION_TYPE_CLIPBOARD; break;
+    case EPHY_ENGINE_PERMISSION_STORAGE_ACCESS: permission_type = EPHY_PERMISSION_TYPE_WEBSITE_DATA_ACCESS; break;
+    case EPHY_ENGINE_PERMISSION_MICROPHONE: permission_type = EPHY_PERMISSION_TYPE_ACCESS_MICROPHONE; break;
+    case EPHY_ENGINE_PERMISSION_CAMERA: permission_type = EPHY_PERMISSION_TYPE_ACCESS_WEBCAM; break;
+    case EPHY_ENGINE_PERMISSION_CAMERA_AND_MICROPHONE: permission_type = EPHY_PERMISSION_TYPE_ACCESS_WEBCAM_AND_MICROPHONE; break;
+    case EPHY_ENGINE_PERMISSION_DISPLAY: permission_type = EPHY_PERMISSION_TYPE_ACCESS_DISPLAY; break;
+    case EPHY_ENGINE_PERMISSION_OTHER: permission_type = EPHY_PERMISSION_TYPE_OTHER; break;
   }
 
-  address = ephy_web_view_get_address (EPHY_WEB_VIEW (web_view));
-  origin = ephy_uri_to_security_origin (address);
-  if (!origin)
-    return FALSE;
-
-  permissions_manager = ephy_embed_shell_get_permissions_manager (ephy_embed_shell_get_default ());
-
-  if (ephy_permission_is_stored_by_permissions_manager (permission_type)) {
-    permission = ephy_permissions_manager_get_permission (permissions_manager,
-                                                          permission_type,
-                                                          origin);
-  } else if (permission_type == EPHY_PERMISSION_TYPE_ACCESS_WEBCAM_AND_MICROPHONE) {
-    EphyPermission video_permission;
-    EphyPermission mic_permission;
-
-    video_permission = ephy_permissions_manager_get_permission (permissions_manager,
-                                                                EPHY_PERMISSION_TYPE_ACCESS_WEBCAM,
-                                                                origin);
-    mic_permission = ephy_permissions_manager_get_permission (permissions_manager,
-                                                              EPHY_PERMISSION_TYPE_ACCESS_MICROPHONE,
-                                                              origin);
-
-    if (video_permission == mic_permission)
-      permission = video_permission;
-    else
-      permission = EPHY_PERMISSION_UNDECIDED;
-  } else {
-    permission = EPHY_PERMISSION_UNDECIDED;
-  }
+  origin = g_strdup (ephy_engine_permission_get_origin (request));
+  permission = ephy_engine_permission_get_state (request);
 
   switch (permission) {
-    case EPHY_PERMISSION_PERMIT:
-      webkit_permission_request_allow (request);
+    case EPHY_ENGINE_PERMISSION_STATE_ALLOW:
+      ephy_engine_permission_decide (request, EPHY_ENGINE_PERMISSION_ALLOW);
       goto out;
-    case EPHY_PERMISSION_DENY:
-      webkit_permission_request_deny (request);
+    case EPHY_ENGINE_PERMISSION_STATE_DENY:
+      ephy_engine_permission_decide (request, EPHY_ENGINE_PERMISSION_DENY);
       goto out;
-    case EPHY_PERMISSION_UNDECIDED:
+    case EPHY_ENGINE_PERMISSION_STATE_ASK:
       /* Application mode implies being OK with notifications. */
-      if (permission_type == EPHY_PERMISSION_TYPE_SHOW_NOTIFICATIONS &&
+      if (!ephy_engine_permission_is_ephemeral (request) &&
+          permission_type == EPHY_PERMISSION_TYPE_SHOW_NOTIFICATIONS &&
           ephy_embed_shell_get_mode (shell) == EPHY_EMBED_SHELL_MODE_APPLICATION) {
-        ephy_permissions_manager_set_permission (permissions_manager,
-                                                 permission_type,
-                                                 origin,
-                                                 EPHY_PERMISSION_PERMIT);
-        webkit_permission_request_allow (request);
+        ephy_engine_permission_decide (request, EPHY_ENGINE_PERMISSION_ALLOW);
       } else {
         g_signal_emit (web_view, signals[PERMISSION_REQUESTED], 0, permission_type, request, origin);
       }
@@ -1225,34 +1124,35 @@ update_security_status_for_committed_load (EphyWebView *view,
 }
 
 static void
-tls_error_page_message_received_cb (WebKitUserContentManager *manager,
-                                    JSCValue                 *message,
+tls_error_page_message_received_cb (EphyEngineView           *engine_view,
+                                    JsonNode                 *message,
                                     EphyWebView              *view)
 {
   EphyEmbedShell *shell = ephy_embed_shell_get_default ();
   g_autoptr (GUri) uri = NULL;
-  guint64 page_id;
+  double page_id;
 
-  page_id = jsc_value_to_double (message);
+  page_id = ephy_json_node_get_double (message);
   if (ephy_engine_web_view_get_page_id (EPHY_ENGINE_VIEW (view)) != page_id)
     return;
 
-  g_assert (G_IS_TLS_CERTIFICATE (view->certificate));
-  g_assert (view->tls_error_failing_uri);
+  if (view->error_page != EPHY_WEB_VIEW_ERROR_INVALID_TLS_CERTIFICATE ||
+      !G_IS_TLS_CERTIFICATE (view->certificate) || !view->tls_error_failing_uri)
+    return;
 
   uri = g_uri_parse (view->tls_error_failing_uri, G_URI_FLAGS_PARSE_RELAXED, NULL);
-  webkit_network_session_allow_tls_certificate_for_host (ephy_embed_shell_get_network_session (shell),
+  ephy_engine_session_allow_tls_certificate_for_host (ephy_embed_shell_get_network_session (shell),
                                                          view->certificate,
                                                          g_uri_get_host (uri));
   ephy_web_view_load_url (view, ephy_web_view_get_address (view));
 }
 
 static void
-reload_page_message_received_cb (WebKitUserContentManager *ucm,
-                                 JSCValue                 *message,
+reload_page_message_received_cb (EphyEngineView           *engine_view,
+                                 JsonNode                 *message,
                                  EphyWebView              *view)
 {
-  guint64 page_id = jsc_value_to_double (message);
+  double page_id = ephy_json_node_get_double (message);
   if (ephy_engine_web_view_get_page_id (EPHY_ENGINE_VIEW (view)) != page_id)
     return;
 
@@ -1261,7 +1161,7 @@ reload_page_message_received_cb (WebKitUserContentManager *ucm,
 
 
 typedef struct {
-  EphyEngineView *view;
+  GWeakRef view;
   char *app_id;
 } EphyWebApplicationDeleteData;
 
@@ -1270,7 +1170,7 @@ ephy_web_application_delete_data_new (EphyEngineView *view,
                                       char          *app_id)
 {
   EphyWebApplicationDeleteData *data = g_new (EphyWebApplicationDeleteData, 1);
-  data->view = view;
+  g_weak_ref_init (&data->view, view);
   data->app_id = app_id;
   return data;
 }
@@ -1279,63 +1179,59 @@ static void
 ephy_web_application_delete_data_free (EphyWebApplicationDeleteData *data)
 {
   g_free (data->app_id);
+  g_weak_ref_clear (&data->view);
   g_free (data);
 }
 
 static void
-web_application_delete_response_cb (EphyWebApplicationDeleteData *data)
+web_application_delete_response_cb (AdwAlertDialog               *dialog,
+                                    const char                   *response,
+                                    EphyWebApplicationDeleteData *data)
 {
-  if (ephy_web_application_delete (data->app_id, NULL)) {
-    ephy_engine_web_view_reload (data->view);
-    ephy_web_application_delete_data_free (data);
+  if (g_strcmp0 (response, "delete") == 0 && ephy_web_application_delete (data->app_id, NULL)) {
+    g_autoptr (EphyEngineView) view = g_weak_ref_get (&data->view);
+    if (view && gtk_widget_get_root (GTK_WIDGET (view)) &&
+        g_strcmp0 (ephy_engine_web_view_get_uri (view), "ephy-about:applications") == 0)
+      ephy_engine_web_view_reload (view);
   }
 }
 
 static void
-about_apps_message_received_cb (WebKitUserContentManager *ucm,
-                                JSCValue                 *message,
-                                EphyWebView              *view)
+web_application_delete_data_destroy (gpointer data,
+                                     GClosure *closure)
 {
-  g_autoptr (JSCValue) action_object = NULL;
-  g_autoptr (JSCValue) page_id_object = NULL;
-  g_autoptr (JSCValue) app_id_object = NULL;
-  g_autoptr (JSCValue) app_name_object = NULL;
-  g_autofree char *action = NULL;
-  g_autofree char *app_id = NULL;
-  g_autofree char *app_name = NULL;
-  guint64 page_id = 0;
+  ephy_web_application_delete_data_free (data);
+}
+
+static void
+about_apps_message_received_cb (EphyEngineView *engine_view,
+                                JsonNode       *message,
+                                EphyWebView    *view)
+{
+  JsonObject *object = ephy_json_node_get_object (message);
+  const char *action;
+  const char *app_id;
+  const char *app_name;
+  g_autofree char *application_id = NULL;
   AdwDialog *dialog;
   EphyWebApplicationDeleteData *data;
 
-  action_object = jsc_value_object_get_property (message, "action");
-  if (!action_object)
+  if (!object || g_strcmp0 (ephy_engine_web_view_get_uri (engine_view), "ephy-about:applications") != 0)
     return;
 
-  action = jsc_value_to_string (action_object);
-
-  if (g_strcmp0 (action, "launch") != 0 && g_strcmp0 (action, "remove") != 0) {
-    g_warning ("Unknown web app action called: %s", action);
+  action = ephy_json_object_get_string (object, "action");
+  app_id = ephy_json_object_get_string (object, "app");
+  app_name = ephy_json_object_get_string (object, "name");
+  if (!app_id || !*app_id || !app_name ||
+      (g_strcmp0 (action, "launch") != 0 && g_strcmp0 (action, "remove") != 0) ||
+      ephy_json_object_get_double (object, "page") != ephy_engine_web_view_get_page_id (engine_view))
     return;
-  }
-
-  page_id_object = jsc_value_object_get_property (message, "page");
-  if (!page_id_object)
+  application_id = g_strconcat (EPHY_WEB_APP_GAPPLICATION_ID_PREFIX, app_id, NULL);
+  if (!g_application_id_is_valid (application_id) || !ephy_web_application_exists (app_id))
     return;
-
-  page_id = jsc_value_to_double (page_id_object);
-  if (ephy_engine_web_view_get_page_id (EPHY_ENGINE_VIEW (view)) != page_id)
-    return;
-
-  app_id_object = jsc_value_object_get_property (message, "app");
-  if (!app_id_object)
-    return;
-
-  app_id = jsc_value_to_string (app_id_object);
-  app_name_object = jsc_value_object_get_property (message, "name");
-  app_name = jsc_value_to_string (app_name_object);
 
   if (g_strcmp0 (action, "remove") == 0) {
-    data = ephy_web_application_delete_data_new (EPHY_ENGINE_VIEW (view), g_steal_pointer (&app_id));
+    data = ephy_web_application_delete_data_new (EPHY_ENGINE_VIEW (view), g_strdup (app_id));
 
     dialog = adw_alert_dialog_new (_("Delete Web App?"), NULL);
 
@@ -1354,7 +1250,8 @@ about_apps_message_received_cb (WebKitUserContentManager *ucm,
     adw_alert_dialog_set_default_response (ADW_ALERT_DIALOG (dialog), "cancel");
     adw_alert_dialog_set_close_response (ADW_ALERT_DIALOG (dialog), "cancel");
 
-    g_signal_connect_swapped (dialog, "response::delete", G_CALLBACK (web_application_delete_response_cb), data);
+    g_signal_connect_data (dialog, "response", G_CALLBACK (web_application_delete_response_cb), data,
+                           web_application_delete_data_destroy, G_CONNECT_DEFAULT);
 
     adw_dialog_present (dialog, GTK_WIDGET (gtk_widget_get_root (GTK_WIDGET (view))));
   } else if (g_strcmp0 (action, "launch") == 0) {
@@ -1367,26 +1264,10 @@ ephy_web_view_register_message_handler (EphyWebView                    *view,
                                         EphyWebViewMessageHandler       handler,
                                         EphyWebViewMessageHandlerScope  scope)
 {
-  WebKitUserContentManager *ucm = ephy_engine_web_view_get_user_content_manager (EPHY_ENGINE_VIEW (view));
+  EphyEngineView *engine_view = EPHY_ENGINE_VIEW (view);
 
-  /* Use this function to temporarily register message handlers in the main
-   * script world so they are accessible to Epiphany's internal web content. Use
-   * main world message handlers only for internal Epiphany pages. They should
-   * never be accessible to websites. For message handlers that can use a
-   * private script world, use ephy_embed_shell_register_ucm() instead.
-   *
-   * The parameters of the message should generally contain the page ID, which
-   * should be checked at the top of the callback, because the same
-   * WebKitUserContentManager is shared between many WebKitWebViews and the
-   * callback will execute for every view.
-   *
-   * Message handlers registered here will be unregistered when starting a new
-   * load unless ephy_web_view_register_message_handler() has been called again.
-   * That is, it's possible for them to "stack" by loading different pages
-   * in succession without loading any pages that do not use message handlers.
-   * This should be fine, although there is theoretical abuse potential in
-   * unrealistic scenarios if there are XSS vulnerabilities in internal pages.
-   */
+  /* Native messages are restricted to this view's internal top-level document.
+   * Drop temporary registrations when the following navigation starts. */
 
   if (scope == EPHY_WEB_VIEW_REGISTER_MESSAGE_HANDLER_FOR_NEXT_LOAD)
     view->just_registered_message_handlers = TRUE;
@@ -1396,22 +1277,19 @@ ephy_web_view_register_message_handler (EphyWebView                    *view,
 
   switch (handler) {
     case EPHY_WEB_VIEW_TLS_ERROR_PAGE_MESSAGE_HANDLER:
-      webkit_user_content_manager_register_script_message_handler (ucm, "tlsErrorPage", NULL);
-      g_signal_connect_object (ucm, "script-message-received::tlsErrorPage",
-                               G_CALLBACK (tls_error_page_message_received_cb),
-                               view, G_CONNECT_DEFAULT);
+      ephy_engine_web_view_register_page_message_handler (engine_view, "tlsErrorPage");
+      g_signal_connect_object (view, "page-message::tlsErrorPage",
+                               G_CALLBACK (tls_error_page_message_received_cb), view, G_CONNECT_DEFAULT);
       break;
     case EPHY_WEB_VIEW_RELOAD_PAGE_MESSAGE_HANDLER:
-      webkit_user_content_manager_register_script_message_handler (ucm, "reloadPage", NULL);
-      g_signal_connect_object (ucm, "script-message-received::reloadPage",
-                               G_CALLBACK (reload_page_message_received_cb),
-                               view, G_CONNECT_DEFAULT);
+      ephy_engine_web_view_register_page_message_handler (engine_view, "reloadPage");
+      g_signal_connect_object (view, "page-message::reloadPage",
+                               G_CALLBACK (reload_page_message_received_cb), view, G_CONNECT_DEFAULT);
       break;
     case EPHY_WEB_VIEW_ABOUT_APPS_MESSAGE_HANDLER:
-      webkit_user_content_manager_register_script_message_handler (ucm, "aboutApps", NULL);
-      g_signal_connect_object (ucm, "script-message-received::aboutApps",
-                               G_CALLBACK (about_apps_message_received_cb),
-                               view, G_CONNECT_DEFAULT);
+      ephy_engine_web_view_register_page_message_handler (engine_view, "aboutApps");
+      g_signal_connect_object (view, "page-message::aboutApps",
+                               G_CALLBACK (about_apps_message_received_cb), view, G_CONNECT_DEFAULT);
       break;
   }
 
@@ -1421,23 +1299,20 @@ ephy_web_view_register_message_handler (EphyWebView                    *view,
 static void
 unregister_message_handlers (EphyWebView *view)
 {
-  WebKitUserContentManager *ucm = ephy_engine_web_view_get_user_content_manager (EPHY_ENGINE_VIEW (view));
+  EphyEngineView *engine_view = EPHY_ENGINE_VIEW (view);
 
   if (view->message_handlers_to_unregister & EPHY_WEB_VIEW_TLS_ERROR_PAGE_MESSAGE_HANDLER) {
-    webkit_user_content_manager_unregister_script_message_handler (ucm, "tlsErrorPage", NULL);
-    g_signal_handlers_disconnect_by_func (ucm, tls_error_page_message_received_cb, view);
+    ephy_engine_web_view_unregister_page_message_handler (engine_view, "tlsErrorPage");
+    g_signal_handlers_disconnect_by_func (view, tls_error_page_message_received_cb, view);
   }
-
   if (view->message_handlers_to_unregister & EPHY_WEB_VIEW_RELOAD_PAGE_MESSAGE_HANDLER) {
-    webkit_user_content_manager_unregister_script_message_handler (ucm, "reloadPage", NULL);
-    g_signal_handlers_disconnect_by_func (ucm, reload_page_message_received_cb, view);
+    ephy_engine_web_view_unregister_page_message_handler (engine_view, "reloadPage");
+    g_signal_handlers_disconnect_by_func (view, reload_page_message_received_cb, view);
   }
-
   if (view->message_handlers_to_unregister & EPHY_WEB_VIEW_ABOUT_APPS_MESSAGE_HANDLER) {
-    webkit_user_content_manager_unregister_script_message_handler (ucm, "aboutApps", NULL);
-    g_signal_handlers_disconnect_by_func (ucm, about_apps_message_received_cb, view);
+    ephy_engine_web_view_unregister_page_message_handler (engine_view, "aboutApps");
+    g_signal_handlers_disconnect_by_func (view, about_apps_message_received_cb, view);
   }
-
   view->message_handlers_to_unregister = 0;
 }
 
@@ -1454,21 +1329,6 @@ sort_opensearch_engines_list_func (gconstpointer a,
     ephy_opensearch_autodiscovery_link_get_name (link_b));
 }
 
-static char *
-get_js_object_string_property (JSCValue   *js_value,
-                               const char *property)
-{
-  g_autoptr (JSCValue) prop_value = jsc_value_object_get_property (js_value, property);
-  char *s;
-
-  g_assert (jsc_value_is_string (prop_value));
-
-  s = jsc_value_to_string (prop_value);
-  g_assert (s);
-
-  return s;
-}
-
 static void
 get_opensearch_links_cb (EphyEngineView *web_view,
                          GAsyncResult  *result,
@@ -1476,29 +1336,26 @@ get_opensearch_links_cb (EphyEngineView *web_view,
 {
   EphyWebView *view = EPHY_WEB_VIEW (web_view);
   g_autoptr (GError) error = NULL;
-  g_autoptr (JSCValue) js_array = NULL;
-  g_autoptr (JSCValue) array_len_value = NULL;
+  g_autoptr (JsonObject) script_result = NULL;
+  JsonArray *links;
   g_autoptr (GPtrArray) links_array = NULL;
   guint len;
 
-  js_array = ephy_engine_web_view_evaluate_javascript_finish (web_view, result, &error);
+  script_result = ephy_engine_web_view_evaluate_javascript_finish (web_view, result, &error);
   if (error) {
     if (!g_error_matches (error, G_IO_ERROR, G_IO_ERROR_CANCELLED))
       g_warning ("Couldn't run javascript to get list of OpenSearch Descriptions links: %s %s", ephy_engine_web_view_get_uri (web_view), error->message);
     return;
   }
 
-  g_assert (jsc_value_is_array (js_array));
-  /* JavaScriptCore doesn't have API to get a G(Ptr)Array from a Javascript
-   * array, so we need to iterate manually.
-   */
-  array_len_value = jsc_value_object_get_property (js_array, "length");
-  len = jsc_value_to_int32 (array_len_value);
+  links = ephy_json_object_get_array (script_result, "value");
+  if (!links)
+    return;
+  len = json_array_get_length (links);
 
   links_array = g_ptr_array_new_with_free_func (g_object_unref);
   for (guint i = 0; i < len; i++) {
-    g_autoptr (JSCValue) link_object =
-      jsc_value_object_get_property_at_index (js_array, i);
+    JsonObject *link_object = ephy_json_array_get_object (links, i);
     g_autofree char *href = NULL;
     g_autofree char *name = NULL;
     g_autofree char *resolved_url = NULL;
@@ -1506,10 +1363,12 @@ get_opensearch_links_cb (EphyEngineView *web_view,
     g_autoptr (GError) error = NULL;
     const char *scheme;
 
-    g_assert (jsc_value_is_object (link_object));
-
-    href = get_js_object_string_property (link_object, "href");
-    name = get_js_object_string_property (link_object, "title");
+    if (!link_object)
+      continue;
+    href = ephy_json_object_dup_string (link_object, "href");
+    name = ephy_json_object_dup_string (link_object, "title");
+    if (!href || !name)
+      continue;
 
     /* No point in continuing if we can't find the description file or
      * just can't display any useful name for it, or if the URL isn't well formed.
@@ -1622,7 +1481,10 @@ load_changed_cb (EphyEngineView   *web_view,
     case WEBKIT_LOAD_REDIRECTED:
       break;
     case WEBKIT_LOAD_COMMITTED: {
+      EphyEngineResponse *response = ephy_engine_web_resource_get_response (ephy_engine_web_view_get_main_resource (web_view));
       const char *uri;
+      if (response)
+        ephy_web_view_set_document_type (view, ephy_engine_response_get_mime_type (response));
       view->ever_committed = TRUE;
 
       /* Title and location. */
@@ -1663,6 +1525,8 @@ load_changed_cb (EphyEngineView   *web_view,
       break;
     }
     case WEBKIT_LOAD_FINISHED:
+      g_clear_pointer (&view->reader_html, g_free);
+      g_clear_pointer (&view->reader_uri, g_free);
       ephy_web_view_unset_loading_message (view);
 
       /* Ensure we load the icon for this web view, if available. */
@@ -1898,7 +1762,7 @@ format_network_error_page (EphyWebView  *view,
 
   /* The button on the network error page. DO NOT ADD MNEMONICS HERE. */
   *button_label = g_strdup (_("Reload"));
-  *button_action = g_strdup_printf ("window.webkit.messageHandlers.reloadPage.postMessage(%" G_GUINT64_FORMAT ");",
+  *button_action = g_strdup_printf ("Jupiter.postMessage('reloadPage', %" G_GUINT64_FORMAT ");",
                                     ephy_engine_web_view_get_page_id (EPHY_ENGINE_VIEW (view)));
   /* Mnemonic for the Reload button on browser error pages. */
   *button_accesskey = C_("reload-access-key", "R");
@@ -1951,7 +1815,7 @@ format_crash_error_page (EphyWebView  *view,
 
   /* The button on the page crash error page. DO NOT ADD MNEMONICS HERE. */
   *button_label = g_strdup (_("Reload"));
-  *button_action = g_strdup_printf ("window.webkit.messageHandlers.reloadPage.postMessage(%" G_GUINT64_FORMAT ");",
+  *button_action = g_strdup_printf ("Jupiter.postMessage('reloadPage', %" G_GUINT64_FORMAT ");",
                                     ephy_engine_web_view_get_page_id (EPHY_ENGINE_VIEW (view)));
   /* Mnemonic for the Reload button on browser error pages. */
   *button_accesskey = C_("reload-access-key", "R");
@@ -1987,7 +1851,7 @@ format_process_crash_error_page (EphyWebView  *view,
 
   /* The button on the process crash error page. DO NOT ADD MNEMONICS HERE. */
   *button_label = g_strdup (_("Reload"));
-  *button_action = g_strdup_printf ("window.webkit.messageHandlers.reloadPage.postMessage(%" G_GUINT64_FORMAT ");",
+  *button_action = g_strdup_printf ("Jupiter.postMessage('reloadPage', %" G_GUINT64_FORMAT ");",
                                     ephy_engine_web_view_get_page_id (EPHY_ENGINE_VIEW (view)));
   /* Mnemonic for the Reload button on browser error pages. */
   *button_accesskey = C_("reload-access-key", "R");
@@ -2023,7 +1887,7 @@ format_unresponsive_process_error_page (EphyWebView  *view,
 
   /* The button on the unresponsive process error page. DO NOT ADD MNEMONICS HERE. */
   *button_label = g_strdup (_("Reload"));
-  *button_action = g_strdup_printf ("window.webkit.messageHandlers.reloadPage.postMessage(%" G_GUINT64_FORMAT ");",
+  *button_action = g_strdup_printf ("Jupiter.postMessage('reloadPage', %" G_GUINT64_FORMAT ");",
                                     ephy_engine_web_view_get_page_id (EPHY_ENGINE_VIEW (view)));
   /* Mnemonic for the Reload button on browser error pages. */
   *button_accesskey = C_("reload-access-key", "R");
@@ -2078,7 +1942,7 @@ format_tls_error_page (EphyWebView  *view,
 
   /* The hidden button on the invalid TLS certificate error page. Do not add mnemonics here. */
   *hidden_button_label = g_strdup (_("Accept Risk and Proceed"));
-  *hidden_button_action = g_strdup_printf ("window.webkit.messageHandlers.tlsErrorPage.postMessage(%"G_GUINT64_FORMAT ");",
+  *hidden_button_action = g_strdup_printf ("Jupiter.postMessage('tlsErrorPage', %"G_GUINT64_FORMAT ");",
                                            ephy_engine_web_view_get_page_id (EPHY_ENGINE_VIEW (view)));
   /* Mnemonic for the Accept Risk and Proceed button on the invalid TLS certificate error page. */
   *hidden_button_accesskey = C_("proceed-anyway-access-key", "P");
@@ -2843,51 +2707,6 @@ scale_factor_changed_cb (EphyWebView *web_view,
   _ephy_web_view_update_icon (web_view);
 }
 
-static gboolean
-query_permission_state_cb (EphyWebView                *web_view,
-                           WebKitPermissionStateQuery *query)
-{
-  const char *name = webkit_permission_state_query_get_name (query);
-  EphyPermissionType permission_type;
-  EphyPermissionsManager *permissions_manager;
-  WebKitSecurityOrigin *security_origin;
-  g_autofree char *origin = NULL;
-
-  /* See https://w3c.github.io/permissions and https://github.com/w3c/webappsec-permissions-policy/blob/main/features.md */
-  if (g_strcmp0 (name, "notifications") == 0)
-    permission_type = EPHY_PERMISSION_TYPE_SHOW_NOTIFICATIONS;
-  else if (g_strcmp0 (name, "geolocation") == 0)
-    permission_type = EPHY_PERMISSION_TYPE_ACCESS_LOCATION;
-  else if (g_strcmp0 (name, "microphone") == 0)
-    permission_type = EPHY_PERMISSION_TYPE_ACCESS_MICROPHONE;
-  else if (g_strcmp0 (name, "camera") == 0)
-    permission_type = EPHY_PERMISSION_TYPE_ACCESS_WEBCAM;
-  else if (g_strcmp0 (name, "display") == 0)
-    permission_type = EPHY_PERMISSION_TYPE_ACCESS_DISPLAY;
-  else if (g_strcmp0 (name, "autoplay") == 0)
-    permission_type = EPHY_PERMISSION_TYPE_AUTOPLAY_POLICY;
-  else
-    return FALSE;
-
-  security_origin = webkit_permission_state_query_get_security_origin (query);
-  origin = webkit_security_origin_to_string (security_origin);
-
-  permissions_manager = ephy_embed_shell_get_permissions_manager (ephy_embed_shell_get_default ());
-  switch (ephy_permissions_manager_get_permission (permissions_manager, permission_type, origin)) {
-    case EPHY_PERMISSION_UNDECIDED:
-      webkit_permission_state_query_finish (query, WEBKIT_PERMISSION_STATE_PROMPT);
-      break;
-    case EPHY_PERMISSION_DENY:
-      webkit_permission_state_query_finish (query, WEBKIT_PERMISSION_STATE_DENIED);
-      break;
-    case EPHY_PERMISSION_PERMIT:
-      webkit_permission_state_query_finish (query, WEBKIT_PERMISSION_STATE_GRANTED);
-      break;
-  }
-
-  return TRUE;
-}
-
 /**
  * ephy_web_view_load_request:
  * @view: the #EphyWebView in which to load the request
@@ -3274,12 +3093,12 @@ has_modified_forms_cb (EphyEngineView *view,
                        GAsyncResult  *result,
                        GTask         *task)
 {
-  g_autoptr (JSCValue) value = NULL;
+  g_autoptr (JsonObject) script_result = NULL;
   gboolean retval = FALSE;
   GError *error = NULL;
   gulong id;
 
-  value = ephy_engine_web_view_evaluate_javascript_finish (view, result, &error);
+  script_result = ephy_engine_web_view_evaluate_javascript_finish (view, result, &error);
 
   id = GPOINTER_TO_INT (g_task_get_task_data (task));
   if (id == 0) {
@@ -3288,10 +3107,10 @@ has_modified_forms_cb (EphyEngineView *view,
   }
   g_source_remove (id);
 
-  if (!value) {
+  if (!script_result) {
     g_task_return_error (task, error);
   } else {
-    retval = jsc_value_to_boolean (value);
+    retval = ephy_json_object_get_boolean (script_result, "value", FALSE);
     g_task_return_boolean (task, retval);
   }
 
@@ -3376,23 +3195,17 @@ get_best_web_app_icon_cb (EphyEngineView *view,
                           GAsyncResult  *result,
                           GTask         *task)
 {
-  g_autoptr (JSCValue) js_value = NULL;
+  g_autoptr (JsonObject) script_result = NULL;
   GError *error = NULL;
 
-  js_value = ephy_engine_web_view_evaluate_javascript_finish (view, result, &error);
-  if (js_value) {
-    g_autoptr (JSCValue) js_uri = NULL;
-    g_autoptr (JSCValue) js_color = NULL;
+  script_result = ephy_engine_web_view_evaluate_javascript_finish (view, result, &error);
+  if (script_result) {
+    JsonObject *icon = ephy_json_object_get_object (script_result, "value");
     GetBestWebAppIconAsyncData *data;
 
-    g_assert (jsc_value_is_object (js_value));
-
-    js_uri = jsc_value_object_get_property (js_value, "url");
-    js_color = jsc_value_object_get_property (js_value, "icon");
-
     data = g_new0 (GetBestWebAppIconAsyncData, 1);
-    data->icon_uri = jsc_value_to_string (js_uri);
-    data->icon_color = jsc_value_is_null (js_color) || jsc_value_is_undefined (js_color) ? NULL : jsc_value_to_string (js_color);
+    data->icon_uri = icon ? ephy_json_object_dup_string (icon, "url") : NULL;
+    data->icon_color = icon ? ephy_json_object_dup_string (icon, "icon") : NULL;
 
     g_task_return_pointer (task, data, (GDestroyNotify)get_best_web_app_icon_async_data_free);
   } else
@@ -3461,15 +3274,14 @@ get_web_app_title_cb (EphyEngineView *view,
                       GAsyncResult  *result,
                       GTask         *task)
 {
-  g_autoptr (JSCValue) js_value = NULL;
+  g_autoptr (JsonObject) script_result = NULL;
   GError *error = NULL;
 
-  js_value = ephy_engine_web_view_evaluate_javascript_finish (view, result, &error);
-  if (js_value) {
+  script_result = ephy_engine_web_view_evaluate_javascript_finish (view, result, &error);
+  if (script_result) {
     char *retval = NULL;
 
-    if (!jsc_value_is_null (js_value) && !jsc_value_is_undefined (js_value))
-      retval = jsc_value_to_string (js_value);
+    retval = ephy_json_object_dup_string (script_result, "value");
     g_task_return_pointer (task, retval, (GDestroyNotify)g_free);
   } else
     g_task_return_error (task, error);
@@ -3513,12 +3325,12 @@ get_web_app_mobile_capable_cb (EphyEngineView *view,
                                GAsyncResult  *result,
                                GTask         *task)
 {
-  g_autoptr (JSCValue) js_value = NULL;
+  g_autoptr (JsonObject) script_result = NULL;
   GError *error = NULL;
 
-  js_value = ephy_engine_web_view_evaluate_javascript_finish (view, result, &error);
-  if (js_value) {
-    gboolean retval = jsc_value_to_boolean (js_value);
+  script_result = ephy_engine_web_view_evaluate_javascript_finish (view, result, &error);
+  if (script_result) {
+    gboolean retval = ephy_json_object_get_boolean (script_result, "value", FALSE);
 
     g_task_return_boolean (task, retval);
   } else
@@ -3817,6 +3629,45 @@ ephy_web_view_set_visit_type (EphyWebView              *view,
 }
 
 
+static void
+reader_html_prepared_cb (EphyEngineView     *web_view,
+                         GAsyncResult      *result,
+                         EphyEngineResource *expected_resource)
+{
+  EphyWebView *view = EPHY_WEB_VIEW (web_view);
+  g_autoptr (GError) error = NULL;
+  g_autofree char *html = ephy_reader_handler_get_html_finish (web_view, result, &error);
+  gboolean current = expected_resource == ephy_engine_web_view_get_main_resource (web_view) &&
+                     gtk_widget_get_root (GTK_WIDGET (view)) != NULL;
+
+  g_object_unref (expected_resource);
+  if (!current)
+    return;
+  if (!html) {
+    view->entering_reader_mode = FALSE;
+    g_object_notify_by_pspec (G_OBJECT (view), obj_properties[PROP_ENTERING_READER_MODE]);
+    if (!g_error_matches (error, G_IO_ERROR, G_IO_ERROR_CANCELLED) &&
+        !g_error_matches (error, G_IO_ERROR, G_IO_ERROR_CLOSED))
+      g_warning ("Could not extract reader content: %s", error->message);
+    return;
+  }
+  g_free (view->reader_html);
+  g_free (view->reader_uri);
+  view->reader_html = g_steal_pointer (&html);
+  view->reader_uri = g_strconcat (EPHY_READER_SCHEME ":", ephy_web_view_get_address (view), NULL);
+  ephy_engine_web_view_load_uri (web_view, view->reader_uri);
+}
+
+char *
+ephy_web_view_take_reader_html (EphyWebView *view,
+                                const char  *uri)
+{
+  if (g_strcmp0 (uri, view->reader_uri) != 0)
+    return NULL;
+  g_clear_pointer (&view->reader_uri, g_free);
+  return g_steal_pointer (&view->reader_html);
+}
+
 /**
  * ephy_web_view_toggle_reader_mode:
  * @view: an #EphyWebView
@@ -3829,7 +3680,6 @@ ephy_web_view_toggle_reader_mode (EphyWebView *view,
                                   gboolean     active)
 {
   EphyEngineView *web_view = EPHY_ENGINE_VIEW (view);
-  char *reader_uri = NULL;
   const gchar *address;
   gboolean view_active = g_str_has_prefix (view->address, EPHY_READER_SCHEME);
 
@@ -3847,12 +3697,16 @@ ephy_web_view_toggle_reader_mode (EphyWebView *view,
   if (!ephy_web_view_is_reader_mode_available (view))
     return;
 
-  reader_uri = g_strconcat (EPHY_READER_SCHEME, ":", address, NULL);
+  if (view->entering_reader_mode)
+    return;
 
   view->entering_reader_mode = TRUE;
   g_object_notify_by_pspec (G_OBJECT (web_view), obj_properties[PROP_ENTERING_READER_MODE]);
 
-  ephy_engine_web_view_load_uri (web_view, reader_uri);
+  /* CEF cannot evaluate the source document while waiting for its replacement. */
+  ephy_reader_handler_get_html (web_view, view->cancellable,
+                                (GAsyncReadyCallback)reader_html_prepared_cb,
+                                g_object_ref (ephy_engine_web_view_get_main_resource (web_view)));
 }
 
 gboolean
@@ -3916,6 +3770,8 @@ ephy_web_view_finalize (GObject *object)
   g_free (view->loading_message);
   g_free (view->tls_error_failing_uri);
   g_free (view->pending_snapshot_uri);
+  g_free (view->reader_html);
+  g_free (view->reader_uri);
 
   G_OBJECT_CLASS (ephy_web_view_parent_class)->finalize (object);
 }
@@ -3929,6 +3785,8 @@ ephy_web_view_constructed (GObject *object)
   g_auto (GStrv) cors_allowlist = NULL;
 
   G_OBJECT_CLASS (ephy_web_view_parent_class)->constructed (object);
+
+  ephy_permissions_manager_prepare_session (ephy_embed_shell_get_permissions_manager (shell));
 
   ephy_embed_shell_register_ucm (shell, ucm);
   ephy_embed_prefs_register_ucm (ucm);
@@ -3988,10 +3846,6 @@ ephy_web_view_init (EphyWebView *web_view)
                            G_CALLBACK (reader_setting_changed_cb),
                            web_view, G_CONNECT_SWAPPED);
 
-  g_signal_connect (web_view, "decide-policy",
-                    G_CALLBACK (decide_policy_cb),
-                    NULL);
-
   g_signal_connect (web_view, "permission-request",
                     G_CALLBACK (permission_request_cb),
                     NULL);
@@ -4049,10 +3903,6 @@ ephy_web_view_init (EphyWebView *web_view)
 
   g_signal_connect (web_view, "notify::scale-factor",
                     G_CALLBACK (scale_factor_changed_cb),
-                    NULL);
-
-  g_signal_connect (web_view, "query-permission-state",
-                    G_CALLBACK (query_permission_state_cb),
                     NULL);
 
   g_signal_connect_object (shell, "password-form-focused",
@@ -4266,7 +4116,7 @@ ephy_web_view_class_init (EphyWebViewClass *klass)
                                                 G_TYPE_NONE,
                                                 3,
                                                 EPHY_TYPE_PERMISSION_TYPE,
-                                                WEBKIT_TYPE_PERMISSION_REQUEST,
+                                                EPHY_TYPE_ENGINE_PERMISSION,
                                                 G_TYPE_STRING | G_SIGNAL_TYPE_STATIC_SCOPE);
 
   /**
@@ -4331,15 +4181,14 @@ get_web_app_manifest_url_cb (EphyEngineView *view,
                              GAsyncResult  *result,
                              GTask         *task)
 {
-  g_autoptr (JSCValue) js_value = NULL;
+  g_autoptr (JsonObject) script_result = NULL;
   GError *error = NULL;
 
-  js_value = ephy_engine_web_view_evaluate_javascript_finish (view, result, &error);
-  if (js_value) {
+  script_result = ephy_engine_web_view_evaluate_javascript_finish (view, result, &error);
+  if (script_result) {
     char *retval = NULL;
 
-    if (!jsc_value_is_null (js_value) && !jsc_value_is_undefined (js_value))
-      retval = jsc_value_to_string (js_value);
+    retval = ephy_json_object_dup_string (script_result, "value");
 
     g_task_return_pointer (task, retval, (GDestroyNotify)g_free);
   } else {

@@ -21,7 +21,7 @@
 #pragma once
 
 #include <glib-object.h>
-#include <webkit/webkit.h>
+#include "ephy-engine-download.h"
 
 G_BEGIN_DECLS
 
@@ -36,7 +36,7 @@ typedef enum
   EPHY_DOWNLOAD_ACTION_OPEN
 } EphyDownloadActionType;
 
-EphyDownload *ephy_download_new                   (WebKitDownload *download);
+EphyDownload *ephy_download_new                   (EphyEngineDownload *download);
 EphyDownload *ephy_download_new_for_uri           (const char     *uri);
 EphyDownload *ephy_download_new_for_uri_internal  (const char     *uri);
 
@@ -49,7 +49,7 @@ gboolean      ephy_download_failed                (EphyDownload *download,
 void          ephy_download_set_destination       (EphyDownload *download,
                                                    const char *destination);
 
-WebKitDownload *ephy_download_get_webkit_download (EphyDownload *download);
+EphyEngineDownload *ephy_download_get_engine_download (EphyDownload *download);
 
 const char   *ephy_download_get_destination       (EphyDownload *download);
 const char   *ephy_download_get_content_type      (EphyDownload *download);

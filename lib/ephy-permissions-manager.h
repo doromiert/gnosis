@@ -23,6 +23,7 @@
 
 #include <glib-object.h>
 #include <jsc/jsc.h>
+#include "ephy-engine-session.h"
 
 G_BEGIN_DECLS
 
@@ -47,10 +48,12 @@ typedef enum {
   EPHY_PERMISSION_TYPE_ACCESS_WEBCAM_AND_MICROPHONE,
   EPHY_PERMISSION_TYPE_WEBSITE_DATA_ACCESS,
   EPHY_PERMISSION_TYPE_CLIPBOARD,
-  EPHY_PERMISSION_TYPE_ACCESS_DISPLAY
+  EPHY_PERMISSION_TYPE_ACCESS_DISPLAY,
+  EPHY_PERMISSION_TYPE_OTHER
 } EphyPermissionType;
 
-EphyPermissionsManager *ephy_permissions_manager_new            (void);
+EphyPermissionsManager *ephy_permissions_manager_new            (EphyEngineSession *session);
+void                    ephy_permissions_manager_prepare_session (EphyPermissionsManager *manager);
 
 EphyPermission          ephy_permissions_manager_get_permission (EphyPermissionsManager *manager,
                                                                  EphyPermissionType      type,
@@ -59,11 +62,6 @@ void                    ephy_permissions_manager_set_permission (EphyPermissions
                                                                  EphyPermissionType      type,
                                                                  const char             *origin,
                                                                  EphyPermission          permission);
-
-GList                  *ephy_permissions_manager_get_permitted_origins (EphyPermissionsManager *manager,
-                                                                        EphyPermissionType      type);
-GList                  *ephy_permissions_manager_get_denied_origins    (EphyPermissionsManager *manager,
-                                                                        EphyPermissionType      type);
 
 void                    ephy_permissions_manager_export_to_js_context  (EphyPermissionsManager *manager,
                                                                         JSCContext             *js_context,

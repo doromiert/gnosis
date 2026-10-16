@@ -39,7 +39,6 @@
 #include "ephy-embed-utils.h"
 #include "ephy-encodings.h"
 #include "ephy-file-helpers.h"
-#include "ephy-filters-manager.h"
 #include "ephy-flatpak-utils.h"
 #include "ephy-history-service.h"
 #include "ephy-password-manager.h"
@@ -58,7 +57,9 @@
 
 typedef struct {
   WebKitWebContext *web_context;
-  WebKitNetworkSession *network_session;
+  EphyEngineSession *network_session;
+  /* Removed when the website-data and download services finish migrating. */
+  WebKitNetworkSession *legacy_network_session;
   EphyHistoryService *global_history_service;
   EphyEncodings *encodings;
   GtkPageSetup *page_setup;
@@ -71,7 +72,6 @@ typedef struct {
   EphyViewSourceHandler *source_handler;
   EphyReaderHandler *reader_handler;
   char *guid;
-  EphyFiltersManager *filters_manager;
   GVariant *web_extension_initialization_data;
   EphySearchEngineManager *search_engine_manager;
   GCancellable *cancellable;
@@ -202,8 +202,8 @@ ephy_embed_shell_dispose (GObject *object)
   g_clear_object (&priv->permissions_manager);
   g_clear_object (&priv->web_context);
   g_clear_object (&priv->network_session);
+  g_clear_object (&priv->legacy_network_session);
   g_clear_pointer (&priv->guid, g_free);
-  g_clear_object (&priv->filters_manager);
   g_clear_object (&priv->search_engine_manager);
   g_clear_pointer (&priv->web_extension_initialization_data, g_variant_unref);
 
@@ -693,6 +693,8 @@ ephy_resource_request_cb (EphyEngineSchemeRequest *request)
   g_autoptr (GError) error = NULL;
 
   path = ephy_engine_uri_scheme_request_get_path (request);
+  if (ephy_about_handler_handle_application_icon (request))
+    return;
   if (!g_resources_get_info (path, 0, &size, NULL, &error)) {
     ephy_engine_uri_scheme_request_finish_error (request, error);
     return;
@@ -764,55 +766,21 @@ initialize_web_process_extensions (WebKitWebContext *web_context,
   webkit_web_context_set_web_process_extensions_initialization_user_data (web_context, g_steal_pointer (&user_data));
 }
 
-/* Temporary boundary for the remaining WebKit context; the permission store
- * itself uses Chromium origins. Remove with the context migration. */
-static GList *
-notification_origins_for_webkit (GList *origins)
-{
-  GList *result = NULL;
-  for (GList *l = origins; l; l = l->next) {
-    g_autofree char *uri = ephy_engine_origin_to_string (l->data);
-    result = g_list_prepend (result, webkit_security_origin_new_for_uri (uri));
-  }
-  return result;
-}
-
-static void
-initialize_notification_permissions (WebKitWebContext *web_context,
-                                     EphyEmbedShell   *shell)
-{
-  EphyEmbedShellPrivate *priv = ephy_embed_shell_get_instance_private (shell);
-  GList *permitted_origins;
-  GList *denied_origins;
-
-  permitted_origins = ephy_permissions_manager_get_permitted_origins (priv->permissions_manager,
-                                                                      EPHY_PERMISSION_TYPE_SHOW_NOTIFICATIONS);
-  denied_origins = ephy_permissions_manager_get_denied_origins (priv->permissions_manager,
-                                                                EPHY_PERMISSION_TYPE_SHOW_NOTIFICATIONS);
-  permitted_origins = notification_origins_for_webkit (permitted_origins);
-  denied_origins = notification_origins_for_webkit (denied_origins);
-  webkit_web_context_initialize_notification_permissions (web_context, permitted_origins, denied_origins);
-  g_list_free_full (permitted_origins, (GDestroyNotify)webkit_security_origin_unref);
-  g_list_free_full (denied_origins, (GDestroyNotify)webkit_security_origin_unref);
-}
-
 static void
 ephy_embed_shell_create_network_session_if_needed (EphyEmbedShell *shell)
 {
   EphyEmbedShellPrivate *priv = ephy_embed_shell_get_instance_private (shell);
 
-  if (priv->mode == EPHY_EMBED_SHELL_MODE_AUTOMATION)
-    priv->network_session = g_object_ref (webkit_web_context_get_network_session_for_automation (priv->web_context));
-  else if (priv->mode == EPHY_EMBED_SHELL_MODE_INCOGNITO)
-    priv->network_session = webkit_network_session_new_ephemeral ();
-  else {
-    priv->network_session = webkit_network_session_new (ephy_profile_dir (), ephy_cache_dir ());
-    webkit_network_session_set_persistent_credential_storage_enabled (priv->network_session, FALSE);
+  if (priv->mode == EPHY_EMBED_SHELL_MODE_AUTOMATION || priv->mode == EPHY_EMBED_SHELL_MODE_INCOGNITO) {
+    priv->network_session = ephy_engine_session_new (TRUE);
+    priv->legacy_network_session = webkit_network_session_new_ephemeral ();
+  } else {
+    priv->network_session = g_object_ref (ephy_engine_session_get_default ());
+    priv->legacy_network_session = webkit_network_session_new (ephy_profile_dir (), ephy_cache_dir ());
   }
-
-  webkit_network_session_set_itp_enabled (priv->network_session,
-                                          g_settings_get_boolean (EPHY_SETTINGS_WEB,
-                                                                  EPHY_PREFS_WEB_ENABLE_ITP));
+  webkit_network_session_set_persistent_credential_storage_enabled (priv->legacy_network_session, FALSE);
+  webkit_network_session_set_itp_enabled (priv->legacy_network_session,
+                                          g_settings_get_boolean (EPHY_SETTINGS_WEB, EPHY_PREFS_WEB_ENABLE_ITP));
 }
 
 static void
@@ -828,7 +796,7 @@ ephy_embed_shell_create_web_context (EphyEmbedShell *shell)
 
 static void
 download_started_cb (EphyEmbedShell *shell,
-                     WebKitDownload *download)
+                     EphyEngineDownload *download)
 {
   EphyEmbedShellPrivate *priv = ephy_embed_shell_get_instance_private (shell);
   g_autoptr (EphyDownload) ephy_download = NULL;
@@ -837,11 +805,11 @@ download_started_cb (EphyEmbedShell *shell,
   /* Is download locked down? */
   if (g_settings_get_boolean (EPHY_SETTINGS_LOCKDOWN, EPHY_PREFS_LOCKDOWN_SAVE_TO_DISK) ||
       ephy_embed_shell_get_mode (shell) == EPHY_EMBED_SHELL_MODE_KIOSK) {
-    webkit_download_cancel (download);
+    ephy_engine_download_cancel (download);
     return;
   }
 
-  /* Only create an EphyDownload for the WebKitDownload if it doesn't exist yet.
+  /* Only create an EphyDownload for the EphyEngineDownload if it doesn't exist yet.
    * This can happen when the download has been started automatically by WebKit,
    * due to a context menu action or policy checker decision. Downloads started
    * explicitly by Epiphany are marked with ephy-download-set GObject data.
@@ -873,7 +841,7 @@ enable_itp_setting_changed_cb (GSettings      *settings,
 {
   EphyEmbedShellPrivate *priv = ephy_embed_shell_get_instance_private (shell);
 
-  webkit_network_session_set_itp_enabled (priv->network_session,
+  webkit_network_session_set_itp_enabled (priv->legacy_network_session,
                                           g_settings_get_boolean (EPHY_SETTINGS_WEB,
                                                                   EPHY_PREFS_WEB_ENABLE_ITP));
 }
@@ -896,9 +864,7 @@ ephy_embed_shell_startup (GApplication *application)
 {
   EphyEmbedShell *shell = EPHY_EMBED_SHELL (application);
   EphyEmbedShellPrivate *priv = ephy_embed_shell_get_instance_private (shell);
-  WebKitCookieManager *cookie_manager;
   WebKitSecurityManager *security_manager;
-  g_autofree char *filename = NULL;
 
   G_APPLICATION_CLASS (ephy_embed_shell_parent_class)->startup (application);
 
@@ -914,13 +880,9 @@ ephy_embed_shell_startup (GApplication *application)
                            G_CALLBACK (initialize_web_process_extensions),
                            shell, G_CONNECT_DEFAULT);
 
-  g_signal_connect_object (priv->web_context, "initialize-notification-permissions",
-                           G_CALLBACK (initialize_notification_permissions),
-                           shell, G_CONNECT_DEFAULT);
-
   priv->password_manager = ephy_password_manager_new ();
 
-  if (!webkit_network_session_is_ephemeral (priv->network_session)) {
+  if (!ephy_engine_session_is_ephemeral (priv->network_session)) {
     g_autofree char *favicon_dir = g_build_filename (ephy_cache_dir (), "favicons", NULL);
     ephy_engine_favicon_database_set_directory (ephy_engine_favicon_database_get_default (), favicon_dir);
   }
@@ -958,14 +920,6 @@ ephy_embed_shell_startup (GApplication *application)
   webkit_security_manager_register_uri_scheme_as_secure (webkit_web_context_get_security_manager (priv->web_context),
                                                          "ephy-resource");
 
-  /* Store cookies in moz-compatible SQLite format */
-  if (!webkit_network_session_is_ephemeral (priv->network_session)) {
-    cookie_manager = webkit_network_session_get_cookie_manager (priv->network_session);
-    filename = g_build_filename (ephy_profile_dir (), "cookies.sqlite", NULL);
-    webkit_cookie_manager_set_persistent_storage (cookie_manager, filename,
-                                                  WEBKIT_COOKIE_PERSISTENT_STORAGE_SQLITE);
-  }
-
   g_signal_connect_object (priv->network_session, "download-started",
                            G_CALLBACK (download_started_cb), shell, G_CONNECT_SWAPPED);
 
@@ -983,7 +937,6 @@ ephy_embed_shell_shutdown (GApplication *application)
 {
   G_APPLICATION_CLASS (ephy_embed_shell_parent_class)->shutdown (application);
 
-  g_object_unref (ephy_embed_prefs_get_settings ());
   ephy_embed_utils_shutdown ();
 }
 
@@ -1035,8 +988,7 @@ ephy_embed_shell_constructed (GObject *object)
   ephy_embed_shell_create_network_session_if_needed (shell);
 
   if (priv->mode != EPHY_EMBED_SHELL_MODE_SEARCH_PROVIDER) {
-    priv->permissions_manager = ephy_permissions_manager_new ();
-    priv->filters_manager = ephy_filters_manager_new (NULL);
+    priv->permissions_manager = ephy_permissions_manager_new (priv->network_session);
   }
 
   ephy_embed_shell_set_web_extension_initialization_data (shell, g_variant_new ("a{sv}", NULL));
@@ -1315,14 +1267,6 @@ ephy_embed_shell_get_mode (EphyEmbedShell *shell)
   return priv->mode;
 }
 
-EphyFiltersManager *
-ephy_embed_shell_get_filters_manager (EphyEmbedShell *shell)
-{
-  EphyEmbedShellPrivate *priv = ephy_embed_shell_get_instance_private (shell);
-
-  return priv->filters_manager;
-}
-
 const char *
 ephy_embed_shell_get_guid (EphyEmbedShell *shell)
 {
@@ -1339,7 +1283,7 @@ ephy_embed_shell_get_web_context (EphyEmbedShell *shell)
   return priv->web_context;
 }
 
-WebKitNetworkSession *
+EphyEngineSession *
 ephy_embed_shell_get_network_session (EphyEmbedShell *shell)
 {
   EphyEmbedShellPrivate *priv = ephy_embed_shell_get_instance_private (shell);
@@ -1484,4 +1428,19 @@ ephy_embed_shell_set_web_extension_initialization_data (EphyEmbedShell *shell,
 
   g_clear_pointer (&priv->web_extension_initialization_data, g_variant_unref);
   priv->web_extension_initialization_data = g_variant_ref_sink (data);
+}
+
+/* Website-data management is the remaining legacy network-session service. */
+WebKitWebsiteDataManager *
+ephy_embed_shell_get_website_data_manager (EphyEmbedShell *shell)
+{
+  EphyEmbedShellPrivate *priv = ephy_embed_shell_get_instance_private (shell);
+  return webkit_network_session_get_website_data_manager (priv->legacy_network_session);
+}
+
+EphyEngineDownload *
+ephy_embed_shell_download_uri (EphyEmbedShell *shell, const char *uri)
+{
+  EphyEmbedShellPrivate *priv = ephy_embed_shell_get_instance_private (shell);
+  return ephy_engine_session_download_uri (priv->network_session, uri);
 }

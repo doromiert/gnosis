@@ -1,4 +1,4 @@
-(() => {
+((mainWorld, readText, read) => {
   const post = window.__jupiterClipboardWrite;
   const generation = Math.random().toString(36).slice(2);
   const pending = new Map(); let sequence = 0;
@@ -20,32 +20,95 @@
     pending.delete(id); clearTimeout(request.timer);
     if (ok) request.resolve(); else request.reject(new DOMException('Could not write to the native clipboard.', 'NotAllowedError'));
   }});
-  const clipboard = navigator.clipboard || {};
-  if (!navigator.clipboard) Object.defineProperty(navigator, 'clipboard', {value:clipboard});
-  Object.defineProperties(clipboard, {
-    writeText: {configurable:true, value: text => {
-      text = String(text);
-      if (!document.hasFocus()) return Promise.reject(new DOMException('The document is not focused.', 'NotAllowedError'));
-      if (new TextEncoder().encode(text).length > limit) return Promise.reject(new DOMException('Clipboard content is too large.', 'DataError'));
-      return write([{type:'text/plain', text}]);
-    }},
-    write: {configurable:true, value: async values => {
-      if (!document.hasFocus()) throw new DOMException('The document is not focused.', 'NotAllowedError');
-      if (!values.length) throw new DOMException('No clipboard items.', 'DataError');
-      const items = []; let size = 0;
-      // Desktop clipboards hold one item with several alternative formats.
-      for (const type of values[0].types) {
-        const blob = await values[0].getType(type); size += blob.size;
-        if (size > limit) throw new DOMException('Clipboard content is too large.', 'DataError');
-        items.push({type:type.replace(/^web /,''), data:encode(new Uint8Array(await blob.arrayBuffer()))});
+  if (window.isSecureContext) {
+    const clipboard = navigator.clipboard || {};
+    if (!navigator.clipboard) Object.defineProperty(navigator, 'clipboard', {value:clipboard});
+    const NativeBlob = Blob;
+    // CEF's context callback precedes conditional global interface installation.
+    let NativeClipboardItem = globalThis.ClipboardItem;
+    const parse = JSON.parse, unbase64 = atob;
+    const fromBytes = Uint8Array.from.bind(Uint8Array);
+    const decoder = new TextDecoder();
+    const decodeText = decoder.decode.bind(decoder);
+    const createDocument = document.implementation.createHTMLDocument.bind(document.implementation);
+    const getBody = Object.getOwnPropertyDescriptor(Document.prototype,'body').get;
+    const setHTML = Element.prototype.setHTML;
+    const getHTML = Object.getOwnPropertyDescriptor(Element.prototype,'innerHTML').get;
+    const query = Element.prototype.querySelector;
+    const NativeXMLSerializer = XMLSerializer, serialize = XMLSerializer.prototype.serializeToString;
+    const invoke = Reflect.apply;
+    let inert, serializer;
+    const sanitize = (text, svg) => {
+      if (!setHTML) throw new DOMException('Native HTML sanitization is unavailable.', 'NotSupportedError');
+      if (!inert) {
+        inert = invoke(getBody, createDocument(''), []);
+        serializer = new NativeXMLSerializer();
       }
-      return write(items);
-    }}
-  });
+      // Safe setHTML always removes XSS, while this config retains inline formatting.
+      invoke(setHTML, inert, [text, {sanitizer:{removeElements:['style'],removeAttributes:[]}}]);
+      if (!svg) return invoke(getHTML, inert, []);
+      const root = invoke(query, inert, ['svg']);
+      if (!root) throw new DOMException('The clipboard SVG has no SVG document.', 'DataError');
+      return invoke(serialize, serializer, [root]);
+    };
+    const sequence = value => {
+      if (value === null || !['object','function'].includes(typeof value) || typeof value[Symbol.iterator] !== 'function')
+        throw new TypeError('Clipboard formats must be a sequence.');
+      return Array.from(value, item => {
+        if (typeof item === 'symbol') throw new TypeError('Clipboard formats must be strings.');
+        return String(item);
+      });
+    };
+    Object.defineProperties(clipboard, {
+      ...(read ? {read: {configurable:true, value: async (options = {}) => {
+        if (options !== null && !['object','function'].includes(typeof options)) throw new TypeError('Clipboard options must be an object.');
+        const types = options?.types;
+        const unsanitized = options?.unsanitized;
+        const normalized = {};
+        if (types !== undefined) normalized.types = types === null ? null : sequence(types);
+        if (unsanitized !== undefined) normalized.unsanitized = sequence(unsanitized);
+        const rawHTML = normalized.unsanitized?.includes('text/html');
+        const reply = await read(normalized);
+        if (!reply.ok) throw new DOMException('Could not read the native clipboard.', reply.text || 'NotAllowedError');
+        NativeClipboardItem ??= globalThis.ClipboardItem;
+        const values = {};
+        for (const item of parse(reply.text)) {
+          let bytes = fromBytes(unbase64(item.data), c => c.charCodeAt(0));
+          if ((item.type === 'text/html' && !rawHTML) || item.type === 'image/svg+xml')
+            bytes = sanitize(decodeText(bytes), item.type === 'image/svg+xml');
+          const type = item.type === 'application/x-figma' ? 'web application/x-figma' : item.type;
+          values[type] = new NativeBlob([bytes], {type:item.type});
+        }
+        return Object.keys(values).length ? [new NativeClipboardItem(values)] : [];
+      }}} : {}),
+      ...(readText ? {readText: {configurable:true, value: () => readText().then(reply => {
+        if (!reply.ok) throw new DOMException('Could not read the native clipboard.', 'NotAllowedError');
+        return reply.text;
+      })}} : {}),
+      writeText: {configurable:true, value: text => {
+        text = String(text);
+        if (!document.hasFocus()) return Promise.reject(new DOMException('The document is not focused.', 'NotAllowedError'));
+        if (new TextEncoder().encode(text).length > limit) return Promise.reject(new DOMException('Clipboard content is too large.', 'DataError'));
+        return write([{type:'text/plain', text}]);
+      }},
+      write: {configurable:true, value: async values => {
+        if (!document.hasFocus()) throw new DOMException('The document is not focused.', 'NotAllowedError');
+        if (!values.length) throw new DOMException('No clipboard items.', 'DataError');
+        const items = []; let size = 0;
+        // Desktop clipboards hold one item with several alternative formats.
+        for (const type of values[0].types) {
+          const blob = await values[0].getType(type); size += blob.size;
+          if (size > limit) throw new DOMException('Clipboard content is too large.', 'DataError');
+          items.push({type:type.replace(/^web /,''), data:encode(new Uint8Array(await blob.arrayBuffer()))});
+        }
+        return write(items);
+      }}
+    });
+  }
   const selected = () => {
     const el = document.activeElement;
     if (el?.matches('input:not([type="password"]),textarea') && Number.isInteger(el.selectionStart)) return [{type:'text/plain',text:el.value.slice(el.selectionStart,el.selectionEnd)}];
-    const selection = window.getJupiterion(), text = selection?.toString() || '';
+    const selection = window.getSelection(), text = selection?.toString() || '';
     if (!text) return [];
     const items = [{type:'text/plain',text}];
     if (selection.rangeCount) { const container = document.createElement('div'); container.append(selection.getRangeAt(0).cloneContents()); items.push({type:'text/html',text:container.innerHTML}); }
@@ -68,7 +131,7 @@
     return arguments.length ? clearData.call(this,type) : clearData.call(this);
   };
   for (const type of ['copy','cut']) window.addEventListener(type, event => {
-    const record = {items:new Map(),fallback:selected(),done:false}, transfer = event.clipboardData;
+    const record = {items:new Map(),fallback:mainWorld ? selected() : [],done:false}, transfer = event.clipboardData;
     if (transfer) records.set(transfer,record);
     const finish = useDefault => {
       if (record.done) return; record.done = true;
@@ -85,7 +148,8 @@
     const end = e => {
       if (e !== event) return;
       const useDefault = !event.defaultPrevented;
-      event.preventDefault(); finish(useDefault);
+      if (mainWorld || record.items.size) event.preventDefault();
+      finish(useDefault);
     };
     window.addEventListener(type,end);
     setTimeout(() => {
@@ -95,4 +159,4 @@
       finish(!event.defaultPrevented);
     },0);
   },true);
-})();
+})

@@ -212,4 +212,7 @@ void ephy_web_view_set_location_entry_has_focus                   (EphyWebView *
 
 gboolean ephy_web_view_get_location_entry_has_focus               (EphyWebView *self);
 
+/* Consumes prepared HTML only for the matching internal reader request. */
+char                     *ephy_web_view_take_reader_html         (EphyWebView *view, const char *uri);
+
 G_END_DECLS

@@ -268,10 +268,7 @@ itp_report_ready (GObject      *source_object,
 static WebKitWebsiteDataManager *
 get_website_data_manager (void)
 {
-  WebKitNetworkSession *network_session;
-
-  network_session = ephy_embed_shell_get_network_session (ephy_embed_shell_get_default ());
-  return webkit_network_session_get_website_data_manager (network_session);
+  return ephy_embed_shell_get_website_data_manager (ephy_embed_shell_get_default ());
 }
 
 void

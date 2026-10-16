@@ -184,7 +184,7 @@ ephy_view_source_request_begin_get_source_from_uri (EphyViewSourceRequest *reque
 {
   EphyEmbedShell *shell = ephy_embed_shell_get_default ();
   WebKitWebContext *context = ephy_embed_shell_get_web_context (shell);
-  WebKitNetworkSession *network_session = ephy_embed_shell_get_network_session (shell);
+  EphyEngineSession *network_session = ephy_embed_shell_get_network_session (shell);
 
   request->web_view = EPHY_ENGINE_VIEW (g_object_ref_sink (g_object_new (EPHY_TYPE_ENGINE_VIEW,
                                                                         "web-context", context,

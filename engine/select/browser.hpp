@@ -1,11 +1,17 @@
 #pragma once
 #include "include/cef_client.h"
+#include "include/cef_dialog_handler.h"
+#include "include/cef_frame_handler.h"
 #include "include/cef_permission_handler.h"
+#include "ephy-engine-permission.h"
 #include "include/cef_render_handler.h"
 #include <adwaita.h>
+#include <atomic>
 #include <epoxy/gl.h>
 #include <functional>
 #include <memory>
+#include <map>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -18,10 +24,13 @@ class Browser final : public CefClient,
                       public CefDisplayHandler,
                       public CefLoadHandler,
                       public CefRequestHandler,
+                      public CefResourceRequestHandler,
                       public CefDownloadHandler,
                       public CefContextMenuHandler,
                       public CefJSDialogHandler,
-                      public CefPermissionHandler {
+                      public CefPermissionHandler,
+                      public CefFrameHandler,
+                      public CefDialogHandler {
 public:
   explicit Browser(std::string url, bool software = false);
   GtkWidget* widget() const { return overlay_; }
@@ -47,12 +56,27 @@ public:
   void back();
   void forward();
   void close();
+  void shutdown();
   void set_visible(bool visible);
   void refresh_theme();
   void set_permissions();
+  void set_user_agent_override(const char *agent) {
+    request_user_agent_.store(agent ? std::make_shared<const std::string>(agent) : nullptr);
+  }
   void detach_callbacks();
+  void cancel_permissions();
+  void activate_clipboard() {
+    gtk_widget_grab_focus(area_);
+    clipboard_until_ = g_get_monotonic_time() + 5 * G_TIME_SPAN_SECOND;
+    if (!closing && browser_ && clipboard_allowed()) browser_->GetHost()->SetFocus(true);
+  }
+  bool clipboard_focused() const {
+    auto* root = gtk_widget_get_root(area_);
+    return root && GTK_IS_WINDOW(root) && gtk_window_is_active(GTK_WINDOW(root)) &&
+           gtk_widget_has_focus(area_);
+  }
   bool clipboard_allowed() const {
-    return gtk_widget_has_focus(area_) && g_get_monotonic_time() < clipboard_until_;
+    return clipboard_focused() && g_get_monotonic_time() < clipboard_until_;
   }
   bool can_back() const { return browser_ && browser_->CanGoBack(); }
   bool can_forward() const { return browser_ && browser_->CanGoForward(); }
@@ -60,13 +84,20 @@ public:
   Window* owner() const;
   Window* host = nullptr;
   std::function<void(int)> on_load_end;
-  std::function<void()> on_load_start;
+  std::function<bool(const std::string&, const std::string&)> on_load_error;
+  std::function<void(const std::string&)> on_load_start;
+  std::function<void()> prepare_navigation;
+  std::function<void(const std::string&, CefRefPtr<CefResponse>)> on_response;
   std::function<void()> on_changed;
   std::function<void()> on_closed;
   std::function<void(const std::string&, const std::string&, GdkTexture*)> on_favicon;
   std::function<void()> on_close_cancelled;
+  std::function<bool(EphyEnginePermission*)> on_permission;
+  std::function<void(const std::string&, const std::string&, const std::string&)> on_page_message;
+  std::string page_message_context;
   static unsigned active_count;
 
+  CefRefPtr<CefDialogHandler> GetDialogHandler() override { return this; }
   CefRefPtr<CefLifeSpanHandler> GetLifeSpanHandler() override { return this; }
   CefRefPtr<CefRenderHandler> GetRenderHandler() override { return this; }
   CefRefPtr<CefDisplayHandler> GetDisplayHandler() override { return this; }
@@ -76,10 +107,19 @@ public:
   CefRefPtr<CefContextMenuHandler> GetContextMenuHandler() override { return this; }
   CefRefPtr<CefJSDialogHandler> GetJSDialogHandler() override { return this; }
   CefRefPtr<CefPermissionHandler> GetPermissionHandler() override { return this; }
+  CefRefPtr<CefFrameHandler> GetFrameHandler() override { return this; }
+  CefRefPtr<CefCookieAccessFilter> GetCookieAccessFilter(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame>, CefRefPtr<CefRequest>) override { return cookie_filter_; }
+  bool OnFileDialog(CefRefPtr<CefBrowser>, FileDialogMode, const CefString&, const CefString&,
+                    const std::vector<CefString>&, const std::vector<CefString>&,
+                    const std::vector<CefString>&, CefRefPtr<CefFileDialogCallback>) override;
   bool OnProcessMessageReceived(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame>, CefProcessId,
                                 CefRefPtr<CefProcessMessage>) override;
   bool OnShowPermissionPrompt(CefRefPtr<CefBrowser>, uint64_t prompt_id, const CefString& origin,
                               uint32_t permissions, CefRefPtr<CefPermissionPromptCallback> callback) override;
+  void OnDismissPermissionPrompt(CefRefPtr<CefBrowser>, uint64_t, cef_permission_request_result_t) override;
+  void OnFrameDetached(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame>) override;
+  bool OnRequestMediaAccessPermission(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame>, const CefString&,
+                                      uint32_t, CefRefPtr<CefMediaAccessCallback>) override;
   void GetViewRect(CefRefPtr<CefBrowser>, CefRect& rect) override;
   bool GetScreenInfo(CefRefPtr<CefBrowser>, CefScreenInfo& info) override;
   void OnPaint(CefRefPtr<CefBrowser>, PaintElementType type, const RectList&, const void* buffer, int width,
@@ -99,6 +139,7 @@ public:
   void OnAddressChange(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame> frame, const CefString& address) override;
   void OnLoadingProgressChange(CefRefPtr<CefBrowser>, double) override;
   void OnLoadingStateChange(CefRefPtr<CefBrowser>, bool is_loading, bool, bool) override;
+  void OnLoadStart(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame>, TransitionType) override;
   void OnLoadEnd(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame> frame, int status) override;
   void OnLoadError(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame> frame, ErrorCode error, const CefString& text,
                    const CefString& failed_url) override;
@@ -110,8 +151,16 @@ public:
                       const CefCursorInfo&) override;
   bool OnBeforeBrowse(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame> frame, CefRefPtr<CefRequest> request,
                       bool user_gesture, bool is_redirect) override;
+  CefRefPtr<CefResourceRequestHandler> GetResourceRequestHandler(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame>,
+    CefRefPtr<CefRequest>, bool, bool, const CefString&, bool&) override;
+  bool OnResourceResponse(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame>, CefRefPtr<CefRequest>,
+                          CefRefPtr<CefResponse>) override;
+  cef_return_value_t OnBeforeResourceLoad(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame>, CefRefPtr<CefRequest>,
+                                          CefRefPtr<CefCallback>) override;
   bool OnOpenURLFromTab(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame>, const CefString& target_url,
                         cef_window_open_disposition_t, bool user_gesture) override;
+  bool OnCertificateError(CefRefPtr<CefBrowser>, cef_errorcode_t, const CefString&,
+                          CefRefPtr<CefSSLInfo>, CefRefPtr<CefCallback>) override;
   bool OnBeforeDownload(CefRefPtr<CefBrowser>, CefRefPtr<CefDownloadItem> item,
                         const CefString& suggested_name,
                         CefRefPtr<CefBeforeDownloadCallback> callback) override;
@@ -128,6 +177,10 @@ public:
                             CefRefPtr<CefJSDialogCallback> callback) override;
 
 private:
+  std::atomic<uint64_t> main_request_{0};
+  bool navigation_started_ = false;
+  CefRefPtr<CefCookieAccessFilter> cookie_filter_;
+  std::atomic<std::shared_ptr<const std::string>> request_user_agent_;
   ~Browser() override;
   CefRefPtr<CefBrowser> browser_;
   GApplication* held_app_ = nullptr;
@@ -138,6 +191,15 @@ private:
   GtkIMContext* im_;
   bool software_;
   bool creating_ = false;
+  bool waiting_context_ = false;
+  std::set<uint32_t> downloads_;
+  std::vector<GCancellable*> file_dialogs_;
+  std::map<uint64_t, std::shared_ptr<EphyEnginePermission>> permission_prompts_;
+  struct MediaRequest { std::string frame; std::shared_ptr<EphyEnginePermission> request; };
+  std::vector<MediaRequest> media_requests_;
+  void cancel_media_permissions(const std::string& frame);
+  void present_permission(EphyEnginePermission *);
+  void cancel_file_dialogs();
   int browser_id_ = 0;
   std::string pending_navigation_;
   bool owns(CefRefPtr<CefBrowser> source) const;

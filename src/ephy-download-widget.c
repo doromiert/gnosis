@@ -23,7 +23,6 @@
 #include "ephy-download-widget.h"
 
 #include <glib/gi18n.h>
-#include <webkit/webkit.h>
 
 #include "ephy-debug.h"
 #include "ephy-downloads-manager.h"
@@ -53,11 +52,11 @@ static GParamSpec *obj_properties[PROP_DOWNLOAD + 1];
 static char *
 get_destination_basename_from_download (EphyDownload *ephy_download)
 {
-  WebKitDownload *download;
+  EphyEngineDownload *download;
   const char *dest;
 
-  download = ephy_download_get_webkit_download (ephy_download);
-  dest = webkit_download_get_destination (download);
+  download = ephy_download_get_engine_download (ephy_download);
+  dest = ephy_engine_download_get_destination (download);
   if (!dest)
     return NULL;
 
@@ -155,23 +154,21 @@ update_status_label (EphyDownloadWidget *widget,
 }
 
 static void
-download_progress_cb (WebKitDownload     *download,
+download_progress_cb (EphyEngineDownload     *download,
                       GParamSpec         *pspec,
                       EphyDownloadWidget *widget)
 {
   gdouble progress;
-  WebKitURIResponse *response;
   guint64 content_length;
   guint64 received_length;
   g_autofree char *download_label = NULL;
 
-  if (!webkit_download_get_destination (download))
+  if (!ephy_engine_download_get_destination (download))
     return;
 
-  progress = webkit_download_get_estimated_progress (download);
-  response = webkit_download_get_response (download);
-  content_length = webkit_uri_response_get_content_length (response);
-  received_length = webkit_download_get_received_data_length (download);
+  progress = ephy_engine_download_get_estimated_progress (download);
+  content_length = ephy_engine_download_get_content_length (download);
+  received_length = ephy_engine_download_get_received_data_length (download);
 
   if (content_length > 0 && received_length > 0) {
     gdouble time;
@@ -183,7 +180,7 @@ download_progress_cb (WebKitDownload     *download,
     total = g_format_size (content_length);
 
     time = get_remaining_time (content_length, received_length,
-                               webkit_download_get_elapsed_time (download));
+                               ephy_engine_download_get_elapsed_time (download));
     remaining = duration_to_string ((guint)time);
     download_label = g_strdup_printf ("%s / %s — %s", received, total, remaining);
 
@@ -246,9 +243,9 @@ static void
 widget_action_button_clicked_cb (EphyDownloadWidget *widget)
 {
   if (ephy_download_is_active (widget->download)) {
-    WebKitDownload *download;
+    EphyEngineDownload *download;
 
-    download = ephy_download_get_webkit_download (widget->download);
+    download = ephy_download_get_engine_download (widget->download);
     g_signal_handlers_disconnect_matched (download, G_SIGNAL_MATCH_DATA, 0, 0,
                                           NULL, NULL, widget);
     g_signal_handlers_disconnect_matched (widget->download, G_SIGNAL_MATCH_DATA, 0, 0,
@@ -269,7 +266,7 @@ widget_action_button_clicked_cb (EphyDownloadWidget *widget)
 }
 
 static void
-download_destination_changed_cb (WebKitDownload     *download,
+download_destination_changed_cb (EphyEngineDownload     *download,
                                  GParamSpec         *pspec,
                                  EphyDownloadWidget *widget)
 {
@@ -277,9 +274,9 @@ download_destination_changed_cb (WebKitDownload     *download,
 }
 
 static GdkContentProvider *
-download_drag_prepare (WebKitDownload *download)
+download_drag_prepare (EphyEngineDownload *download)
 {
-  const char *dest = webkit_download_get_destination (download);
+  const char *dest = ephy_engine_download_get_destination (download);
   return gdk_content_provider_new_typed (G_TYPE_FILE, g_file_new_for_path (dest));
 }
 
@@ -326,7 +323,7 @@ ephy_download_widget_dispose (GObject *object)
   widget = EPHY_DOWNLOAD_WIDGET (object);
 
   if (widget->download) {
-    WebKitDownload *download = ephy_download_get_webkit_download (widget->download);
+    EphyEngineDownload *download = ephy_download_get_engine_download (widget->download);
 
     g_signal_handlers_disconnect_matched (download, G_SIGNAL_MATCH_DATA, 0, 0,
                                           NULL, NULL, widget);
@@ -342,7 +339,7 @@ static void
 ephy_download_widget_constructed (GObject *object)
 {
   EphyDownloadWidget *widget = EPHY_DOWNLOAD_WIDGET (object);
-  WebKitDownload *download;
+  EphyEngineDownload *download;
   const char *action_icon_name = NULL;
   g_autoptr (GError) error = NULL;
   PangoAttrList *status_attrs;
@@ -411,7 +408,7 @@ ephy_download_widget_constructed (GObject *object)
   gtk_widget_add_css_class (widget->action_button, "circular");
   gtk_grid_attach (GTK_GRID (grid), widget->action_button, 3, 0, 1, 3);
 
-  download = ephy_download_get_webkit_download (widget->download);
+  download = ephy_download_get_engine_download (widget->download);
   g_signal_connect (download, "notify::estimated-progress",
                     G_CALLBACK (download_progress_cb),
                     widget);

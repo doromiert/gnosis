@@ -67,7 +67,7 @@ static void
 download_failed_cb (EphyDownloadsPopover *popover,
                     GError               *error)
 {
-  if (!g_error_matches (error, WEBKIT_DOWNLOAD_ERROR, WEBKIT_DOWNLOAD_ERROR_CANCELLED_BY_USER))
+  if (!g_error_matches (error, G_IO_ERROR, G_IO_ERROR_CANCELLED))
     gtk_widget_set_sensitive (popover->clear_button, TRUE);
 }
 

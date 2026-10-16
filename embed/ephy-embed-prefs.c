@@ -27,12 +27,12 @@
 #include "ephy-langs.h"
 #include "ephy-prefs.h"
 #include "ephy-settings.h"
-#include "ephy-user-agent.h"
+#include <math.h>
 
 typedef struct {
   const char *schema;
   const char *key;
-  const char *webkit_pref;
+  const char *engine_pref;
   void (*callback)(GSettings  *settings,
                    const char *key,
                    gpointer    data);
@@ -40,7 +40,7 @@ typedef struct {
 
 #define DEFAULT_ENCODING_SETTING "default-charset"
 /* FIXME: Refactor this code to remove the need of those globals */
-static WebKitSettings *webkit_settings = NULL;
+static EphyEngineSettings *engine_settings = NULL;
 static GFileMonitor *user_style_sheet_monitor = NULL;
 static WebKitUserStyleSheet *style_sheet = NULL;
 static GFileMonitor *user_javascript_monitor = NULL;
@@ -118,7 +118,7 @@ user_style_sheet_file_changed (GFileMonitor      *monitor,
 }
 
 static void
-webkit_pref_callback_user_stylesheet (GSettings  *settings,
+engine_pref_callback_user_stylesheet (GSettings  *settings,
                                       const char *key,
                                       gpointer    data)
 {
@@ -227,7 +227,7 @@ user_javascript_file_changed (GFileMonitor      *monitor,
 }
 
 static void
-webkit_pref_callback_user_javascript (GSettings  *settings,
+engine_pref_callback_user_javascript (GSettings  *settings,
                                       const char *key,
                                       gpointer    data)
 {
@@ -262,22 +262,22 @@ webkit_pref_callback_user_javascript (GSettings  *settings,
 }
 
 static void
-webkit_pref_callback_user_agent (GSettings  *settings,
+engine_pref_callback_user_agent (GSettings  *settings,
                                  const char *key,
                                  gpointer    data)
 {
-  webkit_settings_set_user_agent (webkit_settings,
-                                  ephy_user_agent_get ());
+  g_autofree char *agent = g_settings_get_string (settings, key);
+  g_object_set (engine_settings, "user-agent", agent, NULL);
 }
 
 static void
-webkit_pref_callback_font_size (GSettings  *settings,
+engine_pref_callback_font_size (GSettings  *settings,
                                 const char *key,
                                 gpointer    data)
 {
-  char *webkit_pref = data;
+  char *engine_pref = data;
   char *value = NULL;
-  int size = 12;
+  double size = 12 * 96.0 / 72.0;
 
   value = g_settings_get_string (settings, key);
 
@@ -285,22 +285,22 @@ webkit_pref_callback_font_size (GSettings  *settings,
     PangoFontDescription *desc;
 
     desc = pango_font_description_from_string (value);
-    size = pango_font_description_get_size (desc);
+    size = pango_units_to_double (pango_font_description_get_size (desc));
     if (!pango_font_description_get_size_is_absolute (desc))
-      size /= PANGO_SCALE;
+      size *= 96.0 / 72.0;
     pango_font_description_free (desc);
   }
 
-  g_object_set (webkit_settings, webkit_pref, webkit_settings_font_size_to_pixels (size), NULL);
+  g_object_set (engine_settings, engine_pref, (guint)CLAMP (lround (size), 0, G_MAXINT), NULL);
   g_free (value);
 }
 
 static void
-webkit_pref_callback_font_family (GSettings  *settings,
+engine_pref_callback_font_family (GSettings  *settings,
                                   const char *key,
                                   gpointer    data)
 {
-  char *webkit_pref = data;
+  char *engine_pref = data;
   char *value = NULL;
 
   value = g_settings_get_string (settings, key);
@@ -311,52 +311,23 @@ webkit_pref_callback_font_family (GSettings  *settings,
 
     desc = pango_font_description_from_string (value);
     family = pango_font_description_get_family (desc);
-    g_object_set (webkit_settings, webkit_pref, family, NULL);
+    g_object_set (engine_settings, engine_pref, family, NULL);
     pango_font_description_free (desc);
   }
 
   g_free (value);
 }
 
-static char **
-normalize_languages (char **languages)
-{
-  int i;
-  GPtrArray *langs;
-
-  langs = g_ptr_array_new ();
-
-  for (i = 0; languages && languages[i]; i++) {
-    if (strcmp (languages[i], "system") == 0) {
-      char **sys_langs = ephy_langs_get_languages ();
-      int j;
-
-      for (j = 0; sys_langs && sys_langs[j]; j++)
-        g_ptr_array_add (langs, g_strdelimit (g_strdup (sys_langs[i]), "-", '_'));
-
-      g_strfreev (sys_langs);
-    } else
-      g_ptr_array_add (langs, g_strdelimit (g_strdup (languages[i]), "-", '_'));
-  }
-
-  g_ptr_array_add (langs, NULL);
-
-  return (char **)g_ptr_array_free (langs, FALSE);
-}
-
 /* Based on Christian Persch's code from gecko backend of epiphany
  *  (old transform_accept_languages_list() function) */
 static void
-webkit_pref_callback_accept_languages (GSettings  *settings,
+engine_pref_callback_accept_languages (GSettings  *settings,
                                        const char *key,
                                        gpointer    data)
 {
   GArray *array;
   char **languages;
   guint i;
-  EphyEmbedShell *shell = ephy_embed_shell_get_default ();
-  WebKitWebContext *web_context = ephy_embed_shell_get_web_context (shell);
-
   languages = g_settings_get_strv (settings, key);
 
   array = g_array_new (TRUE, FALSE, sizeof (char *));
@@ -371,19 +342,11 @@ webkit_pref_callback_accept_languages (GSettings  *settings,
   }
   g_strfreev (languages);
 
+  if (!array->len)
+    ephy_langs_append_languages (array);
   ephy_langs_sanitise (array);
 
-  webkit_web_context_set_preferred_languages (web_context, (const char * const *)(void *)array->data);
-  /* Used by the Firefox Sync web view in prefs-dialog.c. */
-  g_object_set_data_full (G_OBJECT (web_context), "preferred-languages",
-                          g_strdupv ((char **)(void *)array->data),
-                          (GDestroyNotify)g_strfreev);
-
-  if (g_settings_get_boolean (EPHY_SETTINGS_WEB, EPHY_PREFS_WEB_ENABLE_SPELL_CHECKING)) {
-    char **normalized = normalize_languages ((char **)(void *)array->data);
-    webkit_web_context_set_spell_checking_languages (web_context, (const char * const *)normalized);
-    g_strfreev (normalized);
-  }
+  g_object_set (engine_settings, "preferred-languages", array->data, NULL);
 
   for (i = 0; i < array->len; i++)
     g_free (g_array_index (array, char *, i));
@@ -391,247 +354,219 @@ webkit_pref_callback_accept_languages (GSettings  *settings,
 }
 
 static void
-webkit_pref_callback_gnome_fonts (GSettings  *ephy_settings,
+engine_pref_callback_gnome_fonts (GSettings  *ephy_settings,
                                   const char *key,
                                   gpointer    data)
 {
   if (g_settings_get_boolean (ephy_settings, key)) {
-    g_object_set (webkit_settings,
+    g_object_set (engine_settings,
                   "default-font-family", "serif",
                   "serif-font-family", "serif",
                   "sans-serif-font-family", "sans-serif",
                   "monospace-font-family", "monospace",
-                  "default-font-size", webkit_settings_font_size_to_pixels (12),
-                  "default-monospace-font-size", webkit_settings_font_size_to_pixels (10),
+                  "default-font-size", 16,
+                  "default-monospace-font-size", 13,
                   NULL);
   } else {
     /* Sync with Epiphany values */
-    webkit_pref_callback_font_size (ephy_settings, EPHY_PREFS_WEB_SERIF_FONT,
+    engine_pref_callback_font_size (ephy_settings, EPHY_PREFS_WEB_SERIF_FONT,
                                     (gpointer)"default-font-size");
-    webkit_pref_callback_font_size (ephy_settings, EPHY_PREFS_WEB_MONOSPACE_FONT,
+    engine_pref_callback_font_size (ephy_settings, EPHY_PREFS_WEB_MONOSPACE_FONT,
                                     (gpointer)"default-monospace-font-size");
 
-    webkit_pref_callback_font_family (ephy_settings, EPHY_PREFS_WEB_SERIF_FONT,
+    engine_pref_callback_font_family (ephy_settings, EPHY_PREFS_WEB_SERIF_FONT,
                                       (gpointer)"default-font-family");
-    webkit_pref_callback_font_family (ephy_settings, EPHY_PREFS_WEB_SANS_SERIF_FONT,
+    engine_pref_callback_font_family (ephy_settings, EPHY_PREFS_WEB_SANS_SERIF_FONT,
                                       (gpointer)"sans-serif-font-family");
-    webkit_pref_callback_font_family (ephy_settings, EPHY_PREFS_WEB_MONOSPACE_FONT,
+    engine_pref_callback_font_family (ephy_settings, EPHY_PREFS_WEB_MONOSPACE_FONT,
                                       (gpointer)"monospace-font-family");
-    webkit_pref_callback_font_family (ephy_settings, EPHY_PREFS_WEB_SERIF_FONT,
+    engine_pref_callback_font_family (ephy_settings, EPHY_PREFS_WEB_SERIF_FONT,
                                       (gpointer)"serif-font-family");
   }
 }
 
 static void
-webkit_pref_callback_enable_spell_checking (GSettings  *settings,
+engine_pref_callback_enable_spell_checking (GSettings  *settings,
                                             const char *key,
                                             gpointer    data)
 {
-  WebKitWebContext *web_context;
-  gboolean value = FALSE;
-  EphyEmbedShell *shell = ephy_embed_shell_get_default ();
-
-  web_context = ephy_embed_shell_get_web_context (shell);
-  value = g_settings_get_boolean (settings, key);
-
-  webkit_web_context_set_spell_checking_enabled (web_context, value);
-
-  if (value) {
-    char **languages = g_settings_get_strv (settings, EPHY_PREFS_WEB_LANGUAGE);
-    char **normalized = normalize_languages (languages);
-
-    webkit_web_context_set_spell_checking_languages (web_context, (const char * const *)normalized);
-
-    g_strfreev (languages);
-    g_strfreev (normalized);
-  }
+  g_object_set (engine_settings, "enable-spell-checking",
+                g_settings_get_boolean (settings, key), NULL);
 }
 
 static void
-webkit_pref_callback_enable_website_data_storage (GSettings  *settings,
+engine_pref_callback_enable_website_data_storage (GSettings  *settings,
                                                   const char *key,
                                                   gpointer    data)
 {
-  EphyEmbedShell *shell = ephy_embed_shell_get_default ();
-  WebKitNetworkSession *network_session;
-  WebKitCookieManager *manager;
-  gboolean value;
-
-  value = g_settings_get_boolean (settings, key);
-  webkit_settings_set_enable_html5_database (webkit_settings, value);
-  webkit_settings_set_enable_html5_local_storage (webkit_settings, value);
-
-  network_session = ephy_embed_shell_get_network_session (shell);
-  manager = webkit_network_session_get_cookie_manager (network_session);
-  webkit_cookie_manager_set_accept_policy (manager, value ? WEBKIT_COOKIE_POLICY_ACCEPT_ALWAYS : WEBKIT_COOKIE_POLICY_ACCEPT_NEVER);
+  g_object_set (engine_settings, "enable-website-data-storage",
+                g_settings_get_boolean (settings, key), NULL);
 }
 
 static void
-webkit_pref_callback_hardware_acceleration_policy (GSettings  *settings,
+engine_pref_callback_hardware_acceleration_policy (GSettings  *settings,
                                                    const char *key,
                                                    gpointer    data)
 {
-  EphyPrefsWebHardwareAccelerationPolicy value;
-
-  value = g_settings_get_enum (settings, key);
-  switch (value) {
-    case EPHY_PREFS_WEB_HARDWARE_ACCELERATION_POLICY_NEVER:
-      webkit_settings_set_hardware_acceleration_policy (webkit_settings,
-                                                        WEBKIT_HARDWARE_ACCELERATION_POLICY_NEVER);
-      break;
-    case EPHY_PREFS_WEB_HARDWARE_ACCELERATION_POLICY_ALWAYS:
-    /* Fallthrough */
-    default:
-      webkit_settings_set_hardware_acceleration_policy (webkit_settings,
-                                                        WEBKIT_HARDWARE_ACCELERATION_POLICY_ALWAYS);
-      break;
-  }
+  g_object_set (engine_settings, "hardware-acceleration",
+                g_settings_get_enum (settings, key) != EPHY_PREFS_WEB_HARDWARE_ACCELERATION_POLICY_NEVER,
+                NULL);
 }
 
-static const PrefData webkit_pref_entries[] = {
+static const PrefData engine_pref_entries[] = {
   /* Epiphany font settings */
   {
     EPHY_PREFS_WEB_SCHEMA,
     EPHY_PREFS_WEB_SERIF_FONT,
     "default-font-size",
-    webkit_pref_callback_font_size
+    engine_pref_callback_font_size
   },
   {
     EPHY_PREFS_WEB_SCHEMA,
     EPHY_PREFS_WEB_MONOSPACE_FONT,
     "default-monospace-font-size",
-    webkit_pref_callback_font_size
+    engine_pref_callback_font_size
   },
   {
     EPHY_PREFS_WEB_SCHEMA,
     EPHY_PREFS_WEB_SERIF_FONT,
     "default-font-family",
-    webkit_pref_callback_font_family
+    engine_pref_callback_font_family
   },
   {
     EPHY_PREFS_WEB_SCHEMA,
     EPHY_PREFS_WEB_SANS_SERIF_FONT,
     "sans-serif-font-family",
-    webkit_pref_callback_font_family
+    engine_pref_callback_font_family
   },
   {
     EPHY_PREFS_WEB_SCHEMA,
     EPHY_PREFS_WEB_MONOSPACE_FONT,
     "monospace-font-family",
-    webkit_pref_callback_font_family
+    engine_pref_callback_font_family
   },
   {
     EPHY_PREFS_WEB_SCHEMA,
     EPHY_PREFS_WEB_SERIF_FONT,
     "serif-font-family",
-    webkit_pref_callback_font_family
+    engine_pref_callback_font_family
   },
 
   {
     EPHY_PREFS_WEB_SCHEMA,
     EPHY_PREFS_WEB_USE_GNOME_FONTS,
     NULL,
-    webkit_pref_callback_gnome_fonts
+    engine_pref_callback_gnome_fonts
   },
 
   {
     EPHY_PREFS_WEB_SCHEMA,
     EPHY_PREFS_WEB_ENABLE_SPELL_CHECKING,
     NULL,
-    webkit_pref_callback_enable_spell_checking
+    engine_pref_callback_enable_spell_checking
   },
 
   {
     EPHY_PREFS_WEB_SCHEMA,
     EPHY_PREFS_WEB_ENABLE_USER_CSS,
     "user-stylesheet-uri",
-    webkit_pref_callback_user_stylesheet
+    engine_pref_callback_user_stylesheet
   },
   {
     EPHY_PREFS_WEB_SCHEMA,
     EPHY_PREFS_WEB_ENABLE_USER_JS,
     "user-javascript-uri",
-    webkit_pref_callback_user_javascript
+    engine_pref_callback_user_javascript
   },
   {
     EPHY_PREFS_WEB_SCHEMA,
     EPHY_PREFS_WEB_LANGUAGE,
     "accept-language",
-    webkit_pref_callback_accept_languages
+    engine_pref_callback_accept_languages
   },
   {
     EPHY_PREFS_WEB_SCHEMA,
     EPHY_PREFS_WEB_USER_AGENT,
     "user-agent",
-    webkit_pref_callback_user_agent
+    engine_pref_callback_user_agent
   },
   {
     EPHY_PREFS_WEB_SCHEMA,
     EPHY_PREFS_WEB_ENABLE_WEBSITE_DATA_STORAGE,
     NULL,
-    webkit_pref_callback_enable_website_data_storage
+    engine_pref_callback_enable_website_data_storage
   },
   {
     EPHY_PREFS_WEB_SCHEMA,
     EPHY_PREFS_WEB_HARDWARE_ACCELERATION_POLICY,
     "hardware-acceleration-policy",
-    webkit_pref_callback_hardware_acceleration_policy
+    engine_pref_callback_hardware_acceleration_policy
   },
 };
+
+static gboolean
+feature_overrides_get_mapping (GValue   *value,
+                               GVariant *variant,
+                               gpointer  user_data)
+{
+  g_value_set_variant (value, variant);
+  return TRUE;
+}
+
+static GVariant *
+feature_overrides_set_mapping (const GValue       *value,
+                               const GVariantType *expected_type,
+                               gpointer            user_data)
+{
+  GVariant *variant = g_value_get_variant (value);
+  return variant ? g_variant_ref (variant) : g_variant_new_array (G_VARIANT_TYPE ("{sb}"), NULL, 0);
+}
 
 static gpointer
 ephy_embed_prefs_init (gpointer user_data)
 {
   guint i;
 
-  webkit_settings = webkit_settings_new_with_settings ("enable-developer-extras", TRUE,
-                                                       "enable-media-stream", TRUE,
-                                                       "enable-smooth-scrolling", TRUE,
-                                                       "javascript-can-open-windows-automatically", TRUE,
-                                                       NULL);
+  engine_settings = ephy_engine_settings_get_default ();
 
-  for (i = 0; i < G_N_ELEMENTS (webkit_pref_entries); i++) {
+  for (i = 0; i < G_N_ELEMENTS (engine_pref_entries); i++) {
     GSettings *settings;
     char *key;
 
-    settings = ephy_settings_get (webkit_pref_entries[i].schema);
-    key = g_strconcat ("changed::", webkit_pref_entries[i].key, NULL);
+    settings = ephy_settings_get (engine_pref_entries[i].schema);
+    key = g_strconcat ("changed::", engine_pref_entries[i].key, NULL);
 
-    webkit_pref_entries[i].callback (settings,
-                                     webkit_pref_entries[i].key,
-                                     (gpointer)webkit_pref_entries[i].webkit_pref);
+    engine_pref_entries[i].callback (settings,
+                                     engine_pref_entries[i].key,
+                                     (gpointer)engine_pref_entries[i].engine_pref);
 
     g_signal_connect (settings, key,
-                      G_CALLBACK (webkit_pref_entries[i].callback),
-                      (gpointer)webkit_pref_entries[i].webkit_pref);
+                      G_CALLBACK (engine_pref_entries[i].callback),
+                      (gpointer)engine_pref_entries[i].engine_pref);
     g_free (key);
   }
 
   g_settings_bind (EPHY_SETTINGS_MAIN,
                    EPHY_PREFS_ENABLE_CARET_BROWSING,
-                   webkit_settings, "enable-caret-browsing",
+                   engine_settings, "enable-caret-browsing",
                    G_SETTINGS_BIND_GET);
   g_settings_bind (EPHY_SETTINGS_WEB,
                    EPHY_PREFS_WEB_FONT_MIN_SIZE,
-                   webkit_settings, "minimum-font-size",
+                   engine_settings, "minimum-font-size",
                    G_SETTINGS_BIND_GET);
   g_settings_bind (EPHY_SETTINGS_WEB,
                    EPHY_PREFS_WEB_DEFAULT_ENCODING,
-                   webkit_settings, DEFAULT_ENCODING_SETTING,
+                   engine_settings, DEFAULT_ENCODING_SETTING,
                    G_SETTINGS_BIND_GET);
-  g_settings_bind (EPHY_SETTINGS_WEB,
-                   EPHY_PREFS_WEB_ENABLE_SITE_SPECIFIC_QUIRKS,
-                   webkit_settings, "enable-site-specific-quirks",
-                   G_SETTINGS_BIND_GET);
-  g_settings_bind (EPHY_SETTINGS_WEB,
-                   EPHY_PREFS_WEB_ENABLE_NAVIGATION_GESTURES,
-                   webkit_settings, "enable-back-forward-navigation-gestures",
-                   G_SETTINGS_BIND_GET);
+  g_settings_bind_with_mapping (EPHY_SETTINGS_WEB, "chromium-feature-overrides",
+                                engine_settings, "feature-overrides", G_SETTINGS_BIND_DEFAULT,
+                                feature_overrides_get_mapping, feature_overrides_set_mapping,
+                                NULL, NULL);
 
-  return webkit_settings;
+  return engine_settings;
 }
 
-WebKitSettings *
+EphyEngineSettings *
 ephy_embed_prefs_get_settings (void)
 {
   static GOnce once_init = G_ONCE_INIT;

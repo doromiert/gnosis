@@ -21,6 +21,7 @@
 
 #pragma once
 #include "ephy-engine-favicon.h"
+#include "ephy-engine-session.h"
 
 #include <adwaita.h>
 #include <webkit/webkit.h>
@@ -34,7 +35,6 @@
 
 G_BEGIN_DECLS
 
-typedef struct _EphyFiltersManager EphyFiltersManager;
 
 #define EPHY_TYPE_EMBED_SHELL (ephy_embed_shell_get_type ())
 
@@ -61,7 +61,7 @@ struct _EphyEmbedShellClass
 EphyEmbedShell    *ephy_embed_shell_get_default                (void);
 const char        *ephy_embed_shell_get_guid                   (EphyEmbedShell   *shell);
 WebKitWebContext  *ephy_embed_shell_get_web_context            (EphyEmbedShell   *shell);
-WebKitNetworkSession *ephy_embed_shell_get_network_session     (EphyEmbedShell   *shell);
+EphyEngineSession *ephy_embed_shell_get_network_session     (EphyEmbedShell   *shell);
 EphyHistoryService
                   *ephy_embed_shell_get_global_history_service (EphyEmbedShell   *shell);
 EphyEncodings     *ephy_embed_shell_get_encodings              (EphyEmbedShell   *shell);
@@ -79,7 +79,6 @@ void               ephy_embed_shell_set_thumbnail_path         (EphyEmbedShell  
                                                                 const char       *path);
 void               ephy_embed_shell_schedule_thumbnail_update  (EphyEmbedShell   *shell,
                                                                 EphyHistoryURL   *url);
-EphyFiltersManager       *ephy_embed_shell_get_filters_manager      (EphyEmbedShell *shell);
 EphyDownloadsManager     *ephy_embed_shell_get_downloads_manager    (EphyEmbedShell *shell);
 EphyPermissionsManager   *ephy_embed_shell_get_permissions_manager  (EphyEmbedShell *shell);
 EphySearchEngineManager  *ephy_embed_shell_get_search_engine_manager (EphyEmbedShell *shell);
@@ -96,4 +95,6 @@ gboolean                 ephy_embed_shell_should_remember_passwords (EphyEmbedSh
 void                     ephy_embed_shell_set_web_extension_initialization_data (EphyEmbedShell *shell,
                                                                                  GVariant       *data);
 
+WebKitWebsiteDataManager *ephy_embed_shell_get_website_data_manager (EphyEmbedShell *shell);
+EphyEngineDownload *ephy_embed_shell_download_uri (EphyEmbedShell *shell, const char *uri);
 G_END_DECLS

@@ -128,11 +128,11 @@ static void
 test_ephy_download_new_for_uri (Fixture       *fixture,
                                 gconstpointer  data)
 {
-  WebKitDownload *download = ephy_download_get_webkit_download (fixture->download);
-  WebKitURIRequest *request = webkit_download_get_request (download);
+  EphyEngineDownload *download = ephy_download_get_engine_download (fixture->download);
+  const char *uri = ephy_engine_download_get_uri (download);
 
-  g_assert_nonnull (request);
-  g_assert_cmpstr (fixture->source, ==, webkit_uri_request_get_uri (request));
+  g_assert_nonnull (uri);
+  g_assert_cmpstr (fixture->source, ==, uri);
 }
 
 static void

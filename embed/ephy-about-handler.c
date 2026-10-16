@@ -25,8 +25,13 @@
 #include "ephy-about-handler.h"
 
 #include <gio/gio.h>
+#include <gio/gunixinputstream.h>
+#include <glib/gstdio.h>
 #include <glib/gi18n.h>
 #include <gtk/gtk.h>
+#include <fcntl.h>
+#include <sys/stat.h>
+#include <unistd.h>
 
 #include "ephy-embed-prefs.h"
 #include "ephy-embed-shell.h"
@@ -52,6 +57,88 @@ G_DEFINE_FINAL_TYPE (EphyAboutHandler, ephy_about_handler, G_TYPE_OBJECT)
 #define EPHY_ABOUT_OVERVIEW_MAX_ITEMS 9
 
 #define EPHY_PAGE_TEMPLATE_ABOUT_CSS        "ephy-resource:///org/gnome/epiphany/page-templates/about.css"
+#define EPHY_APPLICATION_ICON_PREFIX       "/org/gnome/epiphany/application-icons/"
+#define EPHY_APPLICATION_ICONS_KEY         "ephy-application-icons"
+#define EPHY_APPLICATION_ICON_FALLBACK     "ephy-resource:///org/gnome/epiphany/page-icons/web-app-icon-missing.svg"
+
+static GBytes *
+load_application_icon (const char *path)
+{
+  const gsize max_size = 4 * 1024 * 1024;
+  g_autoptr (GInputStream) file = NULL;
+  g_autoptr (GInputStream) memory = NULL;
+  g_autoptr (GBytes) bytes = NULL;
+  g_autoptr (GdkPixbuf) pixbuf = NULL;
+  g_autofree char *png = NULL;
+  struct stat info;
+  gsize size;
+  int fd;
+
+  if (!path || !g_path_is_absolute (path))
+    return NULL;
+
+  fd = g_open (path, O_RDONLY | O_NONBLOCK | O_CLOEXEC, 0);
+  if (fd == -1)
+    return NULL;
+  file = g_unix_input_stream_new (fd, TRUE);
+  if (fstat (fd, &info) != 0 || !S_ISREG (info.st_mode) ||
+      (info.st_uid != getuid () && info.st_uid != 0) ||
+      info.st_size <= 0 || info.st_size > max_size)
+    return NULL;
+
+  bytes = g_input_stream_read_bytes (file, max_size + 1, NULL, NULL);
+  if (!bytes || g_bytes_get_size (bytes) > max_size)
+    return NULL;
+  memory = g_memory_input_stream_new_from_bytes (bytes);
+  pixbuf = gdk_pixbuf_new_from_stream_at_scale (memory, 128, 128, TRUE, NULL, NULL);
+  if (!pixbuf || !gdk_pixbuf_save_to_buffer (pixbuf, &png, &size, "png", NULL, NULL))
+    return NULL;
+
+  /* The desktop entry may be edited: expose decoded pixels, never file bytes. */
+  return g_bytes_new_take (g_steal_pointer (&png), size);
+}
+
+static char *
+application_icon_uri (GHashTable *icons,
+                      GBytes     *bytes)
+{
+  g_autofree char *token = NULL;
+
+  if (!bytes)
+    return g_strdup (EPHY_APPLICATION_ICON_FALLBACK);
+
+  token = g_uuid_string_random ();
+  g_hash_table_insert (icons, g_strdup (token), g_bytes_ref (bytes));
+  return g_strconcat ("ephy-resource://", EPHY_APPLICATION_ICON_PREFIX, token, NULL);
+}
+
+gboolean
+ephy_about_handler_handle_application_icon (EphyEngineSchemeRequest *request)
+{
+  const char *path = ephy_engine_uri_scheme_request_get_path (request);
+  EphyEngineView *view = ephy_engine_uri_scheme_request_get_web_view (request);
+  const char *token;
+  GHashTable *icons = g_object_get_data (G_OBJECT (view), EPHY_APPLICATION_ICONS_KEY);
+  GBytes *bytes = NULL;
+  g_autoptr (GInputStream) stream = NULL;
+  g_autoptr (GError) error = NULL;
+
+  if (!path || !g_str_has_prefix (path, EPHY_APPLICATION_ICON_PREFIX))
+    return FALSE;
+  token = path + strlen (EPHY_APPLICATION_ICON_PREFIX);
+  if (g_strcmp0 (ephy_engine_web_view_get_uri (view), "ephy-about:applications") == 0 &&
+      icons && g_uuid_string_is_valid (token))
+    bytes = g_hash_table_lookup (icons, token);
+  if (!bytes) {
+    error = g_error_new_literal (G_IO_ERROR, G_IO_ERROR_NOT_FOUND, "Unknown application icon");
+    ephy_engine_uri_scheme_request_finish_error (request, error);
+    return TRUE;
+  }
+
+  stream = g_memory_input_stream_new_from_bytes (bytes);
+  ephy_engine_uri_scheme_request_finish (request, stream, g_bytes_get_size (bytes), "image/png");
+  return TRUE;
+}
 
 static void
 ephy_about_handler_finalize (GObject *object)
@@ -253,8 +340,11 @@ handle_applications_finished_cb (EphyAboutHandler       *handler,
   GString *data_str;
   gsize data_length;
   GList *applications, *p;
+  GHashTable *loaded_icons = g_task_get_task_data (G_TASK (result));
+  GHashTable *icons = g_hash_table_new_full (g_str_hash, g_str_equal, g_free, (GDestroyNotify)g_bytes_unref);
 
   view = ephy_engine_uri_scheme_request_get_web_view (request);
+  g_object_set_data_full (G_OBJECT (view), EPHY_APPLICATION_ICONS_KEY, icons, (GDestroyNotify)g_hash_table_unref);
   ephy_web_view_register_message_handler (EPHY_WEB_VIEW (view), EPHY_WEB_VIEW_ABOUT_APPS_MESSAGE_HANDLER, EPHY_WEB_VIEW_REGISTER_MESSAGE_HANDLER_FOR_CURRENT_PAGE);
 
   data_str = g_string_new (NULL);
@@ -266,10 +356,10 @@ handle_applications_finished_cb (EphyAboutHandler       *handler,
                             "<link href=\""EPHY_PAGE_TEMPLATE_ABOUT_CSS "\" rel=\"stylesheet\" type=\"text/css\">"
                             "<script>"
                             "  function launchWebApp(appID, appName) {"
-                            "    window.webkit.messageHandlers.aboutApps.postMessage({action: 'launch', app: appID, name: appName, page: %" G_GUINT64_FORMAT "});"
+                            "    Jupiter.postMessage('aboutApps', {action: 'launch', app: appID, name: appName, page: %" G_GUINT64_FORMAT "});"
                             "  }"
                             "  function deleteWebApp(appID, appName) {"
-                            "    window.webkit.messageHandlers.aboutApps.postMessage({action: 'remove', app: appID, name: appName, page: %" G_GUINT64_FORMAT "});"
+                            "    Jupiter.postMessage('aboutApps', {action: 'remove', app: appID, name: appName, page: %" G_GUINT64_FORMAT "});"
                             "  }"
                             "</script>"
                             "</head><div id=\"applications\"><body class=\"applications-body\"><h1>%s</h1>"
@@ -284,44 +374,26 @@ handle_applications_finished_cb (EphyAboutHandler       *handler,
 
     for (p = applications; p; p = p->next) {
       EphyWebApplication *app = (EphyWebApplication *)p->data;
-      const char *icon_path = NULL;
-      g_autofree char *encoded_icon_path = NULL;
+      g_autofree char *application_id = g_strconcat (EPHY_WEB_APP_GAPPLICATION_ID_PREFIX, app->id, NULL);
+      g_autofree char *icon_uri = NULL;
       g_autofree char *encoded_name = NULL;
       g_autofree char *encoded_url = NULL;
       g_autoptr (GDate) date = NULL;
       char install_date[128];
 
-      if (ephy_web_application_is_system (app))
+      if (!g_application_id_is_valid (application_id) || ephy_web_application_is_system (app))
         continue;
 
       date = g_date_new ();
       g_date_set_time_t (date, (time_t)app->install_date_uint64);
       g_date_strftime (install_date, 127, "%x", date);
 
-      /* In the sandbox we don't have access to the host side icon file */
-      if (xdp_portal_running_under_sandbox ())
-        icon_path = app->tmp_icon_path;
-      else
-        icon_path = app->icon_path;
-
-      if (!icon_path) {
-        g_warning ("Failed to get icon path for app %s", app->id);
-        continue;
-      }
-
-      /* Most of these fields are at least semi-trusted. The app ID was chosen
-       * by ephy so it's safe. The icon URL could be changed by the user to
-       * something else after web app creation, though, so better not fully
-       * trust it. Then the app name and the main URL could contain anything
-       * at all, so those need to be encoded for sure. Install date should be
-       * fine because it's constructed by Epiphany.
-       */
-      encoded_icon_path = ephy_encode_for_html_attribute (icon_path);
+      icon_uri = application_icon_uri (icons, g_hash_table_lookup (loaded_icons, app->id));
       encoded_name = ephy_encode_for_html (app->name);
       encoded_url = ephy_encode_for_html (app->url);
       g_string_append_printf (data_str,
                               "<tbody><tr id =\"%s\">"
-                              "<td class=\"icon\"><img width=64 height=64 src=\"file://%s\"></img></td>"
+                              "<td class=\"icon\"><img width=64 height=64 src=\"%s\"></img></td>"
                               "<td class=\"data\"><div class=\"appname\">%s</div><div class=\"appurl\">%s</div></td>"
                               "<td class=\"input\"><input type=\"button\" value=\"%s\" "
                               "onclick=\"const appRow = this.closest('tr'); launchWebApp(appRow.id, appRow.querySelector('.appname').innerText);\" "
@@ -330,7 +402,7 @@ handle_applications_finished_cb (EphyAboutHandler       *handler,
                               "onclick=\"const appRow = this.closest('tr'); deleteWebApp(appRow.id, appRow.querySelector('.appname').innerText);\" "
                               "class=\"destructive-action\"></td>"
                               "<td class=\"date\">%s <br /> %s</td></tr></tbody>",
-                              app->id, encoded_icon_path, encoded_name, encoded_url, _("Launch"), _("Delete"),
+                              app->id, icon_uri, encoded_name, encoded_url, _("Launch"), _("Delete"),
                               /* Note for translators: this refers to the installation date. */
                               _("Installed on:"), install_date);
     }
@@ -340,6 +412,8 @@ handle_applications_finished_cb (EphyAboutHandler       *handler,
     GtkIconTheme *icon_theme;
     g_autoptr (GtkIconPaintable) paintable = NULL;
     g_autofree char *path = NULL;
+    g_autofree char *icon_uri = NULL;
+    g_autoptr (GBytes) icon_bytes = NULL;
 
     g_string_append_printf (data_str, "<html><head><title>%s</title>"
                             "<meta http-equiv=\"Content-Type\" content=\"text/html; charset=utf-8\" />"
@@ -362,14 +436,16 @@ handle_applications_finished_cb (EphyAboutHandler       *handler,
       path = g_file_get_path (file);
     }
 
+    icon_bytes = load_application_icon (path);
+    icon_uri = application_icon_uri (icons, icon_bytes);
     g_string_append_printf (data_str,
                             "  <div id=\"overview\" class=\"overview-empty\">\n"
-                            "    <img src=\"file://%s\"/>\n"
+                            "    <img src=\"%s\"/>\n"
                             "    <div><h1>%s</h1></div>\n"
                             "    <div><p>%s</p></div>\n"
                             "  </div>\n"
                             "</body></html>\n",
-                            path ? path : "",
+                            icon_uri,
                             /* Displayed when opening applications without any installed web apps. */
                             _("Apps"), _("You can add your favorite website by clicking <b>Install as Web App…</b> within the page menu."));
   }
@@ -387,9 +463,21 @@ handle_applications_sync (GTask        *task,
                           gpointer      task_data,
                           GCancellable *cancellable)
 {
-  g_task_return_pointer (task,
-                         ephy_web_application_get_application_list (),
-                         (GDestroyNotify)ephy_web_application_free_application_list);
+  GList *applications = ephy_web_application_get_application_list ();
+  GHashTable *icons = g_task_get_task_data (task);
+
+  for (GList *p = applications; p; p = p->next) {
+    EphyWebApplication *app = p->data;
+    g_autofree char *application_id = g_strconcat (EPHY_WEB_APP_GAPPLICATION_ID_PREFIX, app->id, NULL);
+    GBytes *bytes;
+
+    if (!g_application_id_is_valid (application_id) || ephy_web_application_is_system (app))
+      continue;
+    bytes = load_application_icon (xdp_portal_running_under_sandbox () ? app->tmp_icon_path : app->icon_path);
+    if (bytes)
+      g_hash_table_insert (icons, g_strdup (app->id), bytes);
+  }
+  g_task_return_pointer (task, applications, (GDestroyNotify)ephy_web_application_free_application_list);
 }
 
 static gboolean
@@ -402,6 +490,9 @@ ephy_about_handler_handle_applications (EphyAboutHandler       *handler,
                      (GAsyncReadyCallback)handle_applications_finished_cb,
                      g_object_ref (request));
   g_task_set_source_tag (task, ephy_about_handler_handle_applications);
+  g_task_set_task_data (task,
+                        g_hash_table_new_full (g_str_hash, g_str_equal, g_free, (GDestroyNotify)g_bytes_unref),
+                        (GDestroyNotify)g_hash_table_unref);
   g_task_run_in_thread (task, handle_applications_sync);
   g_object_unref (task);
 

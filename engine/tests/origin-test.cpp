@@ -1,3 +1,4 @@
+#include "diagnostic-process.hpp"
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 #include "ephy-engine-origin.h"
 #include "include/cef_api_hash.h"
@@ -33,6 +34,7 @@ static void origins() {
   ephy_engine_origin_unref(origin);
 }
 int main(int argc, char **argv) {
+  disable_diagnostic_core_dumps();
   if (!cef_api_hash(CEF_API_VERSION, 0)) return 1;
   int sub = CefExecuteProcess(CefMainArgs(argc, argv), nullptr, nullptr);
   if (sub >= 0) return sub;
@@ -46,6 +48,7 @@ int main(int argc, char **argv) {
   CefString(&settings.resources_dir_path) = CEF_RESOURCE_DIR;
   CefString(&settings.locales_dir_path) = std::string(CEF_RESOURCE_DIR) + "/locales";
   if (!CefInitialize(CefMainArgs(argc, argv), settings, nullptr, nullptr)) return 1;
+  disable_diagnostic_core_dumps();
   g_test_init(&argc, &argv, nullptr);
   g_test_add_func("/engine/origin/chromium-canonicalization", origins);
   int result = g_test_run();

@@ -215,12 +215,12 @@ filename_confirmed_cb (GtkFileDialog       *dialog,
 
   if (file) {
     g_autoptr (GFile) current_folder = NULL;
-    WebKitDownload *webkit_download;
+    EphyEngineDownload *webkit_download;
 
     ephy_download_set_destination (data->download, g_file_peek_path (file));
 
-    webkit_download = ephy_download_get_webkit_download (data->download);
-    webkit_download_set_allow_overwrite (webkit_download, TRUE);
+    webkit_download = ephy_download_get_engine_download (data->download);
+    ephy_engine_download_set_allow_overwrite (webkit_download, TRUE);
 
     ephy_downloads_manager_add_download (ephy_embed_shell_get_downloads_manager (ephy_embed_shell_get_default ()),
                                          data->download);

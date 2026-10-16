@@ -25,11 +25,10 @@
 #include "ephy-json-utils.h"
 #include "ephy-shell.h"
 
-static WebKitCookieManager *
+static EphyEngineSession *
 get_cookie_manager (void)
 {
-  WebKitNetworkSession *network_session = ephy_embed_shell_get_network_session (ephy_embed_shell_get_default ());
-  return webkit_network_session_get_cookie_manager (network_session);
+  return ephy_embed_shell_get_network_session (ephy_embed_shell_get_default ());
 }
 
 static const char *
@@ -140,14 +139,14 @@ compare_best_cookie (SoupCookie *previous,
 }
 
 static void
-delete_cookie_ready_cb (WebKitCookieManager *cookie_manager,
+delete_cookie_ready_cb (EphyEngineSession *cookie_manager,
                         GAsyncResult        *result,
                         CookiesCallbackData *data)
 {
   g_autoptr (GError) error = NULL;
   gboolean success;
 
-  success = webkit_cookie_manager_delete_cookie_finish (cookie_manager, result, &error);
+  success = ephy_engine_session_delete_cookie_finish (cookie_manager, result, &error);
 
   if (!success) {
     g_task_return_error (data->task, g_steal_pointer (&error));
@@ -160,12 +159,12 @@ delete_cookie_ready_cb (WebKitCookieManager *cookie_manager,
 }
 
 static void
-get_cookies_ready_cb (WebKitCookieManager *cookie_manager,
+get_cookies_ready_cb (EphyEngineSession *cookie_manager,
                       GAsyncResult        *result,
                       CookiesCallbackData *data)
 {
   g_autoptr (GError) error = NULL;
-  GList *cookies = webkit_cookie_manager_get_cookies_finish (cookie_manager, result, &error);
+  GList *cookies = ephy_engine_session_get_cookies_finish (cookie_manager, result, &error);
   SoupCookie *best_match = NULL;
 
   if (error) {
@@ -188,7 +187,7 @@ get_cookies_ready_cb (WebKitCookieManager *cookie_manager,
     g_task_return_pointer (data->task, cookie_to_json (best_match), g_free);
   else {
     data->cookie = soup_cookie_copy (best_match);
-    webkit_cookie_manager_delete_cookie (cookie_manager, data->cookie, NULL,
+    ephy_engine_session_delete_cookie (cookie_manager, data->cookie, NULL,
                                          (GAsyncReadyCallback)delete_cookie_ready_cb,
                                          data);
     data = NULL;
@@ -205,7 +204,7 @@ cookies_handler_get (EphyWebExtensionSender *sender,
                      GTask                  *task)
 {
   JsonObject *details = ephy_json_array_get_object (args, 0);
-  WebKitCookieManager *cookie_manager = get_cookie_manager ();
+  EphyEngineSession *cookie_manager = get_cookie_manager ();
   const char *cookie_name;
   const char *url;
   CookiesCallbackData *callback_data;
@@ -234,16 +233,16 @@ cookies_handler_get (EphyWebExtensionSender *sender,
 
   /* FIXME: The WebKit API doesn't expose details like first-party URLs to better filter this. The underlying libsoup API does so
    * this just requires additions to WebKitGTK. */
-  webkit_cookie_manager_get_cookies (cookie_manager, url, NULL, (GAsyncReadyCallback)get_cookies_ready_cb, callback_data);
+  ephy_engine_session_get_cookies (cookie_manager, url, NULL, (GAsyncReadyCallback)get_cookies_ready_cb, callback_data);
 }
 
 static void
-add_cookie_ready_cb (WebKitCookieManager *cookie_manager,
+add_cookie_ready_cb (EphyEngineSession *cookie_manager,
                      GAsyncResult        *result,
                      CookiesCallbackData *data)
 {
   g_autoptr (GError) error = NULL;
-  gboolean success = webkit_cookie_manager_add_cookie_finish (cookie_manager, result, &error);
+  gboolean success = ephy_engine_session_add_cookie_finish (cookie_manager, result, &error);
 
   if (!success) {
     g_task_return_error (data->task, g_steal_pointer (&error));
@@ -275,7 +274,7 @@ cookies_handler_set (EphyWebExtensionSender *sender,
   g_autoptr (GUri) parsed_uri = NULL;
   g_autoptr (GError) error = NULL;
   g_autoptr (GDateTime) expires_date = NULL;
-  WebKitCookieManager *cookie_manager = get_cookie_manager ();
+  EphyEngineSession *cookie_manager = get_cookie_manager ();
   CookiesCallbackData *callback_data;
 
   if (!details) {
@@ -326,7 +325,7 @@ cookies_handler_set (EphyWebExtensionSender *sender,
   callback_data->task = task;
   callback_data->cookie = g_steal_pointer (&new_cookie);
 
-  webkit_cookie_manager_add_cookie (cookie_manager, callback_data->cookie, NULL, (GAsyncReadyCallback)add_cookie_ready_cb, callback_data);
+  ephy_engine_session_add_cookie (cookie_manager, callback_data->cookie, NULL, (GAsyncReadyCallback)add_cookie_ready_cb, callback_data);
 }
 
 static void
@@ -338,7 +337,7 @@ cookies_handler_remove (EphyWebExtensionSender *sender,
   JsonObject *details = ephy_json_array_get_object (args, 0);
   const char *url;
   const char *cookie_name;
-  WebKitCookieManager *cookie_manager = get_cookie_manager ();
+  EphyEngineSession *cookie_manager = get_cookie_manager ();
   CookiesCallbackData *callback_data;
 
   if (!details) {
@@ -364,7 +363,7 @@ cookies_handler_remove (EphyWebExtensionSender *sender,
   callback_data->cookie_name = g_strdup (cookie_name);
   callback_data->remove_after_find = TRUE;
 
-  webkit_cookie_manager_get_cookies (cookie_manager, url, NULL, (GAsyncReadyCallback)get_cookies_ready_cb, callback_data);
+  ephy_engine_session_get_cookies (cookie_manager, url, NULL, (GAsyncReadyCallback)get_cookies_ready_cb, callback_data);
 }
 
 typedef struct {
@@ -419,14 +418,14 @@ cookie_compare_func (SoupCookie *a,
 }
 
 static void
-get_all_cookies_ready_cb (WebKitCookieManager       *cookie_manager,
+get_all_cookies_ready_cb (EphyEngineSession       *cookie_manager,
                           GAsyncResult              *result,
                           GetAllCookiesCallbackData *data)
 {
   g_autoptr (GError) error = NULL;
   g_autoptr (JsonBuilder) builder = json_builder_new ();
   g_autoptr (JsonNode) root = NULL;
-  GList *cookies = webkit_cookie_manager_get_cookies_finish (cookie_manager, result, &error);
+  GList *cookies = ephy_engine_session_get_cookies_finish (cookie_manager, result, &error);
 
   if (error) {
     g_task_return_error (data->task, g_steal_pointer (&error));
@@ -460,7 +459,7 @@ cookies_handler_get_all (EphyWebExtensionSender *sender,
                          GTask                  *task)
 {
   JsonObject *details = ephy_json_array_get_object (args, 0);
-  WebKitCookieManager *cookie_manager = get_cookie_manager ();
+  EphyEngineSession *cookie_manager = get_cookie_manager ();
   const char *url;
   GetAllCookiesCallbackData *callback_data;
 
@@ -493,7 +492,7 @@ cookies_handler_get_all (EphyWebExtensionSender *sender,
 
   /* FIXME: The WebKit API doesn't expose details like first-party URLs to better filter this. The underlying libsoup API does so
    * this just requires additions to WebKitGTK. */
-  webkit_cookie_manager_get_cookies (cookie_manager, url, NULL, (GAsyncReadyCallback)get_all_cookies_ready_cb, callback_data);
+  ephy_engine_session_get_cookies (cookie_manager, url, NULL, (GAsyncReadyCallback)get_all_cookies_ready_cb, callback_data);
 }
 
 static JsonNode *

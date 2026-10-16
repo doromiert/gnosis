@@ -21,7 +21,7 @@
 #pragma once
 #include "ephy-engine-scheme.h"
 
-#include <webkit/webkit.h>
+#include "ephy-engine-view.h"
 
 G_BEGIN_DECLS
 
@@ -35,4 +35,7 @@ EphyReaderHandler *ephy_reader_handler_new            (void);
 
 void               ephy_reader_handler_handle_request (EphyReaderHandler  *handler,
                                                        EphyEngineSchemeRequest *request);
+void               ephy_reader_handler_get_html       (EphyEngineView *view, GCancellable *cancellable,
+                                                        GAsyncReadyCallback callback, gpointer user_data);
+char              *ephy_reader_handler_get_html_finish (EphyEngineView *view, GAsyncResult *result, GError **error);
 G_END_DECLS

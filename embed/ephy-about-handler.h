@@ -37,6 +37,7 @@ G_DECLARE_FINAL_TYPE (EphyAboutHandler, ephy_about_handler, EPHY, ABOUT_HANDLER,
 EphyAboutHandler *ephy_about_handler_new            (void);
 void              ephy_about_handler_handle_request (EphyAboutHandler       *handler,
                                                      EphyEngineSchemeRequest *request);
+gboolean          ephy_about_handler_handle_application_icon (EphyEngineSchemeRequest *request);
 
 EphyHistoryQuery *ephy_history_query_new_for_overview (void);
 

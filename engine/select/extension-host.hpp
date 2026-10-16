@@ -22,7 +22,6 @@ public:
   std::set<std::string> extension_ids;
   std::string tab_bridge_id;
   std::map<std::string, std::vector<std::string>> permissions;
-  std::map<std::string, int> active_grants;
   std::map<std::string, std::string> extension_paths;
   void attach(CefRefPtr<CefBrowser>);
   void detach(int);
@@ -61,7 +60,6 @@ private:
   std::string context_id_;
   std::map<std::string, std::vector<std::string>> styles_;
   unsigned timer_ = 0;
-  int sequence_ = 1;
   void command(CefRefPtr<CefBrowser>, const std::string&, CefRefPtr<CefDictionaryValue>, Result = {});
   void send(const Origin&, const std::string&, CefRefPtr<CefDictionaryValue>, Result = {});
   void scan();

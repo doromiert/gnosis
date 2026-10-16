@@ -19,6 +19,7 @@
  */
 
 #include "config.h"
+#include "ephy-json-utils.h"
 #include "ephy-engine-scheme.h"
 #include "ephy-engine-view.h"
 
@@ -128,35 +129,14 @@ enum_nick (GType enum_type,
   return nick;
 }
 
-static char *
-readability_get_property_string (JSCValue *jsc_value,
-                                 char     *property)
-{
-  char *result = NULL;
-
-  if (!jsc_value_is_object (jsc_value))
-    return NULL;
-
-  if (jsc_value_object_has_property (jsc_value, property)) {
-    g_autoptr (JSCValue) jsc_content = jsc_value_object_get_property (jsc_value, property);
-
-    result = jsc_value_to_string (jsc_content);
-
-    if (result && strcmp (result, "null") == 0)
-      g_clear_pointer (&result, g_free);
-  }
-
-  return result;
-}
-
 static void
-readability_js_finish_cb (GObject      *object,
+reader_html_evaluated_cb (GObject      *object,
                           GAsyncResult *result,
                           gpointer      user_data)
 {
   EphyEngineView *web_view = EPHY_ENGINE_VIEW (object);
-  EphyReaderRequest *request = user_data;
-  g_autoptr (JSCValue) value = NULL;
+  GTask *task = user_data;
+  g_autoptr (JsonObject) script_result = NULL;
   g_autoptr (GError) error = NULL;
   g_autofree gchar *byline = NULL;
   g_autofree gchar *encoded_byline = NULL;
@@ -169,17 +149,25 @@ readability_js_finish_cb (GObject      *object,
   const gchar *font_style;
   const gchar *color_scheme;
   AdwStyleManager *style_manager;
+  JsonObject *article;
 
-  value = ephy_engine_web_view_evaluate_javascript_finish (web_view, result, &error);
-  if (!value) {
-    if (!g_error_matches (error, G_IO_ERROR, G_IO_ERROR_CANCELLED))
-      g_warning ("Error running javascript: %s", error->message);
+  script_result = ephy_engine_web_view_evaluate_javascript_finish (web_view, result, &error);
+  if (!script_result) {
+    g_task_return_error (task, g_steal_pointer (&error));
+    g_object_unref (task);
     return;
   }
 
-  byline = readability_get_property_string (value, "byline");
-  content = readability_get_property_string (value, "content");
-  reading_time = readability_get_property_string (value, "reading_time");
+  article = ephy_json_object_get_object (script_result, "value");
+  if (!article) {
+    g_set_error_literal (&error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA, "Readability returned no article");
+    g_task_return_error (task, g_steal_pointer (&error));
+    g_object_unref (task);
+    return;
+  }
+  byline = ephy_json_object_dup_string (article, "byline");
+  content = ephy_json_object_dup_string (article, "content");
+  reading_time = ephy_json_object_dup_string (article, "reading_time");
   title = ephy_engine_web_view_get_title (web_view);
 
   encoded_byline = byline ? ephy_encode_for_html (byline) : g_strdup ("");
@@ -241,13 +229,17 @@ readability_js_finish_cb (GObject      *object,
   g_string_append (html, "</article>");
   g_string_append (html, "</body>");
 
-  finish_uri_scheme_request (request, g_strdup (html->str), NULL);
+  g_task_return_pointer (task, g_string_free (g_steal_pointer (&html), FALSE), g_free);
+  g_object_unref (task);
 }
 
-static void
-ephy_reader_request_begin_get_source_from_web_view (EphyReaderRequest *request,
-                                                    EphyEngineView     *web_view)
+void
+ephy_reader_handler_get_html (EphyEngineView     *web_view,
+                              GCancellable       *cancellable,
+                              GAsyncReadyCallback callback,
+                              gpointer            user_data)
 {
+  GTask *task = g_task_new (web_view, cancellable, callback, user_data);
   gsize length;
   const char *script;
   g_autoptr (GError) error = NULL;
@@ -255,16 +247,42 @@ ephy_reader_request_begin_get_source_from_web_view (EphyReaderRequest *request,
                                                       G_RESOURCE_LOOKUP_FLAGS_NONE, &error);
 
   if (!bytes) {
-    g_critical ("Failed to get Readability.js from resources: %s", error->message);
+    g_task_return_error (task, g_steal_pointer (&error));
+    g_object_unref (task);
     return;
   }
-
-  script = (const char *)g_bytes_get_data (bytes, &length);
+  script = g_bytes_get_data (bytes, &length);
   ephy_engine_web_view_evaluate_javascript (web_view, script, length, NULL,
-                                       "resource:///org/gnome/epiphany/readability/Readability.js",
-                                       request->cancellable,
-                                       readability_js_finish_cb,
-                                       request);
+                                           "resource:///org/gnome/epiphany/readability/Readability.js",
+                                           cancellable, reader_html_evaluated_cb, task);
+}
+
+char *
+ephy_reader_handler_get_html_finish (EphyEngineView *web_view,
+                                     GAsyncResult  *result,
+                                     GError       **error)
+{
+  g_assert (g_task_is_valid (result, web_view));
+  return g_task_propagate_pointer (G_TASK (result), error);
+}
+
+static void
+reader_html_ready_cb (EphyEngineView    *web_view,
+                      GAsyncResult     *result,
+                      EphyReaderRequest *request)
+{
+  g_autoptr (GError) error = NULL;
+  char *html = ephy_reader_handler_get_html_finish (web_view, result, &error);
+
+  finish_uri_scheme_request (request, html, error);
+}
+
+static void
+ephy_reader_request_begin_get_source_from_web_view (EphyReaderRequest *request,
+                                                    EphyEngineView     *web_view)
+{
+  ephy_reader_handler_get_html (web_view, request->cancellable,
+                                (GAsyncReadyCallback)reader_html_ready_cb, request);
 }
 
 static void
@@ -284,12 +302,10 @@ ephy_reader_request_begin_get_source_from_uri (EphyReaderRequest *request,
                                                const char        *uri)
 {
   EphyEmbedShell *shell = ephy_embed_shell_get_default ();
-  WebKitWebContext *context = ephy_embed_shell_get_web_context (shell);
-  WebKitNetworkSession *network_session = ephy_embed_shell_get_network_session (shell);
+  EphyEngineSession *network_session = ephy_embed_shell_get_network_session (shell);
 
   g_assert (!request->web_view);
   request->web_view = EPHY_ENGINE_VIEW (g_object_ref_sink (g_object_new (EPHY_TYPE_ENGINE_VIEW,
-                                                                        "web-context", context,
                                                                         "network-session", network_session,
                                                                         NULL)));
 
@@ -307,14 +323,15 @@ ephy_reader_request_start (EphyReaderRequest *request)
   g_autoptr (GUri) uri = NULL;
   const char *original_uri;
   EphyEngineView *web_view;
+  char *prepared_html = NULL;
 
   original_uri = ephy_engine_uri_scheme_request_get_uri (request->scheme_request);
   uri = g_uri_parse (original_uri, G_URI_FLAGS_PARSE_RELAXED, NULL);
 
   if (!uri) {
     /* Can't assert because user could theoretically input something weird */
-    GError *error = g_error_new (WEBKIT_NETWORK_ERROR,
-                                 WEBKIT_NETWORK_ERROR_FAILED,
+    g_autoptr (GError) error = g_error_new (G_IO_ERROR,
+                                           G_IO_ERROR_INVALID_ARGUMENT,
                                  _("%s is not a valid URI"),
                                  original_uri);
     finish_uri_scheme_request (request, NULL, error);
@@ -322,26 +339,15 @@ ephy_reader_request_start (EphyReaderRequest *request)
   }
 
   web_view = ephy_engine_uri_scheme_request_get_web_view (request->scheme_request);
-  if (web_view) {
-    gboolean entering_reader_mode;
-
-    g_object_get (G_OBJECT (web_view), "entering-reader-mode", &entering_reader_mode, NULL);
-    if (!entering_reader_mode)
-      web_view = NULL;
+  if (web_view && EPHY_IS_WEB_VIEW (web_view))
+    prepared_html = ephy_web_view_take_reader_html (EPHY_WEB_VIEW (web_view), original_uri);
+  if (prepared_html) {
+    finish_uri_scheme_request (request, prepared_html, NULL);
+    return;
   }
 
-  if (web_view) {
-    ephy_reader_request_begin_get_source_from_web_view (request, web_view);
-  } else {
-    /* Extract URI:
-     * ephy-reader:https://example.com/whatever?xyz into https://example.com/whatever?xyz
-     */
-    g_assert (g_str_has_prefix (original_uri, "ephy-reader:"));
-    ephy_reader_request_begin_get_source_from_uri (request, original_uri + strlen ("ephy-reader:"));
-  }
-
-  request->source_handler->outstanding_requests =
-    g_list_prepend (request->source_handler->outstanding_requests, request);
+  /* Explicit reader URLs load their source in a separate native view. */
+  ephy_reader_request_begin_get_source_from_uri (request, original_uri + strlen (EPHY_READER_SCHEME ":"));
 }
 
 static void
@@ -389,5 +395,6 @@ ephy_reader_handler_handle_request (EphyReaderHandler      *handler,
   EphyReaderRequest *reader_request;
 
   reader_request = ephy_reader_request_new (handler, scheme_request);
+  handler->outstanding_requests = g_list_prepend (handler->outstanding_requests, reader_request);
   ephy_reader_request_start (reader_request);
 }

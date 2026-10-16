@@ -1041,7 +1041,7 @@ ephy_shell_dispose (GObject *object)
 
   g_clear_object (&shell->session);
   g_clear_object (&shell->lockdown);
-  g_clear_object (&shell->prefs_dialog);
+  g_clear_weak_pointer (&shell->prefs_dialog);
   g_clear_object (&shell->network_monitor);
   g_clear_object (&shell->sync_service);
   g_clear_object (&shell->bookmarks_manager);
@@ -1434,12 +1434,8 @@ GObject *
 ephy_shell_get_prefs_dialog (EphyShell *shell)
 {
   if (!shell->prefs_dialog) {
-    shell->prefs_dialog = g_object_new (EPHY_TYPE_PREFS_DIALOG, NULL);
-
-    g_signal_connect (shell->prefs_dialog,
-                      "closed",
-                      G_CALLBACK (window_destroyed),
-                      &shell->prefs_dialog);
+    g_set_weak_pointer (&shell->prefs_dialog,
+                       g_object_new (EPHY_TYPE_PREFS_DIALOG, NULL));
   }
 
   return shell->prefs_dialog;

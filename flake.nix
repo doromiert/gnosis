@@ -10,7 +10,7 @@
     apps.${system}.default = { type = "app"; program = "${package}/bin/jupiter"; };
     devShells.${system}.default = pkgs.mkShell {
       inputsFrom = [ package ];
-      packages = with pkgs; [ cmake ninja meson pkg-config python3 xorg-server imagemagick gdb ];
+      packages = with pkgs; [ cmake ninja meson pkg-config python3 xorg-server imagemagick gdb xdotool ];
       CEF_ROOT = package.cefSdk;
       UBLOCK_DIR = package.ublock;
       LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath package.cefSdk.buildInputs;

@@ -1,3 +1,5 @@
+#include "extension-permissions.hpp"
+#include "devtools.hpp"
 extern "C" {
 #include <gio/gio.h>
 GResource* jupiter_engine_get_resource(void);
@@ -53,12 +55,13 @@ void ExtensionHost::command(CefRefPtr<CefBrowser> b, const std::string& name,
                             CefRefPtr<CefDictionaryValue> args, Result callback) {
   if (!b || !b->IsValid())
     return;
-  int id = sequence_++;
+  int id = next_devtools_message_id();
   if (callback)
     pending_[id] = std::move(callback);
+  args = args ? args->Copy(false) : nullptr;
   CefPostTask(TID_UI, new Dispatch([b, id, name, args] {
                 if (b->IsValid())
-                  b->GetHost()->ExecuteDevToolsMethod(id, name, args);
+                  send_devtools_method(b, id, name, args);
               }));
 }
 void ExtensionHost::attach(CefRefPtr<CefBrowser> b) {
@@ -132,7 +135,7 @@ void ExtensionHost::send(const Origin& origin, const std::string& method,
     command(origin.browser, method, params, std::move(callback));
     return;
   }
-  int id = sequence_++;
+  int id = next_devtools_message_id();
   if (callback)
     pending_[id] = std::move(callback);
   auto message = dict();
@@ -302,20 +305,12 @@ void ExtensionHost::reply(const Origin& origin, int id, CefRefPtr<CefValue> resu
     args->SetInt("contextId", origin.context);
   send(origin, "Runtime.evaluate", args);
 }
-bool ExtensionHost::allowed(const std::string& id, const std::string& url, int tab) const {
-  auto grant = active_grants.find(id);
-  if (grant != active_grants.end() && grant->second == tab)
-    return true;
+bool ExtensionHost::allowed(const std::string& id, const std::string& url, int) const {
   auto found = permissions.find(id);
   if (found == permissions.end())
     return false;
-  for (const auto& pattern : found->second) {
-    if (pattern == "<all_urls>" &&
-        (url.starts_with("http:") || url.starts_with("https:") || url.starts_with("file:")))
-      return true;
-    if (pattern.find("://") != std::string::npos && g_pattern_match_simple(pattern.c_str(), url.c_str()))
-      return true;
-  }
+  for (const auto& pattern : found->second)
+    if (extension_host_permission_matches(pattern, url)) return true;
   return false;
 }
 void ExtensionHost::request(const Origin& origin, CefRefPtr<CefDictionaryValue> request, bool defer) {

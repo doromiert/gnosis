@@ -39,8 +39,8 @@ struct _EphyPermissionsManager {
   GHashTable *origins_mapping;
   GHashTable *settings_mapping;
 
-  GHashTable *permission_type_permitted_origins;
-  GHashTable *permission_type_denied_origins;
+  EphyEngineSession *session;
+  gboolean prepared;
 
   GSettingsBackend *backend;
 };
@@ -52,26 +52,9 @@ G_DEFINE_FINAL_TYPE (EphyPermissionsManager, ephy_permissions_manager, G_TYPE_OB
 static void
 ephy_permissions_manager_init (EphyPermissionsManager *manager)
 {
-  g_autofree char *filename = NULL;
-
   manager->origins_mapping = g_hash_table_new_full (g_str_hash, g_str_equal, g_free, g_object_unref);
   manager->settings_mapping = g_hash_table_new_full (g_direct_hash, g_direct_equal, NULL, g_free);
 
-  /* We cannot use a key_destroy_func here because we need to be able to update
-   * the GList keys without destroying the contents of the lists. */
-  manager->permission_type_permitted_origins = g_hash_table_new_full (g_direct_hash, g_direct_equal, NULL, NULL);
-  manager->permission_type_denied_origins = g_hash_table_new_full (g_direct_hash, g_direct_equal, NULL, NULL);
-
-  filename = g_build_filename (ephy_profile_dir (), PERMISSIONS_FILENAME, NULL);
-  manager->backend = g_keyfile_settings_backend_new (filename, "/", NULL);
-}
-
-static void
-free_cached_origin_list (gpointer key,
-                         gpointer value,
-                         gpointer user_data)
-{
-  g_list_free_full ((GList *)value, (GDestroyNotify)ephy_engine_origin_unref);
 }
 
 static void
@@ -82,15 +65,7 @@ ephy_permissions_manager_dispose (GObject *object)
   g_clear_pointer (&manager->origins_mapping, g_hash_table_destroy);
   g_clear_pointer (&manager->settings_mapping, g_hash_table_destroy);
 
-  if (manager->permission_type_permitted_origins) {
-    g_hash_table_foreach (manager->permission_type_permitted_origins, free_cached_origin_list, NULL);
-    g_clear_pointer (&manager->permission_type_permitted_origins, g_hash_table_destroy);
-  }
-
-  if (manager->permission_type_denied_origins) {
-    g_hash_table_foreach (manager->permission_type_denied_origins, free_cached_origin_list, NULL);
-    g_clear_pointer (&manager->permission_type_denied_origins, g_hash_table_destroy);
-  }
+  g_clear_object (&manager->session);
 
   g_clear_object (&manager->backend);
 
@@ -147,10 +122,33 @@ ephy_permissions_manager_get_settings_for_origin (EphyPermissionsManager *manage
   return settings;
 }
 
-EphyPermissionsManager *
-ephy_permissions_manager_new (void)
+static gboolean
+native_permission_kind (EphyPermissionType type, EphyEnginePermissionKind *kind)
 {
-  return EPHY_PERMISSIONS_MANAGER (g_object_new (EPHY_TYPE_PERMISSIONS_MANAGER, NULL));
+  switch (type) {
+    case EPHY_PERMISSION_TYPE_SHOW_NOTIFICATIONS: *kind = EPHY_ENGINE_PERMISSION_NOTIFICATIONS; return TRUE;
+    case EPHY_PERMISSION_TYPE_ACCESS_LOCATION: *kind = EPHY_ENGINE_PERMISSION_LOCATION; return TRUE;
+    case EPHY_PERMISSION_TYPE_ACCESS_MICROPHONE: *kind = EPHY_ENGINE_PERMISSION_MICROPHONE; return TRUE;
+    case EPHY_PERMISSION_TYPE_ACCESS_WEBCAM: *kind = EPHY_ENGINE_PERMISSION_CAMERA; return TRUE;
+    default: return FALSE;
+  }
+}
+
+EphyPermissionsManager *
+ephy_permissions_manager_new (EphyEngineSession *session)
+{
+  EphyPermissionsManager *manager = g_object_new (EPHY_TYPE_PERMISSIONS_MANAGER, NULL);
+  g_autofree char *filename = NULL;
+
+  if (session)
+    manager->session = g_object_ref (session);
+  if (session && ephy_engine_session_is_ephemeral (session)) {
+    manager->backend = g_memory_settings_backend_new ();
+  } else {
+    filename = g_build_filename (ephy_profile_dir (), PERMISSIONS_FILENAME, NULL);
+    manager->backend = g_keyfile_settings_backend_new (filename, "/", NULL);
+  }
+  return manager;
 }
 
 static const char *
@@ -194,6 +192,7 @@ ephy_permission_is_stored_by_permissions_manager (EphyPermissionType type)
     case EPHY_PERMISSION_TYPE_WEBSITE_DATA_ACCESS:
     /* fallthrough */
     case EPHY_PERMISSION_TYPE_CLIPBOARD:
+    case EPHY_PERMISSION_TYPE_OTHER:
       return FALSE;
     default:
       return TRUE;
@@ -205,79 +204,16 @@ ephy_permissions_manager_get_permission (EphyPermissionsManager *manager,
                                          EphyPermissionType      type,
                                          const char             *origin)
 {
+  EphyEnginePermissionKind kind;
   GSettings *settings;
 
   g_assert (ephy_permission_is_stored_by_permissions_manager (type));
-
+  if (manager->session && native_permission_kind (type, &kind)) {
+    ephy_permissions_manager_prepare_session (manager);
+    return (EphyPermission)ephy_engine_session_get_permission (manager->session, kind, origin, NULL);
+  }
   settings = ephy_permissions_manager_get_settings_for_origin (manager, origin);
   return settings ? g_settings_get_enum (settings, permission_type_to_string (type)) : EPHY_PERMISSION_UNDECIDED;
-}
-
-static gint
-ephy_engine_origin_compare (EphyEngineOrigin *a,
-                                EphyEngineOrigin *b)
-{
-  const char *protocol_a, *protocol_b;
-  const char *host_a, *host_b;
-
-  protocol_a = ephy_engine_origin_get_protocol (a);
-  protocol_b = ephy_engine_origin_get_protocol (b);
-  host_a = ephy_engine_origin_get_host (a);
-  host_b = ephy_engine_origin_get_host (b);
-
-  /* Security origins objects with NULL protocol or host do not represent the
-   * same origin as others with NULL protocol or host. That is, they're not
-   * equal. Therefore, they cannot be ordered, and must not be passed to this
-   * compare function.
-   */
-  g_assert (protocol_a);
-  g_assert (protocol_b);
-  g_assert (host_a);
-  g_assert (host_b);
-
-  return strcmp (protocol_a, protocol_b) || strcmp (host_a, host_b) ||
-         ephy_engine_origin_get_port (b) - ephy_engine_origin_get_port (a);
-}
-
-static void
-maybe_add_origin_to_permission_type_cache (GHashTable           *permissions,
-                                           EphyPermissionType    type,
-                                           EphyEngineOrigin *origin)
-{
-  GList *origins;
-  GList *l;
-
-  /* Add origin to the appropriate permissions cache if (a) the cache already
-   * exists, and (b) it does not already contain origin. */
-  origins = g_hash_table_lookup (permissions, GINT_TO_POINTER (type));
-  if (origins) {
-    l = g_list_find_custom (origins, origin, (GCompareFunc)ephy_engine_origin_compare);
-    if (!l) {
-      origins = g_list_prepend (origins, ephy_engine_origin_ref (origin));
-      g_hash_table_replace (permissions, GINT_TO_POINTER (type), origins);
-    }
-  }
-}
-
-static void
-maybe_remove_origin_from_permission_type_cache (GHashTable           *permissions,
-                                                EphyPermissionType    type,
-                                                EphyEngineOrigin *origin)
-{
-  GList *origins;
-  GList *l;
-
-  /* Remove origin from the appropriate permissions cache if (a) the cache
-   * exists, and (b) it contains origin. */
-  origins = g_hash_table_lookup (permissions, GINT_TO_POINTER (type));
-  if (origins) {
-    l = g_list_find_custom (origins, origin, (GCompareFunc)ephy_engine_origin_compare);
-    if (l) {
-      ephy_engine_origin_unref (l->data);
-      origins = g_list_remove_link (origins, l);
-      g_hash_table_replace (permissions, GINT_TO_POINTER (type), origins);
-    }
-  }
 }
 
 void
@@ -286,36 +222,18 @@ ephy_permissions_manager_set_permission (EphyPermissionsManager *manager,
                                          const char             *origin,
                                          EphyPermission          permission)
 {
-  EphyEngineOrigin *engine_origin;
+  EphyEnginePermissionKind kind;
   GSettings *settings;
 
   g_assert (ephy_permission_is_stored_by_permissions_manager (type));
-
-  engine_origin = ephy_engine_origin_new_for_uri (origin);
-  if (!engine_origin)
+  if (manager->session && native_permission_kind (type, &kind)) {
+    ephy_permissions_manager_prepare_session (manager);
+    ephy_engine_session_set_permission (manager->session, kind, origin, NULL, (EphyEnginePermissionState)permission);
     return;
-
-  settings = ephy_permissions_manager_get_settings_for_origin (manager, origin);
-  g_settings_set_enum (settings, permission_type_to_string (type), permission);
-
-  switch (permission) {
-    case EPHY_PERMISSION_UNDECIDED:
-      maybe_remove_origin_from_permission_type_cache (manager->permission_type_permitted_origins, type, engine_origin);
-      maybe_remove_origin_from_permission_type_cache (manager->permission_type_denied_origins, type, engine_origin);
-      break;
-    case EPHY_PERMISSION_DENY:
-      maybe_remove_origin_from_permission_type_cache (manager->permission_type_permitted_origins, type, engine_origin);
-      maybe_add_origin_to_permission_type_cache (manager->permission_type_denied_origins, type, engine_origin);
-      break;
-    case EPHY_PERMISSION_PERMIT:
-      maybe_add_origin_to_permission_type_cache (manager->permission_type_permitted_origins, type, engine_origin);
-      maybe_remove_origin_from_permission_type_cache (manager->permission_type_denied_origins, type, engine_origin);
-      break;
-    default:
-      g_assert_not_reached ();
   }
-
-  ephy_engine_origin_unref (engine_origin);
+  settings = ephy_permissions_manager_get_settings_for_origin (manager, origin);
+  if (settings)
+    g_settings_set_enum (settings, permission_type_to_string (type), permission);
 }
 
 static EphyEngineOrigin *
@@ -337,133 +255,57 @@ group_name_to_security_origin (const char *group)
   return origin;
 }
 
-static EphyEngineOrigin *
-origin_for_keyfile_key (GKeyFile           *file,
-                        const char         *filename,
-                        const char         *group,
-                        const char         *key,
-                        EphyPermissionType  type,
-                        gboolean            permit)
+void
+ephy_permissions_manager_prepare_session (EphyPermissionsManager *manager)
 {
-  EphyEngineOrigin *origin = NULL;
-
-  if (strcmp (permission_type_to_string (type), key) == 0) {
-    g_autoptr (GError) error = NULL;
-    g_autofree char *value = NULL;
-
-    value = g_key_file_get_string (file, group, key, &error);
-    if (error) {
-      g_warning ("Error processing %s group %s key %s: %s",
-                 filename, group, key, error->message);
-      return NULL;
-    }
-
-    if ((permit && strcmp (value, "'allow'") == 0) ||
-        (!permit && strcmp (value, "'deny'") == 0))
-      origin = group_name_to_security_origin (group);
-  }
-
-  return origin;
-}
-
-static GList *
-origins_for_keyfile_group (GKeyFile           *file,
-                           const char         *filename,
-                           const char         *group,
-                           EphyPermissionType  type,
-                           gboolean            permit)
-{
-  g_auto (GStrv) keys = NULL;
-  gsize keys_length;
-  GList *origins = NULL;
+  g_autoptr (GKeyFile) file = g_key_file_new ();
   g_autoptr (GError) error = NULL;
+  g_autofree char *filename = NULL;
+  g_auto (GStrv) groups = NULL;
+  g_autoptr (GArray) records = g_array_new (FALSE, FALSE, sizeof (EphyEnginePermissionRecord));
+  g_autoptr (GPtrArray) origins = g_ptr_array_new_with_free_func (g_free);
+  const EphyPermissionType types[] = { EPHY_PERMISSION_TYPE_SHOW_NOTIFICATIONS, EPHY_PERMISSION_TYPE_ACCESS_LOCATION,
+                                      EPHY_PERMISSION_TYPE_ACCESS_MICROPHONE, EPHY_PERMISSION_TYPE_ACCESS_WEBCAM };
 
-  keys = g_key_file_get_keys (file, group, &keys_length, &error);
-  if (error) {
-    g_warning ("Error processing %s group %s: %s", filename, group, error->message);
-    return NULL;
+  if (manager->prepared || !manager->session)
+    return;
+  if (ephy_engine_session_is_ephemeral (manager->session)) {
+    manager->prepared = TRUE;
+    return;
   }
-
-  for (guint i = 0; i < keys_length; i++) {
-    EphyEngineOrigin *origin;
-
-    origin = origin_for_keyfile_key (file, filename, group, keys[i], type, permit);
-    if (origin)
-      origins = g_list_prepend (origins, origin);
-  }
-
-  return origins;
-}
-
-static GList *
-ephy_permissions_manager_get_matching_origins (EphyPermissionsManager *manager,
-                                               EphyPermissionType      type,
-                                               gboolean                permit)
-{
-  GKeyFile *file;
-  char *filename;
-  char **groups = NULL;
-  gsize groups_length;
-  GList *origins = NULL;
-  GError *error = NULL;
-
-  /* Return results from cache, if they exist. */
-  if (permit) {
-    origins = g_hash_table_lookup (manager->permission_type_permitted_origins, GINT_TO_POINTER (type));
-    if (origins)
-      return origins;
-  } else {
-    origins = g_hash_table_lookup (manager->permission_type_denied_origins, GINT_TO_POINTER (type));
-    if (origins)
-      return origins;
-  }
-
-  /* Not cached. Load results from GSettings keyfile. Do it manually because the
-   * GSettings API is not designed to be used for enumerating settings. */
-  file = g_key_file_new ();
   filename = g_build_filename (ephy_profile_dir (), PERMISSIONS_FILENAME, NULL);
-
-  g_key_file_load_from_file (file, filename, G_KEY_FILE_NONE, &error);
-  if (error) {
-    if (!g_error_matches (error, G_FILE_ERROR, G_FILE_ERROR_NOENT))
-      g_warning ("Error processing %s: %s", filename, error->message);
-    g_error_free (error);
-    goto out;
+  if (!g_key_file_load_from_file (file, filename, G_KEY_FILE_NONE, &error) &&
+      !g_error_matches (error, G_FILE_ERROR, G_FILE_ERROR_NOENT)) {
+    g_warning ("Could not import saved permissions: %s", error->message);
+    return;
   }
+  groups = g_key_file_get_groups (file, NULL);
+  for (guint i = 0; groups && groups[i]; i++) {
+    g_autoptr (EphyEngineOrigin) origin = group_name_to_security_origin (groups[i]);
+    char *uri;
 
-  groups = g_key_file_get_groups (file, &groups_length);
-  for (guint i = 0; i < groups_length; i++)
-    origins = g_list_concat (origins,
-                             origins_for_keyfile_group (file, filename, groups[i], type, permit));
+    if (!origin)
+      continue;
+    uri = ephy_engine_origin_to_string (origin);
+    g_ptr_array_add (origins, uri);
+    for (guint j = 0; j < G_N_ELEMENTS (types); j++) {
+      EphyEnginePermissionRecord record = { .origin = uri };
+      g_autofree char *value = g_key_file_get_string (file, groups[i], permission_type_to_string (types[j]), NULL);
 
-  /* Cache the results. */
-  if (origins) {
-    g_hash_table_insert (permit ? manager->permission_type_permitted_origins
-                                : manager->permission_type_denied_origins,
-                         GINT_TO_POINTER (type),
-                         origins);
+      if (g_strcmp0 (value, "'allow'") == 0)
+        record.state = EPHY_ENGINE_PERMISSION_STATE_ALLOW;
+      else if (g_strcmp0 (value, "'deny'") == 0)
+        record.state = EPHY_ENGINE_PERMISSION_STATE_DENY;
+      else if (g_strcmp0 (value, "'undecided'") == 0)
+        record.state = EPHY_ENGINE_PERMISSION_STATE_ASK;
+      else
+        continue;
+      native_permission_kind (types[j], &record.kind);
+      g_array_append_val (records, record);
+    }
   }
-
-out:
-  g_key_file_unref (file);
-  g_strfreev (groups);
-  g_free (filename);
-
-  return origins;
-}
-
-GList *
-ephy_permissions_manager_get_permitted_origins (EphyPermissionsManager *manager,
-                                                EphyPermissionType      type)
-{
-  return ephy_permissions_manager_get_matching_origins (manager, type, TRUE);
-}
-
-GList *
-ephy_permissions_manager_get_denied_origins (EphyPermissionsManager *manager,
-                                             EphyPermissionType      type)
-{
-  return ephy_permissions_manager_get_matching_origins (manager, type, FALSE);
+  ephy_engine_session_import_permissions (manager->session, (EphyEnginePermissionRecord *)records->data, records->len);
+  manager->prepared = TRUE;
 }
 
 static EphyPermission

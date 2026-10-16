@@ -3,46 +3,118 @@
 #include "ephy-engine-scheme.h"
 #include "select/application.hpp"
 #include "select/clipboard.hpp"
+#include "select/page-messages.hpp"
+#include "select/devtools.hpp"
+#include "select/process-dumps.hpp"
 #include "select/extension-runtime.hpp"
 #include "include/cef_app.h"
 #include "include/cef_parser.h"
 #include "include/cef_task.h"
+#include "include/cef_version_info.h"
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 #include <map>
 #include <memory>
+#include <set>
 #include <vector>
 
 namespace {
 using Reply = std::function<void(CefRefPtr<CefDictionaryValue>, const std::string&)>;
+class ScriptEvaluation;
 class Protocol final : public CefDevToolsMessageObserver {
 public:
   CefRefPtr<CefBrowser> browser;
   CefRefPtr<CefRegistration> registration;
   std::map<int, Reply> pending;
-  int sequence = 0x4000000;
-  void send(const char* method, CefRefPtr<CefDictionaryValue> args, Reply done = {}) {
-    if (!browser) { if (done) done(nullptr, "Browser is not ready"); return; }
-    int id = ++sequence;
+  std::map<ScriptEvaluation*, std::weak_ptr<ScriptEvaluation>> evaluations;
+  void notify_evaluations();
+  std::function<void()> on_same_document;
+  struct Context { std::string frame, unique; bool main = false; };
+  std::map<int, Context> contexts;
+  std::string main_frame;
+  guint64 document_epoch = 0;
+  int send(const char* method, CefRefPtr<CefDictionaryValue> args, Reply done = {}) {
+    if (!browser) { if (done) done(nullptr, "Browser is not ready"); return 0; }
+    int id = next_devtools_message_id();
     if (done) pending[id] = std::move(done);
-    browser->GetHost()->ExecuteDevToolsMethod(id, method, args);
+    if (!send_devtools_method(browser, id, method, args)) fail(id, "Chromium rejected the operation");
+    return id;
+  }
+  void OnDevToolsEvent(CefRefPtr<CefBrowser>, const CefString& method, const void* json, size_t size) override {
+    if (method != "Runtime.executionContextCreated" && method != "Runtime.executionContextDestroyed" &&
+        method != "Runtime.executionContextsCleared" && method != "Page.frameNavigated" &&
+        method != "Page.navigatedWithinDocument") return;
+    auto value = CefParseJSON(static_cast<const char*>(json), size, JSON_PARSER_RFC);
+    auto args = value && value->GetType() == VTYPE_DICTIONARY ? value->GetDictionary() : nullptr;
+    if (!args) return;
+    if (method == "Page.navigatedWithinDocument") {
+      if (args->GetString("frameId").ToString() == main_frame && on_same_document) {
+        // Sending another DevTools command inside its event dispatch is reentrant.
+        g_idle_add_full(G_PRIORITY_DEFAULT, +[](gpointer p) -> gboolean {
+          auto current = *static_cast<CefRefPtr<Protocol>*>(p);
+          if (current->browser && current->on_same_document) current->on_same_document();
+          return G_SOURCE_REMOVE;
+        }, new CefRefPtr<Protocol>(this), +[](gpointer p) { delete static_cast<CefRefPtr<Protocol>*>(p); });
+      }
+      return;
+    }
+    if (method == "Runtime.executionContextCreated") {
+      auto context = args->GetDictionary("context");
+      auto aux = context ? context->GetDictionary("auxData") : nullptr;
+      if (context && aux)
+        contexts[context->GetInt("id")] = {aux->GetString("frameId"), context->GetString("uniqueId"), aux->GetBool("isDefault")};
+    } else if (method == "Runtime.executionContextDestroyed") {
+      auto it = contexts.find(args->GetInt("executionContextId"));
+      if (it != contexts.end() && (!args->HasKey("executionContextUniqueId") ||
+          it->second.unique == args->GetString("executionContextUniqueId").ToString())) {
+        if (it->second.main && it->second.frame == main_frame) ++document_epoch;
+        contexts.erase(it);
+      }
+    } else if (method == "Runtime.executionContextsCleared") {
+      contexts.clear();
+      ++document_epoch;
+    } else if (method == "Page.frameNavigated") {
+      auto frame = args->GetDictionary("frame");
+      if (frame && !frame->HasKey("parentId")) {
+        main_frame = frame->GetString("id");
+        ++document_epoch;
+      }
+    }
+    if (method != "Runtime.executionContextCreated") notify_evaluations();
   }
   void OnDevToolsMethodResult(CefRefPtr<CefBrowser>, int id, bool ok, const void* json, size_t size) override {
     auto it = pending.find(id);
     if (it == pending.end()) return;
-    Reply done = std::move(it->second); pending.erase(it);
     auto value = CefParseJSON(static_cast<const char*>(json), size, JSON_PARSER_RFC);
     auto result = value && value->GetType() == VTYPE_DICTIONARY ? value->GetDictionary() : nullptr;
-    struct Delivery { Reply done; CefRefPtr<CefDictionaryValue> result; bool ok; };
+    struct Delivery { CefRefPtr<Protocol> protocol; int id; CefRefPtr<CefDictionaryValue> result; bool ok; };
     g_idle_add_full(G_PRIORITY_DEFAULT, +[](gpointer p) -> gboolean {
       auto* d = static_cast<Delivery*>(p);
-      d->done(d->result, d->ok ? "" : "Chromium rejected the operation"); return G_SOURCE_REMOVE;
-    }, new Delivery{std::move(done), result, ok}, +[](gpointer p) { delete static_cast<Delivery*>(p); });
+      auto it = d->protocol->pending.find(d->id);
+      if (it != d->protocol->pending.end()) {
+        auto done = std::move(it->second); d->protocol->pending.erase(it);
+        auto error = d->result ? d->result->GetString("message").ToString() : "";
+        done(d->result, d->ok ? "" : error.empty() ? "Chromium rejected the operation" : error);
+      }
+      return G_SOURCE_REMOVE;
+    }, new Delivery{this, id, result, ok}, +[](gpointer p) { delete static_cast<Delivery*>(p); });
+  }
+  void fail(int id, const char *message) {
+    auto it = pending.find(id);
+    if (it == pending.end()) return;
+    auto done = std::move(it->second); pending.erase(it);
+    done(nullptr, message);
+  }
+  void cancel_pending(const char *message) {
+    auto calls = std::move(pending);
+    for (auto& [id, reply] : calls) reply(nullptr, message);
   }
   void stop() {
     registration = nullptr; browser = nullptr;
-    auto calls = std::move(pending);
-    for (auto& [id, reply] : calls) reply(nullptr, "Tab was closed");
+    on_same_document = nullptr;
+    contexts.clear();
+    cancel_pending("Tab was closed");
   }
 private:
   IMPLEMENT_REFCOUNTING(Protocol);
@@ -54,7 +126,7 @@ CefRefPtr<CefApp> cef_app;
 guint pump = 0;
 }
 
-struct _EphyEngineHistoryItem { GObject parent; char* uri; char* title; int id; };
+struct _EphyEngineHistoryItem { GObject parent; char* uri; char* title; int id; bool alternate; };
 typedef struct _EphyEngineHistoryItemClass { GObjectClass parent; } EphyEngineHistoryItemClass;
 G_DEFINE_TYPE(EphyEngineHistoryItem, ephy_engine_history_item, G_TYPE_OBJECT)
 static void ephy_engine_history_item_class_init(EphyEngineHistoryItemClass* klass) {
@@ -100,11 +172,24 @@ static void ephy_engine_inspector_class_init(EphyEngineInspectorClass* klass) {
     g_signal_new(name, G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST, 0, g_signal_accumulator_true_handled, nullptr, nullptr, G_TYPE_BOOLEAN, 0);
 }
 static void ephy_engine_inspector_init(EphyEngineInspector*) {}
-struct _EphyEngineResource { GObject parent; ViewData* view; };
+struct _EphyEngineResource { GObject parent; GWeakRef view; char *uri; EphyEngineResponse *response; };
 typedef struct _EphyEngineResourceClass { GObjectClass parent; } EphyEngineResourceClass;
 G_DEFINE_TYPE(EphyEngineResource, ephy_engine_resource, G_TYPE_OBJECT)
-static void ephy_engine_resource_class_init(EphyEngineResourceClass*) {}
-static void ephy_engine_resource_init(EphyEngineResource*) {}
+static void ephy_engine_resource_class_init(EphyEngineResourceClass *klass) {
+  G_OBJECT_CLASS(klass)->finalize = +[](GObject *object) {
+    auto *resource = reinterpret_cast<EphyEngineResource*>(object);
+    g_weak_ref_clear(&resource->view); g_free(resource->uri); g_clear_object(&resource->response);
+    G_OBJECT_CLASS(ephy_engine_resource_parent_class)->finalize(object);
+  };
+  g_signal_new("finished", G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST, 0,
+    nullptr, nullptr, nullptr, G_TYPE_NONE, 0);
+}
+static void ephy_engine_resource_init(EphyEngineResource *resource) { g_weak_ref_init(&resource->view, nullptr); }
+static EphyEngineResource *new_resource(EphyEngineView *view, const char *uri) {
+  auto *resource = reinterpret_cast<EphyEngineResource*>(g_object_new(ephy_engine_resource_get_type(), nullptr));
+  g_weak_ref_set(&resource->view, view); resource->uri = g_strdup(uri);
+  return resource;
+}
 struct _EphyEngineSessionState { gatomicrefcount refs; GBytes* bytes; };
 namespace {
 struct ViewData {
@@ -116,28 +201,50 @@ struct ViewData {
   EphyEngineFind* find;
   EphyEngineInspector* inspector;
   EphyEngineResource* resource;
+  std::map<int, EphyEngineResponse*> history_responses;
+  std::map<std::string, std::string> alternate_uris;
+  std::set<std::string> page_message_handlers;
   WebKitWebContext* context = nullptr;
-  WebKitNetworkSession* session = nullptr;
+  EphyEngineSession* session = nullptr;
   WebKitUserContentManager* ucm = nullptr;
-  WebKitSettings* settings = nullptr;
+  EphyEngineSettings* settings = nullptr;
   WebKitWindowProperties* window_properties = nullptr;
   WebKitEditorState* editor = nullptr;
   GdkTexture* favicon = nullptr;
   std::string uri, title, charset;
-  bool loading = false, muted = false, disposed = false;
+  std::string user_agent_override;
+  bool has_user_agent_override = false;
+  bool loading = false, muted = false, disposed = false, detached = false;
   double progress = 0, zoom = 1;
   explicit ViewData(EphyEngineView* view) : self(view), host(*runtime) {
-    browser = new Browser("about:blank", g_getenv("JUPITER_SOFTWARE_RENDERING"));
+    browser = new Browser("about:blank", g_getenv("JUPITER_SOFTWARE_RENDERING") || !ephy_engine_settings_get_hardware_acceleration());
     browser->host = &host;
+    settings = EPHY_ENGINE_SETTINGS(g_object_ref(ephy_engine_settings_get_default()));
     protocol = new Protocol;
+    protocol->on_same_document = [this] { if (!disposed) update_history(false); };
     history = reinterpret_cast<EphyEngineHistory*>(g_object_new(ephy_engine_history_get_type(), nullptr)); history->view = this;
     find = reinterpret_cast<EphyEngineFind*>(g_object_new(ephy_engine_find_get_type(), nullptr)); find->view = this;
     inspector = reinterpret_cast<EphyEngineInspector*>(g_object_new(ephy_engine_inspector_get_type(), nullptr)); inspector->view = this;
-    resource = reinterpret_cast<EphyEngineResource*>(g_object_new(ephy_engine_resource_get_type(), nullptr)); resource->view = this;
+    resource = new_resource(view, "about:blank");
     window_properties = WEBKIT_WINDOW_PROPERTIES(g_object_new(WEBKIT_TYPE_WINDOW_PROPERTIES, nullptr));
     editor = WEBKIT_EDITOR_STATE(g_object_new(WEBKIT_TYPE_EDITOR_STATE, nullptr));
     ucm = webkit_user_content_manager_new();
     browser->on_changed = [this] { changed(); };
+    browser->on_page_message = [this](const std::string& url, const std::string& name, const std::string& payload) {
+      if (disposed || detached || !page_message_handlers.contains(name) ||
+          (!alternate_uris.contains(url) && !url.starts_with("ephy-about:"))) return;
+      g_autoptr(JsonParser) parser = json_parser_new();
+      if (!json_parser_load_from_data(parser, payload.c_str(), payload.size(), nullptr)) return;
+      g_autoptr(EphyEngineView) keep_alive = EPHY_ENGINE_VIEW(g_object_ref(self));
+      g_signal_emit(self, g_signal_lookup("page-message", EPHY_TYPE_ENGINE_VIEW),
+                    g_quark_from_string(name.c_str()), json_parser_get_root(parser));
+    };
+    browser->on_permission = [this](EphyEnginePermission *request) {
+      if (disposed || detached) return false;
+      gboolean handled = false;
+      g_signal_emit_by_name(self, "permission-request", request, &handled);
+      return bool(handled);
+    };
     browser->on_favicon = [this](const std::string& page, const std::string& icon, GdkTexture* texture) {
       if (disposed) return;
       if (texture && !host.private_mode)
@@ -146,11 +253,27 @@ struct ViewData {
         g_object_notify(G_OBJECT(self), "favicon");
     };
     browser->on_closed = [this] { gboolean handled = FALSE; g_signal_emit_by_name(self, "close", &handled); };
-    browser->on_load_start = [this] { g_signal_emit_by_name(self, "load-changed", WEBKIT_LOAD_STARTED); };
+    browser->prepare_navigation = [this] { apply_user_agent(); };
+    browser->on_load_start = [this](const std::string& url) {
+      g_clear_object(&resource);
+      resource = new_resource(self, visible_uri(url).c_str());
+      g_signal_emit_by_name(self, "load-changed", WEBKIT_LOAD_STARTED);
+    };
+    browser->on_response = [this](const auto& uri, auto response) {
+      g_free(resource->uri); resource->uri = g_strdup(visible_uri(uri).c_str());
+      g_clear_object(&resource->response);
+      resource->response = ephy_engine_response_new(uri, response);
+    };
     browser->on_load_end = [this](int) {
-      g_signal_emit_by_name(self, "load-changed", WEBKIT_LOAD_COMMITTED);
       update_history();
-      g_signal_emit_by_name(self, "load-changed", WEBKIT_LOAD_FINISHED);
+    };
+    browser->on_load_error = [this](const std::string& url, const std::string& message) {
+      if (disposed || detached) return false;
+      g_autoptr(EphyEngineView) keep_alive = EPHY_ENGINE_VIEW(g_object_ref(self));
+      g_autoptr(GError) error = g_error_new_literal(G_IO_ERROR, G_IO_ERROR_FAILED, message.c_str());
+      gboolean handled = false;
+      g_signal_emit_by_name(self, "load-failed", WEBKIT_LOAD_STARTED, url.c_str(), error, &handled);
+      return bool(handled);
     };
     host.open_tab = [this](const std::string& url, bool active, bool defer) -> CefRefPtr<Browser> {
       GtkWidget* view = nullptr;
@@ -162,38 +285,91 @@ struct ViewData {
     views.push_back(this);
   }
   static ViewData* data(EphyEngineView*);
+  const std::string& visible_uri(const std::string& url) const {
+    auto found = alternate_uris.find(url);
+    return found == alternate_uris.end() ? url : found->second;
+  }
+  void apply_user_agent() {
+    if (!protocol->browser || disposed) return;
+    g_autofree char *agent = has_user_agent_override ? g_strdup(user_agent_override.c_str()) : ephy_engine_settings_dup_user_agent();
+    auto args = CefDictionaryValue::Create(); args->SetString("userAgent", agent ? agent : "");
+    // Chromium applies the network override synchronously; its renderer reply needs a document.
+    protocol->send("Emulation.setUserAgentOverride", args, [this](auto, const auto& error) {
+      if (disposed) return;
+      if (!error.empty()) g_warning("Could not apply Chromium user agent: %s", error.c_str());
+    });
+  }
   void changed() {
     if (disposed) return;
     if (browser->cef_browser() && !protocol->browser) {
       protocol->browser = browser->cef_browser();
       protocol->registration = protocol->browser->GetHost()->AddDevToolsMessageObserver(protocol);
+      protocol->send("Page.enable", nullptr);
+      protocol->send("Runtime.enable", nullptr);
+      auto current = protocol;
+      protocol->send("Page.getFrameTree", nullptr, [current](auto reply, const auto&) {
+        auto tree = reply ? reply->GetDictionary("frameTree") : nullptr;
+        auto frame = tree ? tree->GetDictionary("frame") : nullptr;
+        if (frame) current->main_frame = frame->GetString("id");
+      });
     }
-    if (uri != browser->url) { uri = browser->url; g_object_notify(G_OBJECT(self), "uri"); }
+    if (uri != visible_uri(browser->url)) { uri = visible_uri(browser->url); g_object_notify(G_OBJECT(self), "uri"); }
     if (title != browser->name) { title = browser->name; g_object_notify(G_OBJECT(self), "title"); }
     if (loading != browser->loading) { loading = browser->loading; g_object_notify(G_OBJECT(self), "is-loading"); }
     if (progress != browser->progress) { progress = browser->progress; g_object_notify(G_OBJECT(self), "estimated-load-progress"); }
     g_object_notify(G_OBJECT(self), "can-go-back"); g_object_notify(G_OBJECT(self), "can-go-forward");
   }
-  void update_history() {
-    protocol->send("Page.getNavigationHistory", nullptr, [this](auto reply, const auto& error) {
-      if (!error.empty() || !reply || !reply->HasKey("entries")) return;
-      for (auto* item : *history->items) g_object_unref(item);
-      history->items->clear();
-      history->current = reply->GetInt("currentIndex");
-      auto entries = reply->GetList("entries");
-      for (size_t i = 0; i < entries->GetSize(); i++) {
-        auto entry = entries->GetDictionary(i);
-        auto* item = reinterpret_cast<EphyEngineHistoryItem*>(g_object_new(ephy_engine_history_item_get_type(), nullptr));
-        item->uri = g_strdup(entry->GetString("url").ToString().c_str());
-        item->title = g_strdup(entry->GetString("title").ToString().c_str());
-        item->id = entry->GetInt("id"); history->items->push_back(item);
+  void update_history(bool load_events = true) {
+    auto expected = std::shared_ptr<EphyEngineResource>(static_cast<EphyEngineResource*>(g_object_ref(resource)),
+      [](auto *resource) { g_object_unref(resource); });
+    protocol->send("Page.getNavigationHistory", nullptr, [this, expected, load_events](auto reply, const auto& error) {
+      if (disposed || resource != expected.get()) return;
+      g_autoptr(EphyEngineView) keep_alive = EPHY_ENGINE_VIEW(g_object_ref(self));
+      auto entry = browser->cef_browser() ? browser->cef_browser()->GetHost()->GetVisibleNavigationEntry() : nullptr;
+      const bool restored = entry && (entry->GetTransitionType() & TT_FORWARD_BACK_FLAG);
+      if (error.empty() && reply && reply->HasKey("entries")) {
+        for (auto* item : *history->items) g_object_unref(item);
+        history->items->clear();
+        history->current = reply->GetInt("currentIndex");
+        auto entries = reply->GetList("entries");
+        std::set<int> ids;
+        for (size_t i = 0; i < entries->GetSize(); i++) {
+          auto entry = entries->GetDictionary(i);
+          auto* item = reinterpret_cast<EphyEngineHistoryItem*>(g_object_new(ephy_engine_history_item_get_type(), nullptr));
+          auto url = entry->GetString("url").ToString();
+          item->uri = g_strdup(visible_uri(url).c_str());
+          item->alternate = alternate_uris.contains(url);
+          item->title = g_strdup(entry->GetString("title").ToString().c_str());
+          item->id = entry->GetInt("id"); history->items->push_back(item);
+          ids.insert(item->id);
+          if (static_cast<int>(i) == history->current) {
+            if (resource->response) {
+              auto& cached = history_responses[item->id];
+              g_set_object(&cached, resource->response);
+            } else if (auto found = history_responses.find(item->id); restored && found != history_responses.end()) {
+              // Restoring from Chromium's page cache does not run network callbacks.
+              g_set_object(&resource->response, found->second);
+              g_free(resource->uri); resource->uri = g_strdup(ephy_engine_response_get_uri(found->second));
+            }
+          }
+        }
+        for (auto it = history_responses.begin(); it != history_responses.end();) {
+          if (ids.contains(it->first)) ++it;
+          else { g_object_unref(it->second); it = history_responses.erase(it); }
+        }
+        g_signal_emit_by_name(history, "changed", nullptr, nullptr);
       }
-      g_signal_emit_by_name(history, "changed", nullptr, nullptr);
+      if (load_events) {
+        g_signal_emit_by_name(resource, "finished");
+        g_signal_emit_by_name(self, "load-changed", WEBKIT_LOAD_COMMITTED);
+        g_signal_emit_by_name(self, "load-changed", WEBKIT_LOAD_FINISHED);
+      }
     });
   }
   ~ViewData() {
     std::erase(views, this);
     protocol->stop();
+    for (const auto& [id, response] : history_responses) g_object_unref(response);
     for (GObject* object : {G_OBJECT(history), G_OBJECT(find), G_OBJECT(inspector), G_OBJECT(resource)}) g_object_unref(object);
     g_clear_object(&context); g_clear_object(&session); g_clear_object(&ucm); g_clear_object(&settings);
     g_clear_object(&favicon); g_clear_object(&window_properties); g_clear_object(&editor);
@@ -215,6 +391,18 @@ void set_object(GObject** slot, const GValue* value) { g_set_object(slot, G_OBJE
 static void ephy_engine_web_view_class_init(EphyEngineViewClass* klass) {
   auto* object_class = G_OBJECT_CLASS(klass); auto* widget_class = GTK_WIDGET_CLASS(klass);
   widget_class->grab_focus = +[](GtkWidget* widget) -> gboolean { return gtk_widget_grab_focus(data(EPHY_ENGINE_VIEW(widget))->browser->surface()); };
+  widget_class->root = +[](GtkWidget *widget) {
+    data(EPHY_ENGINE_VIEW(widget))->detached = false;
+    GTK_WIDGET_CLASS(ephy_engine_web_view_parent_class)->root(widget);
+  };
+  widget_class->unroot = +[](GtkWidget *widget) {
+    auto *view = data(EPHY_ENGINE_VIEW(widget));
+    view->detached = true;
+    view->browser->cancel_permissions();
+    // Pending GTasks retain their source widget, so disposal alone cannot cancel them.
+    view->protocol->cancel_pending("Tab detached from its window");
+    GTK_WIDGET_CLASS(ephy_engine_web_view_parent_class)->unroot(widget);
+  };
   gtk_widget_class_set_layout_manager_type(widget_class, GTK_TYPE_BIN_LAYOUT);
   object_class->dispose = +[](GObject* object) {
     auto* d = data(EPHY_ENGINE_VIEW(object));
@@ -254,17 +442,28 @@ static void ephy_engine_web_view_class_init(EphyEngineViewClass* klass) {
     auto* d = data(EPHY_ENGINE_VIEW(object));
     switch(id) {
     case P_CONTEXT: set_object(reinterpret_cast<GObject**>(&d->context), value); break;
-    case P_SESSION:
-      set_object(reinterpret_cast<GObject**>(&d->session), value);
-      if (d->session && webkit_network_session_is_ephemeral(d->session)) {
-        d->host.private_mode = true; CefRequestContextSettings settings;
-        d->host.context = CefRequestContext::CreateContext(settings, nullptr);
-      } break;
+    case P_SESSION: {
+      auto* session = EPHY_ENGINE_SESSION(g_value_get_object(value));
+      g_set_object(reinterpret_cast<GObject**>(&d->session), G_OBJECT(session ? session : ephy_engine_session_get_default()));
+      d->host.session = d->session;
+      d->host.private_mode = ephy_engine_session_is_ephemeral(d->session);
+      d->host.context = ephy_engine_session_context(d->session);
+      break;
+    }
     case P_UCM: set_object(reinterpret_cast<GObject**>(&d->ucm), value); break;
-    case P_SETTINGS: set_object(reinterpret_cast<GObject**>(&d->settings), value); break;
+    case P_SETTINGS: {
+      auto *settings = EPHY_ENGINE_SETTINGS(g_value_get_object(value));
+      g_set_object(reinterpret_cast<GObject**>(&d->settings), G_OBJECT(settings ? settings : ephy_engine_settings_get_default()));
+      break;
+    }
     case P_RELATED: {
       auto* related = EPHY_ENGINE_VIEW(g_value_get_object(value));
-      if (related) { d->host.context = data(related)->host.context; d->host.private_mode = data(related)->host.private_mode; }
+      if (related) {
+        g_set_object(reinterpret_cast<GObject**>(&d->session), G_OBJECT(data(related)->session));
+        d->host.session = d->session;
+        d->host.context = data(related)->host.context;
+        d->host.private_mode = data(related)->host.private_mode;
+      }
       break;
     }
     case P_AUTOMATION: case P_EXTENSION_MODE: case P_CSP: break;
@@ -280,7 +479,7 @@ static void ephy_engine_web_view_class_init(EphyEngineViewClass* klass) {
   g_object_class_install_property(object_class, P_PROGRESS, g_param_spec_double("estimated-load-progress", nullptr, nullptr, 0, 1, 0, flags));
   g_object_class_install_property(object_class, P_ZOOM, g_param_spec_double("zoom-level", nullptr, nullptr, .1, 10, 1, flags));
   g_object_class_install_property(object_class, P_FAVICON, g_param_spec_object("favicon", nullptr, nullptr, GDK_TYPE_TEXTURE, flags));
-  for (auto [id, name, type] : {std::tuple{P_CONTEXT,"web-context",WEBKIT_TYPE_WEB_CONTEXT}, {P_SESSION,"network-session",WEBKIT_TYPE_NETWORK_SESSION}, {P_UCM,"user-content-manager",WEBKIT_TYPE_USER_CONTENT_MANAGER}, {P_SETTINGS,"settings",WEBKIT_TYPE_SETTINGS}, {P_RELATED,"related-view",EPHY_TYPE_ENGINE_VIEW}})
+  for (auto [id, name, type] : {std::tuple{P_CONTEXT,"web-context",WEBKIT_TYPE_WEB_CONTEXT}, {P_SESSION,"network-session",EPHY_TYPE_ENGINE_SESSION}, {P_UCM,"user-content-manager",WEBKIT_TYPE_USER_CONTENT_MANAGER}, {P_SETTINGS,"settings",EPHY_TYPE_ENGINE_SETTINGS}, {P_RELATED,"related-view",EPHY_TYPE_ENGINE_VIEW}})
     g_object_class_install_property(object_class, id, g_param_spec_object(name, nullptr, nullptr, type, construct));
   g_object_class_install_property(object_class, P_AUTOMATION, g_param_spec_boolean("is-controlled-by-automation", nullptr, nullptr, false, construct));
   g_object_class_install_property(object_class, P_EXTENSION_MODE, g_param_spec_enum("web-extension-mode", nullptr, nullptr, WEBKIT_TYPE_WEB_EXTENSION_MODE, WEBKIT_WEB_EXTENSION_MODE_NONE, construct));
@@ -294,7 +493,7 @@ static void ephy_engine_web_view_class_init(EphyEngineViewClass* klass) {
   g_signal_new("close", G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST, G_STRUCT_OFFSET(EphyEngineViewClass, close), nullptr, nullptr, nullptr, G_TYPE_NONE, 0);
   g_signal_new("script-dialog", G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST, G_STRUCT_OFFSET(EphyEngineViewClass, script_dialog), g_signal_accumulator_true_handled, nullptr, nullptr, G_TYPE_BOOLEAN, 1, WEBKIT_TYPE_SCRIPT_DIALOG);
   g_signal_new("decide-policy", G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST, G_STRUCT_OFFSET(EphyEngineViewClass, decide_policy), g_signal_accumulator_true_handled, nullptr, nullptr, G_TYPE_BOOLEAN, 2, WEBKIT_TYPE_POLICY_DECISION, WEBKIT_TYPE_POLICY_DECISION_TYPE);
-  g_signal_new("permission-request", G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST, G_STRUCT_OFFSET(EphyEngineViewClass, permission_request), g_signal_accumulator_true_handled, nullptr, nullptr, G_TYPE_BOOLEAN, 1, WEBKIT_TYPE_PERMISSION_REQUEST);
+  g_signal_new("permission-request", G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST, G_STRUCT_OFFSET(EphyEngineViewClass, permission_request), g_signal_accumulator_true_handled, nullptr, nullptr, G_TYPE_BOOLEAN, 1, EPHY_TYPE_ENGINE_PERMISSION);
   g_signal_new("mouse-target-changed", G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST, G_STRUCT_OFFSET(EphyEngineViewClass, mouse_target_changed), nullptr, nullptr, nullptr, G_TYPE_NONE, 2, WEBKIT_TYPE_HIT_TEST_RESULT, G_TYPE_UINT);
   g_signal_new("print", G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST, G_STRUCT_OFFSET(EphyEngineViewClass, print), g_signal_accumulator_true_handled, nullptr, nullptr, G_TYPE_BOOLEAN, 1, WEBKIT_TYPE_PRINT_OPERATION);
   g_signal_new("resource-load-started", G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST, G_STRUCT_OFFSET(EphyEngineViewClass, resource_load_started), nullptr, nullptr, nullptr, G_TYPE_NONE, 2, ephy_engine_resource_get_type(), WEBKIT_TYPE_URI_REQUEST);
@@ -313,7 +512,8 @@ static void ephy_engine_web_view_class_init(EphyEngineViewClass* klass) {
   g_signal_new("show-option-menu", G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST, G_STRUCT_OFFSET(EphyEngineViewClass, show_option_menu), g_signal_accumulator_true_handled, nullptr, nullptr, G_TYPE_BOOLEAN, 2, WEBKIT_TYPE_OPTION_MENU, GDK_TYPE_RECTANGLE);
   g_signal_new("web-process-terminated", G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST, G_STRUCT_OFFSET(EphyEngineViewClass, web_process_terminated), nullptr, nullptr, nullptr, G_TYPE_NONE, 1, WEBKIT_TYPE_WEB_PROCESS_TERMINATION_REASON);
   g_signal_new("user-message-received", G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST, G_STRUCT_OFFSET(EphyEngineViewClass, user_message_received), g_signal_accumulator_true_handled, nullptr, nullptr, G_TYPE_BOOLEAN, 1, WEBKIT_TYPE_USER_MESSAGE);
-  g_signal_new("query-permission-state", G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST, G_STRUCT_OFFSET(EphyEngineViewClass, query_permission_state), g_signal_accumulator_true_handled, nullptr, nullptr, G_TYPE_BOOLEAN, 1, WEBKIT_TYPE_PERMISSION_STATE_QUERY);
+  g_signal_new("page-message", G_TYPE_FROM_CLASS(klass), static_cast<GSignalFlags>(G_SIGNAL_RUN_LAST | G_SIGNAL_DETAILED),
+               0, nullptr, nullptr, nullptr, G_TYPE_NONE, 1, JSON_TYPE_NODE);
 }
 static void ephy_engine_web_view_init(EphyEngineView* view) {
   static_cast<EphyEngineViewPrivate*>(ephy_engine_web_view_get_instance_private(view))->data = new ViewData(view);
@@ -325,22 +525,54 @@ public:
   std::string extension_paths;
   bool diagnostic = false;
   CefRefPtr<CefBrowserProcessHandler> GetBrowserProcessHandler() override { return this; }
-  CefRefPtr<CefRenderProcessHandler> GetRenderProcessHandler() override { return Clipboard::renderer_handler(); }
+  CefRefPtr<CefRenderProcessHandler> GetRenderProcessHandler() override { return renderer_; }
   void OnBeforeCommandLineProcessing(const CefString& process, CefRefPtr<CefCommandLine> command) override {
     if (!process.empty()) return;
     configure_extensions(command, extension_paths);
     if (diagnostic) command->AppendSwitchWithValue("password-store", "basic");
     command->AppendSwitchWithValue("ozone-platform", g_getenv("WAYLAND_DISPLAY") ? "wayland" : "x11");
-    command->AppendSwitchWithValue("use-angle", "gl-egl");
+    // Dawn needs Chromium's Vulkan context on Linux; keep its adapter blocklist.
+    auto features = command->GetSwitchValue("enable-features").ToString();
+    command->AppendSwitchWithValue("enable-features", features + ",WebGPUService,Vulkan,VulkanFromANGLE");
+    if (!command->HasSwitch("use-angle")) command->AppendSwitchWithValue("use-angle", "vulkan");
+    ephy_engine_settings_configure_command_line(command);
   }
   void OnRegisterCustomSchemes(CefRawPtr<CefSchemeRegistrar> registrar) override { ephy_engine_register_schemes(registrar); }
-  void OnContextInitialized() override { enable_extension_developer_mode(); ephy_engine_install_scheme_handlers(); }
+  void OnRegisterCustomPreferences(cef_preferences_type_t type, CefRawPtr<CefPreferenceRegistrar> registrar) override {
+    ephy_engine_sessions_register_preferences(type, registrar);
+  }
+  void OnContextInitialized() override { ephy_engine_sessions_initialize(); enable_extension_developer_mode(); ephy_engine_install_scheme_handlers(); }
 private:
+  CefRefPtr<CefRenderProcessHandler> renderer_ = PageMessages::renderer_handler();
   IMPLEMENT_REFCOUNTING(Engine);
 };
 CefRefPtr<Engine> engine;
 }
+char* ephy_engine_dup_version_info() {
+  cef_version_info_t version{};
+  version.size = sizeof(version);
+  cef_version_info_all(&version);
+  return g_strdup_printf("CEF %d.%d.%d\nChromium %d.%d.%d.%d",
+    version.cef_version_major, version.cef_version_minor, version.cef_version_patch,
+    version.chrome_version_major, version.chrome_version_minor,
+    version.chrome_version_build, version.chrome_version_patch);
+}
+void ephy_engine_views_preferences_changed(const char *property) {
+  if (strcmp(property, "user-agent")) return;
+  for (auto *view : views) view->apply_user_agent();
+}
+void ephy_engine_web_view_set_user_agent_override(EphyEngineView *view, const char *agent) {
+  auto *d = data(view);
+  d->has_user_agent_override = agent != nullptr;
+  d->user_agent_override = agent ? agent : "";
+  d->browser->set_user_agent_override(agent);
+  d->apply_user_agent();
+}
 int ephy_engine_execute_process(int argc, char** argv) {
+  if (!prevent_memory_core_dumps()) {
+    g_printerr("Cannot disable Chromium memory core dumps; refusing to start.\n");
+    return 1;
+  }
   engine = new Engine;
   return CefExecuteProcess(CefMainArgs(argc, argv), engine, nullptr);
 }
@@ -348,6 +580,7 @@ gboolean ephy_engine_initialize(int argc, char** argv, const char* profile, gboo
   try { runtime = new Application(profile); }
   catch (const std::exception& error) { g_printerr("Extensions: %s\n", error.what()); return false; }
   runtime->gtk_app = g_application_get_default();
+  runtime->render_test = self_test;
   engine->extension_paths = runtime->extensions.load_paths();
   for (const auto& ext : runtime->extensions.installed) if (ext.enabled) {
     runtime->extension_host->extension_ids.insert(ext.id);
@@ -400,13 +633,38 @@ gboolean ephy_engine_initialize(int argc, char** argv, const char* profile, gboo
   CefString(&settings.locales_dir_path) = std::string(CEF_RESOURCE_DIR) + "/locales";
   CefString(&settings.log_file) = std::string(profile) + "/chromium.log";
   settings.log_severity = LOGSEVERITY_WARNING;
+  // Chromium 150's GTK4 DPI fallback calls the removed GTK3 GdkScreen API.
+  // GTK scales logical 96-DPI fonts separately for each monitor.
+  auto *gtk_settings = gtk_settings_get_default();
+  int dpi = -1;
+  g_object_get(gtk_settings, "gtk-xft-dpi", &dpi, nullptr);
+  if (dpi <= 0) g_object_set(gtk_settings, "gtk-xft-dpi", 96 * 1024, nullptr);
   if (!CefInitialize(CefMainArgs(argc, argv), settings, engine, nullptr)) return false;
   pump = g_timeout_add(8, +[](gpointer) -> gboolean { CefDoMessageLoopWork(); return G_SOURCE_CONTINUE; }, nullptr);
   return true;
 }
+gboolean ephy_engine_prepare_shutdown() {
+  if (!runtime) return true;
+  ephy_engine_downloads_shutdown();
+  std::vector<std::pair<CefRefPtr<Protocol>, CefRefPtr<Browser>>> closing;
+  for (auto *view : views) closing.emplace_back(view->protocol, view->browser);
+  for (auto& [protocol, browser] : closing) { protocol->stop(); browser->shutdown(); }
+  auto deadline = g_get_monotonic_time() + 5 * G_TIME_SPAN_SECOND;
+  do {
+    CefDoMessageLoopWork();
+    while (g_main_context_pending(nullptr)) g_main_context_iteration(nullptr, false);
+    if (!Browser::active_count) return true;
+    g_usleep(1000);
+  } while (g_get_monotonic_time() < deadline);
+  return false;
+}
 void ephy_engine_shutdown() {
+  if (!ephy_engine_prepare_shutdown()) {
+    g_printerr("Chromium did not close its browsers; exiting without a core dump.\n");
+    std::_Exit(1);
+  }
   if (pump) { g_source_remove(pump); pump = 0; }
-  if (runtime) { runtime->extension_host->stop(); delete runtime; runtime = nullptr; CefShutdown(); }
+  if (runtime) { runtime->extension_host->stop(); delete runtime; runtime = nullptr; ephy_engine_sessions_shutdown(); CefShutdown(); }
   ephy_engine_clear_scheme_handlers();
   engine = nullptr;
 }
@@ -437,10 +695,26 @@ gboolean ephy_engine_web_view_is_controlled_by_automation(EphyEngineView*) { ret
 WebKitWebContext* ephy_engine_web_view_get_context(EphyEngineView* v) { return data(v)->context; }
 void ephy_engine_web_view_try_close(EphyEngineView* v) { data(v)->browser->close(); }
 void ephy_engine_web_view_load_uri(EphyEngineView* v, const gchar* uri) { data(v)->browser->navigate(uri ? uri : "about:blank"); }
-void ephy_engine_web_view_load_alternate_html(EphyEngineView* v, const gchar* content, const gchar*, const gchar*) {
+void ephy_engine_web_view_register_page_message_handler(EphyEngineView* view, const char* name) {
+  g_return_if_fail(EPHY_IS_ENGINE_VIEW(view));
+  g_return_if_fail(name && *name && strlen(name) <= 128);
+  data(view)->page_message_handlers.insert(name);
+}
+void ephy_engine_web_view_unregister_page_message_handler(EphyEngineView* view, const char* name) {
+  g_return_if_fail(EPHY_IS_ENGINE_VIEW(view));
+  g_return_if_fail(name);
+  data(view)->page_message_handlers.erase(name);
+}
+void ephy_engine_web_view_load_alternate_html(EphyEngineView* v, const gchar* content, const gchar* content_uri, const gchar*) {
   char* encoded = g_base64_encode(reinterpret_cast<const guchar*>(content), strlen(content));
   std::string url = "data:text/html;charset=utf-8;base64," + std::string(encoded); g_free(encoded);
-  data(v)->browser->navigate(url);
+  g_autofree char *id = g_uuid_string_random();
+  url += std::string("#jupiter-alternate-") + id;
+  auto *d = data(v);
+  // Keep the opaque data origin, but expose and save the intended page address.
+  d->alternate_uris[url] = content_uri ? content_uri : "about:blank";
+  d->browser->navigate(url);
+  d->changed();
 }
 void ephy_engine_web_view_load_request(EphyEngineView* v, WebKitURIRequest* r) { ephy_engine_web_view_load_uri(v, webkit_uri_request_get_uri(r)); }
 void ephy_engine_web_view_stop_loading(EphyEngineView* v) { if (auto b=data(v)->browser->cef_browser()) b->StopLoad(); }
@@ -450,8 +724,16 @@ void ephy_engine_web_view_set_is_muted(EphyEngineView* v, gboolean value) { data
 gboolean ephy_engine_web_view_get_is_muted(EphyEngineView* v) { return data(v)->muted; }
 guint64 ephy_engine_web_view_get_page_id(EphyEngineView* v) { return reinterpret_cast<guintptr>(v); }
 const gchar* ephy_engine_web_view_get_title(EphyEngineView* v) { return data(v)->title.c_str(); }
-void ephy_engine_web_view_reload(EphyEngineView* v) { data(v)->browser->reload(); }
-void ephy_engine_web_view_reload_bypass_cache(EphyEngineView* v) { if(auto b=data(v)->browser->cef_browser()) b->ReloadIgnoreCache(); else data(v)->browser->reload(); }
+void ephy_engine_web_view_reload(EphyEngineView* v) {
+  auto *d = data(v);
+  if (d->alternate_uris.contains(d->browser->url)) ephy_engine_web_view_load_uri(v, d->uri.c_str());
+  else d->browser->reload();
+}
+void ephy_engine_web_view_reload_bypass_cache(EphyEngineView* v) {
+  if (data(v)->alternate_uris.contains(data(v)->browser->url)) ephy_engine_web_view_reload(v);
+  else if(auto b=data(v)->browser->cef_browser()) b->ReloadIgnoreCache();
+  else data(v)->browser->reload();
+}
 gdouble ephy_engine_web_view_get_estimated_load_progress(EphyEngineView* v) { return data(v)->progress; }
 void ephy_engine_web_view_go_back(EphyEngineView* v) { data(v)->browser->back(); }
 void ephy_engine_web_view_go_forward(EphyEngineView* v) { data(v)->browser->forward(); }
@@ -459,6 +741,7 @@ gboolean ephy_engine_web_view_can_go_back(EphyEngineView* v) { return data(v)->b
 gboolean ephy_engine_web_view_can_go_forward(EphyEngineView* v) { return data(v)->browser->can_forward(); }
 EphyEngineHistory* ephy_engine_web_view_get_back_forward_list(EphyEngineView* v) { return data(v)->history; }
 void ephy_engine_web_view_go_to_back_forward_list_item(EphyEngineView* v, EphyEngineHistoryItem* item) {
+  if (item->alternate || item->id < 0) { ephy_engine_web_view_load_uri(v, item->uri); return; }
   auto args=CefDictionaryValue::Create(); args->SetInt("entryId", item->id);
   data(v)->protocol->send("Page.navigateToHistoryEntry", args);
 }
@@ -501,38 +784,182 @@ void ephy_engine_web_inspector_show(EphyEngineInspector* i) {
   if(auto b=i->view->browser->cef_browser()) { CefWindowInfo info; CefBrowserSettings settings; b->GetHost()->ShowDevTools(info,nullptr,settings,CefPoint()); }
 }
 void ephy_engine_web_inspector_close(EphyEngineInspector* i) { if(auto b=i->view->browser->cef_browser())b->GetHost()->CloseDevTools(); }
-void ephy_engine_web_view_evaluate_javascript(EphyEngineView* v,const char* script,gssize length,const char* world,const char*,GCancellable* cancel,GAsyncReadyCallback cb,gpointer user) {
-  auto* task=g_task_new(v,cancel,cb,user);
-  auto* d=data(v);
-  auto args=CefDictionaryValue::Create();
-  args->SetString("expression",std::string(script,length<0?strlen(script):size_t(length)));
-  args->SetBool("returnByValue",true); args->SetBool("awaitPromise",true);
-  // Epiphany's named worlds must never be silently evaluated in a site's main world.
-  if(world && *world) { unsupported(task,"The named JavaScript world has not been initialized");return; }
-  d->protocol->send("Runtime.evaluate",args,[task](auto reply,const auto& error) {
-    if(!error.empty()||!reply||reply->HasKey("exceptionDetails")) {
-      g_task_return_new_error(task,G_IO_ERROR,G_IO_ERROR_FAILED,"%s",error.empty()?"JavaScript evaluation failed":error.c_str());
-    } else {
-      auto result=reply->GetDictionary("result"); auto* context=jsc_context_new(); JSCValue* value=nullptr;
-      if(result && result->HasKey("value")) {
-        auto json=CefWriteJSON(result->GetValue("value"),JSON_WRITER_DEFAULT).ToString();
-        value=jsc_value_new_from_json(context,json.c_str());
-      }
-      if(!value)value=jsc_value_new_undefined(context);
-      g_task_return_pointer(task,value,g_object_unref); g_object_unref(context);
+namespace {
+class ScriptEvaluation final : public std::enable_shared_from_this<ScriptEvaluation> {
+public:
+  ScriptEvaluation(EphyEngineView *view, const char *script, gssize length, const char *world,
+                   const char *source, GCancellable *cancel, GAsyncReadyCallback callback, gpointer user)
+    : task_(g_task_new(view, cancel, callback, user)), view_(data(view)), protocol_(view_->protocol),
+      script_(script, length < 0 ? strlen(script) : size_t(length)), world_(world ? world : ""),
+      epoch_(protocol_->document_epoch) {
+    if (source && *source) {
+      g_autofree char *uri = g_uri_escape_string(source, ":/?#[]@!$&'()*+,;=%", false);
+      script_ += std::string("\n//# sourceURL=") + uri;
     }
-    g_object_unref(task);
-  });
+  }
+  ~ScriptEvaluation() { g_object_unref(task_); }
+  void start() {
+    auto self = shared_from_this();
+    if (auto *cancel = g_task_get_cancellable(task_)) {
+      cancel_handler_ = g_cancellable_connect(cancel, G_CALLBACK(+[](GCancellable*, gpointer p) {
+        // Cancellation may originate off the GTK thread, or during connect().
+        g_idle_add_full(G_PRIORITY_DEFAULT, +[](gpointer p) -> gboolean {
+          if (auto self = static_cast<std::weak_ptr<ScriptEvaluation>*>(p)->lock()) {
+            if (!self->complete_) {
+              self->protocol_->fail(self->pending_, "Operation was cancelled");
+              self->fail(G_IO_ERROR_CANCELLED, "Operation was cancelled");
+            }
+          }
+          return G_SOURCE_REMOVE;
+        }, new std::weak_ptr<ScriptEvaluation>(*static_cast<std::weak_ptr<ScriptEvaluation>*>(p)),
+          +[](gpointer p) { delete static_cast<std::weak_ptr<ScriptEvaluation>*>(p); });
+      }), new std::weak_ptr<ScriptEvaluation>(self),
+        +[](gpointer p) { delete static_cast<std::weak_ptr<ScriptEvaluation>*>(p); });
+    }
+    if (!ready()) return;
+    protocol_->evaluations[this] = self;
+    pending_ = protocol_->send("Runtime.enable", nullptr, [self](auto, const auto& error) {
+      if (self->ready(error)) self->get_frame();
+    });
+  }
+  void context_changed() {
+    if (!ready()) protocol_->pending.erase(pending_);
+  }
+private:
+  GTask *task_;
+  ViewData *view_;
+  CefRefPtr<Protocol> protocol_;
+  std::string script_, world_, context_;
+  guint64 epoch_;
+  gulong cancel_handler_ = 0;
+  int pending_ = 0;
+  bool complete_ = false;
+  void finish() {
+    complete_ = true;
+    protocol_->evaluations.erase(this);
+    if (cancel_handler_) {
+      g_cancellable_disconnect(g_task_get_cancellable(task_), cancel_handler_);
+      cancel_handler_ = 0;
+    }
+  }
+  void fail(GIOErrorEnum code, const char *message) {
+    if (complete_) return;
+    finish();
+    g_task_return_new_error(task_, G_IO_ERROR, code, "%s", message);
+  }
+  bool ready(const std::string& error = {}) {
+    if (complete_) return false;
+    auto *cancel = g_task_get_cancellable(task_);
+    if (cancel && g_cancellable_is_cancelled(cancel)) fail(G_IO_ERROR_CANCELLED, "Operation was cancelled");
+    else if (view_->disposed || view_->detached) fail(G_IO_ERROR_CLOSED, "Tab was closed or detached from its window");
+    else if (protocol_->document_epoch != epoch_) fail(G_IO_ERROR_CANCELLED, "Document changed during script evaluation");
+    else if (!context_.empty() && std::none_of(protocol_->contexts.begin(), protocol_->contexts.end(),
+               [this](const auto& entry) { return entry.second.unique == context_; }))
+      fail(G_IO_ERROR_CANCELLED, "The script execution context was destroyed");
+    else if (!error.empty()) fail(G_IO_ERROR_FAILED, error.c_str());
+    return !complete_;
+  }
+  void get_frame() {
+    auto self = shared_from_this();
+    pending_ = protocol_->send("Page.getFrameTree", nullptr, [self](auto reply, const auto& error) {
+      if (!self->ready(error)) return;
+      auto tree = reply ? reply->GetDictionary("frameTree") : nullptr;
+      auto frame = tree ? tree->GetDictionary("frame") : nullptr;
+      auto id = frame ? frame->GetString("id").ToString() : "";
+      if (id.empty()) { self->fail(G_IO_ERROR_FAILED, "Chromium did not provide the document frame"); return; }
+      self->protocol_->main_frame = id;
+      if (self->world_.empty()) {
+        for (const auto& [number, context] : self->protocol_->contexts) {
+          if (context.main && context.frame == id) { self->evaluate(context.unique); return; }
+        }
+        self->fail(G_IO_ERROR_FAILED, "The document execution context is unavailable");
+      } else self->create_world(id);
+    });
+  }
+  void create_world(const std::string& frame) {
+    auto args = CefDictionaryValue::Create();
+    args->SetString("frameId", frame);
+    args->SetString("worldName", "Jupiter page " + world_);
+    args->SetBool("grantUniveralAccess", false);
+    auto self = shared_from_this();
+    pending_ = protocol_->send("Page.createIsolatedWorld", args, [self](auto reply, const auto& error) {
+      if (!self->ready(error)) return;
+      auto it = reply ? self->protocol_->contexts.find(reply->GetInt("executionContextId")) : self->protocol_->contexts.end();
+      if (it == self->protocol_->contexts.end()) { self->fail(G_IO_ERROR_FAILED, "The isolated execution context is unavailable"); return; }
+      self->evaluate(it->second.unique);
+    });
+  }
+  void evaluate(const std::string& context) {
+    if (context.empty()) { fail(G_IO_ERROR_FAILED, "Chromium did not provide a unique execution context"); return; }
+    context_ = context;
+    auto args = CefDictionaryValue::Create();
+    args->SetString("expression", script_);
+    // Numeric context IDs can be reused after navigation to another process.
+    args->SetString("uniqueContextId", context);
+    args->SetBool("returnByValue", true);
+    args->SetBool("awaitPromise", true);
+    auto self = shared_from_this();
+    pending_ = protocol_->send("Runtime.evaluate", args, [self](auto reply, const auto& error) {
+      if (!self->ready(error)) return;
+      if (!reply || reply->HasKey("exceptionDetails")) {
+        self->fail(G_IO_ERROR_FAILED, "JavaScript evaluation failed"); return;
+      }
+      auto remote = reply->GetDictionary("result");
+      if (!remote || !remote->HasKey("type")) {
+        self->fail(G_IO_ERROR_INVALID_DATA, "Chromium did not return a script result"); return;
+      }
+      if (remote->HasKey("objectId")) {
+        auto release = CefDictionaryValue::Create();
+        release->SetString("objectId", remote->GetString("objectId"));
+        self->protocol_->send("Runtime.releaseObject", release);
+        remote->Remove("objectId");
+      }
+      auto serialized = CefValue::Create(); serialized->SetDictionary(remote);
+      auto json = CefWriteJSON(serialized, JSON_WRITER_DEFAULT).ToString();
+      g_autoptr(JsonParser) parser = json_parser_new();
+      GError *parse_error = nullptr;
+      if (!json_parser_load_from_data(parser, json.c_str(), json.size(), &parse_error)) {
+        self->fail(G_IO_ERROR_INVALID_DATA, parse_error->message);
+        g_error_free(parse_error); return;
+      }
+      auto *value = json_object_ref(json_node_get_object(json_parser_get_root(parser)));
+      self->finish();
+      g_task_return_pointer(self->task_, value, reinterpret_cast<GDestroyNotify>(json_object_unref));
+    });
+  }
+};
+void Protocol::notify_evaluations() {
+  // Chromium may destroy a document without replying to its awaited scripts.
+  const auto watching = evaluations;
+  for (const auto& [evaluation, weak] : watching)
+    if (auto call = weak.lock()) call->context_changed();
 }
-JSCValue* ephy_engine_web_view_evaluate_javascript_finish(EphyEngineView*,GAsyncResult* r,GError** e) { return JSC_VALUE(g_task_propagate_pointer(G_TASK(r),e)); }
+}
+void ephy_engine_web_view_evaluate_javascript(EphyEngineView *view, const char *script, gssize length,
+                                            const char *world, const char *source, GCancellable *cancel,
+                                            GAsyncReadyCallback callback, gpointer user) {
+  g_return_if_fail(EPHY_IS_ENGINE_VIEW(view));
+  g_return_if_fail(script);
+  std::make_shared<ScriptEvaluation>(view, script, length, world, source, cancel, callback, user)->start();
+}
+JsonObject* ephy_engine_web_view_evaluate_javascript_finish(EphyEngineView *view, GAsyncResult *result, GError **error) {
+  g_return_val_if_fail(g_task_is_valid(result, view), nullptr);
+  return static_cast<JsonObject*>(g_task_propagate_pointer(G_TASK(result), error));
+}
 EphyEngineResource* ephy_engine_web_view_get_main_resource(EphyEngineView* v) { return data(v)->resource; }
 EphyEngineInspector* ephy_engine_web_view_get_inspector(EphyEngineView* v) { return data(v)->inspector; }
-const gchar* ephy_engine_web_resource_get_uri(EphyEngineResource* r) { return r->view->uri.c_str(); }
-WebKitURIResponse* ephy_engine_web_resource_get_response(EphyEngineResource*) { return nullptr; }
+const gchar* ephy_engine_web_resource_get_uri(EphyEngineResource* r) { return r->uri; }
+EphyEngineResponse* ephy_engine_web_resource_get_response(EphyEngineResource* r) { return r->response; }
 namespace {
 class Source final : public CefStringVisitor {
 public:
   explicit Source(GTask* t):task(t){}
+  ~Source() override {
+    if (task) {
+      g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_CLOSED, "The document was closed while reading its source");
+      g_object_unref(task);
+    }
+  }
   void Visit(const CefString& string) override {
     auto text=string.ToString(); auto* bytes=g_bytes_new(text.data(),text.size());
     g_task_return_pointer(task,bytes,reinterpret_cast<GDestroyNotify>(g_bytes_unref));g_object_unref(task);task=nullptr;
@@ -544,8 +971,14 @@ private:
 }
 void ephy_engine_web_resource_get_data(EphyEngineResource* r,GCancellable* cancel,GAsyncReadyCallback cb,gpointer user) {
   auto* task=g_task_new(r,cancel,cb,user);
-  if(auto b=r->view->browser->cef_browser())b->GetMainFrame()->GetSource(new Source(task));
+  if (g_task_return_error_if_cancelled(task)) { g_object_unref(task); return; }
+  auto *view = EPHY_ENGINE_VIEW(g_weak_ref_get(&r->view));
+  if (!view || data(view)->disposed || data(view)->resource != r) {
+    g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_CLOSED, "The resource's document is no longer active");
+    g_object_unref(task);
+  } else if (auto b=data(view)->browser->cef_browser()) b->GetMainFrame()->GetSource(new Source(task));
   else unsupported(task,"Browser is not ready");
+  g_clear_object(&view);
 }
 guchar* ephy_engine_web_resource_get_data_finish(EphyEngineResource*,GAsyncResult* result,gsize* length,GError** error) {
   auto* bytes=static_cast<GBytes*>(g_task_propagate_pointer(G_TASK(result),error));if(!bytes)return nullptr;
@@ -595,7 +1028,17 @@ EphyEngineSessionState* ephy_engine_web_view_get_session_state(EphyEngineView* v
 }
 void ephy_engine_web_view_restore_session_state(EphyEngineView* v,EphyEngineSessionState* state) {
   auto* value=g_variant_ref_sink(g_variant_new_from_bytes(G_VARIANT_TYPE("(ss)"),state->bytes,false));
-  if(g_variant_is_normal_form(value)) { const char *uri,*title;g_variant_get(value,"(&s&s)",&uri,&title);data(v)->browser->url=uri;data(v)->browser->name=title;data(v)->changed(); }
+  if(g_variant_is_normal_form(value)) {
+    const char *uri,*title; g_variant_get(value,"(&s&s)",&uri,&title);
+    auto *d = data(v);
+    for (auto *item : *d->history->items) g_object_unref(item);
+    d->history->items->clear();
+    auto *item = reinterpret_cast<EphyEngineHistoryItem*>(g_object_new(ephy_engine_history_item_get_type(), nullptr));
+    item->uri = g_strdup(uri); item->title = g_strdup(title); item->id = -1;
+    d->history->items->push_back(item); d->history->current = 0;
+    d->browser->url=uri; d->browser->name=title; d->changed();
+    g_signal_emit_by_name(d->history, "changed", nullptr, nullptr);
+  }
   g_variant_unref(value);
 }
 EphyEngineSessionState* ephy_engine_web_view_session_state_new(GBytes* bytes) { auto* state=new EphyEngineSessionState;g_atomic_ref_count_init(&state->refs);state->bytes=g_bytes_ref(bytes);return state; }

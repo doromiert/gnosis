@@ -1,6 +1,7 @@
 // CEF host callbacks. This module owns no browser chrome or tab widgets.
 #pragma once
 #include "browser.hpp"
+#include "ephy-engine-session.h"
 #include "extension-host.hpp"
 #include "extensions.hpp"
 #include "include/cef_request_context.h"
@@ -22,6 +23,7 @@ public:
   GtkWindow* window = nullptr;
   bool closing = false, destroyed = false, private_mode = false;
   CefRefPtr<CefRequestContext> context;
+  EphyEngineSession* session = nullptr;
   std::function<CefRefPtr<Browser>(const std::string&, bool, bool)> open_tab;
   std::function<void(const std::string&)> notify;
   std::function<void()> refresh, closed;

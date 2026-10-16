@@ -40,7 +40,7 @@ std::string Extensions::id_for_path(const std::string& path) {
   auto p = fs::absolute(path).lexically_normal().string();
   return extension_id(reinterpret_cast<const guchar*>(p.data()), p.size());
 }
-Extension Extensions::inspect(const std::string& path) const {
+Extension Extensions::read_manifest(const std::string& path) {
   Extension e;
   e.path = fs::absolute(path).lexically_normal().string();
   e.id = id_for_path(e.path);
@@ -108,6 +108,10 @@ Extension Extensions::inspect(const std::string& path) const {
       !local_page(e.popup) || !local_page(e.options))
     throw std::runtime_error(
         "The manifest must describe a Manifest V2 or V3 extension with valid local pages.");
+  return e;
+}
+Extension Extensions::inspect(const std::string& path) const {
+  auto e = read_manifest(path);
   e.enabled = !fs::exists(directory_ + "/disabled/" + e.id);
   return e;
 }

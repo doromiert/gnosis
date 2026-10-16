@@ -29,6 +29,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/resource.h>
+#include <unistd.h>
 
 #include <glib-unix.h>
 #include <glib/gi18n.h>
@@ -38,6 +39,7 @@
 
 #include "ephy-debug.h"
 #include "ephy-embed-utils.h"
+#include "ephy-embed-prefs.h"
 #include "ephy-file-helpers.h"
 #include "ephy-profile-utils.h"
 #include "ephy-session.h"
@@ -103,7 +105,7 @@ option_version_cb (const gchar  *option_name,
                    gpointer      data,
                    GError      **error)
 {
-  g_print ("%s %s\n", _("Web"), VERSION);
+  g_print ("Jupiter %s\n", EPHY_VERSION);
 
   exit (EXIT_SUCCESS);
   return FALSE;
@@ -278,9 +280,9 @@ main (int   argc,
   ephy_debug_init ();
 
   option_context = g_option_context_new ("");
-  option_group = g_option_group_new ("epiphany",
-                                     N_("Web"),
-                                     N_("Web options"),
+  option_group = g_option_group_new ("jupiter",
+                                     N_("Jupiter"),
+                                     N_("Jupiter options"),
                                      NULL, NULL);
 
   g_option_group_set_translation_domain (option_group, GETTEXT_PACKAGE);
@@ -476,6 +478,7 @@ main (int   argc,
     goto out;
   }
   if (!g_application_get_is_remote (G_APPLICATION (ephy_shell))) {
+    ephy_embed_prefs_get_settings ();
     if (!ephy_engine_initialize (argc, argv, ephy_profile_dir (), FALSE)) {
       g_printerr ("Could not initialize Chromium.\n");
       goto out;
@@ -483,6 +486,12 @@ main (int   argc,
     engine_initialized = TRUE;
   }
   status = g_application_run (G_APPLICATION (ephy_shell), argc, argv);
+
+  /* CEF closes asynchronously and retains the application until OnBeforeClose. */
+  if (engine_initialized && !ephy_engine_prepare_shutdown ()) {
+    g_printerr ("Chromium did not close its browsers; exiting without a core dump.\n");
+    _exit (1);
+  }
 
   /* Ensure the EphyShell really gets destroyed. This should be the final reference. */
   g_object_add_weak_pointer (G_OBJECT (ephy_shell), (gpointer *)&ephy_shell);
