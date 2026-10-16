@@ -172,6 +172,11 @@ Keep Chromium memory core dumps disabled.
 
 ## Finish the engine swap
 
+- [o] Exclude Cast, Wear, Vision, Wallet, and Play Billing integrations from
+  Jupiter and its custom CEF build, as requested. Distinguish actual compiled
+  components from runtime feature switches; the current SDK is prebuilt.
+  Disable Chromium's actual MediaRouter feature while the source-build
+  exclusions are prepared; this does not remove it from the prebuilt library.
 - [ ] Fix folder uploads: Chromium currently crashes in its upload confirmation
   dialog with the GTK/offscreen embedding. Avoid repeating the known crash
   without a relevant fix.

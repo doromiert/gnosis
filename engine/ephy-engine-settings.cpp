@@ -191,6 +191,8 @@ void ephy_engine_settings_set_feature_enabled(EphyEngineSettings *settings, cons
 }
 void ephy_engine_settings_configure_command_line(CefRefPtr<CefCommandLine> command) {
   auto *settings = ephy_engine_settings_get_default();
+  auto disabled = command->GetSwitchValue("disable-features").ToString();
+  command->AppendSwitchWithValue("disable-features", disabled + (disabled.empty() ? "" : ",") + "MediaRouter");
   if (!ephy_engine_settings_get_hardware_acceleration()) {
     command->AppendSwitch("disable-gpu");
     command->AppendSwitch("disable-gpu-compositing");
