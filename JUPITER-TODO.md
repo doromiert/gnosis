@@ -129,9 +129,16 @@ Keep Chromium memory core dumps disabled.
   AMD WebGPU, full uBlock/MV2/MV3 and file portals pass; this does not establish
   the intermittent startup timeout's full cause.
   The underlying timing issue is not proven fixed. Builds still use all cores.
-  The current final uBlock gate also fails either dashboard initialization or
-  actual network blocking after filters report ready. MV2/MV3 and desktop rich
-  clipboard pass; uBlock remains a required failing gate under investigation.
+  The final uBlock gate initially failed dashboard initialization or actual
+  blocking after filters reported ready. Source review and runtime traces found
+  a fixture race: fresh uBlock reloads itself, disconnecting messages during the
+  fixed wait; disconnected messages resolve undefined. The probe now waits for
+  a real getLists response (after native network observers start), reads back the
+  exact enabled filters, and avoids reloading an initialized dashboard. All four
+  genuine uBlock checks and a fresh-profile repeat pass. The rebuilt Nix app
+  passes regular/private icons, real clipboard permission dialogs and Find/Reader
+  workflows without development library paths. The separate CEF startup timing
+  issue above is still open; this fixes the observed uBlock fixture races.
 
 ## Verified foundation
 
@@ -203,6 +210,10 @@ Keep Chromium memory core dumps disabled.
   a file chooser, WebAuthn still shows Chromium UI, and Bluetooth/location requests
   appear to do nothing. Trace these individually; camera remains unverified
   because the user has no webcam.
+- [o] Connect CEF certificate failures to Epiphany's existing TLS error page and
+  scoped exception flow (delegated in an isolated worktree; main stays on main).
+  Map actual certificate errors separately from informational status, retain the
+  issuer chain and verify host/certificate/session isolation and navigation cleanup.
 - [x] Synchronize notifications, location, microphone, and camera choices with
   Chromium content settings. Import existing policy-file choices once before
   navigation; persist a migration marker alongside native content settings.
@@ -312,27 +323,25 @@ Keep Chromium memory core dumps disabled.
   and regular/private Find/Reader checks with development library paths unset.
   Verification logs and the package path are saved under
   `build-cef/verification/clipboard/`; the rest of the CEF port remains unfinished.
-- [o] Port rich navigator.clipboard.read() to the actual GTK clipboard too,
+- [x] Port the supported rich navigator.clipboard.read() formats to GTK,
   preserving Chromium permissions, HTML sanitization and binary image data.
-  Native X11 and desktop Wayland checks pass for text, PNG pixels, HTML/SVG
-  sanitization, Figma binary data, selective/unsanitized reads, iframe permissions
-  policy, and cancelling a delayed read when clipboard
-  ownership changes. Embedded image/CSS resources are not fetched by sanitization.
-  All thirteen native checks, AMD WebGPU, actual Wayland, full uBlock/MV2/MV3 and
-  file portals pass. The rebuilt Nix app also passes real text/rich Allow/Deny
-  dialogs in regular/private sessions and the regular/private Find/Reader checks.
-  Logs are in `build-cef/verification/rich-clipboard/`. Cold-start timeouts remain
-  under investigation. Keep generic web-custom-format interoperability
-  and HTML style-inlining differences open before calling clipboard coverage complete.
-  A Chromium source comparison showed Linux PNG reads preserve encoded bytes.
-  The new path therefore avoids decoding PNG in GTK, preserves ancillary metadata,
-  and lets the renderer reject invalid image data. The targeted native X11 check
-  passes with exact PNG metadata bytes and a real local GTK texture. The broader
-  run passed twelve other native checks, MV2/MV3, portals and AMD compute, but
-  clipboard startup, desktop reload and uBlock dashboard initialization timed out.
-  These remain failures to investigate; they do not invalidate the earlier gates
-  or establish a successful final package. Local GTK textures still get a bounded
-  PNG encoding when no PNG bytes are offered.
+  Native X11 and actual Wayland checks verify text, exact encoded PNG metadata
+  and pixels, native GTK textures, safe HTML/SVG, Figma binary data, selective
+  formats, explicit unsanitized HTML, iframe policy, and cancellation when the
+  clipboard owner changes. Embedded image/CSS resources are not fetched.
+  PNG bytes pass unchanged to the renderer for decoding; GTK encodes only local
+  textures when no PNG bytes are offered. Invalid image data is rejected by the
+  renderer decoder. Twelve other native checks, AMD WebGPU, MV2/MV3, exact portal
+  saves and full uBlock in two fresh profiles pass. The rebuilt package passes
+  regular/private icons, clipboard Allow/Deny and Find/Reader workflows with
+  development library paths unset. Logs:
+  `build-cef/verification/rich-clipboard/png-final/`. Package:
+  `/nix/store/iwsw7dwhs0h4cczvq0fdplsz4qcrhddk-jupiter-0.1.0`.
+  The initial broad run hit clipboard startup/reload and uBlock initialization
+  failures; the targeted native/desktop runs and corrected uBlock probe pass.
+  Keep the independent CEF startup issue above, generic web-custom-format
+  interoperability and HTML style-inlining differences open before calling
+  clipboard coverage complete.
 - [ ] Implement Chromium's web-custom-format clipboard map for interoperability
   beyond Figma's legacy raw MIME. The pinned Chromium 150 backend publishes JSON
   under `application/web;type="custom/formatmap"`, mapping web MIME names to

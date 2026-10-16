@@ -78,7 +78,10 @@ public:
     printf("%s\n", m.ToString().c_str());
     if (severity >= LOGSEVERITY_ERROR)
       printf("Extension console source: %s:%d\n", source.ToString().c_str(), line);
+    if (m == "UBO_DASHBOARD_READY") dashboard_ready = true;
     fflush(stdout);
+    if (m.ToString().starts_with("UBO_SETUP_ERROR:") && browser)
+      browser->GetHost()->CloseBrowser(true);
     const std::set<std::string> expected = getenv("JUPITER_PROBE_SCRIPT") ?
       std::set<std::string>{"UBO_NETWORK", "UBO_COSMETIC", "UBO_SCRIPTLET", "UBO_FRAME"} :
       std::set<std::string>{"EXTENSION_RUNTIME", "EXTENSION_BLOCKING", "EXTENSION_HOST_ISOLATION"};
@@ -94,6 +97,7 @@ public:
   int native_id = -1;
   CefRefPtr<ExtensionHost> host;
   std::set<std::string> passed;
+  bool dashboard_ready = false;
 
 private:
   IMPLEMENT_REFCOUNTING(Client);
@@ -116,7 +120,7 @@ class Reload final : public CefTask {
 public:
   explicit Reload(CefRefPtr<Client> c) : client(c) {}
   void Execute() override {
-    if (client->browser)
+    if (client->browser && !client->dashboard_ready)
       client->browser->GetMainFrame()->LoadURL(getenv("JUPITER_PROBE_URL"));
   }
 

@@ -1,13 +1,24 @@
 /* Runs inside the real uBlock Origin dashboard, in a disposable profile. */
 (async () => {
   const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
-  for (let i = 0; i < 30 && !globalThis.vAPI?.messaging; i++) await wait(200);
-  if (!globalThis.vAPI?.messaging) throw new Error('uBlock dashboard messaging did not initialize: '+JSON.stringify({url:location.href,title:document.title,state:document.readyState,runtime:globalThis.chrome?.runtime?.id,scripts:document.scripts.length,body:document.body?.innerText.slice(0,300)}));
-  await wait(6000);
+  let lists;
+  for (let i = 0; i < 100; i++) {
+    // First install reloads uBO; disconnected messaging resolves undefined.
+    if (globalThis.vAPI?.messaging)
+      lists = await vAPI.messaging.send('dashboard', {what:'getLists'});
+    if (lists?.userFiltersPath) break;
+    await wait(200);
+  }
+  // getLists waits for tab initialization and real network observers to start.
+  if (!lists?.userFiltersPath) throw new Error('uBlock did not finish native startup');
+  console.log('UBO_DASHBOARD_READY');
+  const filters = '||127.0.0.1^*/blocked.gif\n127.0.0.1##.jupiter-ad\n127.0.0.1##.jupiter-frame-ad\n127.0.0.1##+js(set-constant, jupiterSentinel, true)';
   await vAPI.messaging.send('dashboard', {
     what: 'writeUserFilters', enabled: true, trusted: false,
-    content: '||127.0.0.1^*/blocked.gif\n127.0.0.1##.jupiter-ad\n127.0.0.1##.jupiter-frame-ad\n127.0.0.1##+js(set-constant, jupiterSentinel, true)\n'
+    content: filters
   });
+  const saved = await vAPI.messaging.send('dashboard', {what:'readUserFilters'});
+  if (!saved?.enabled || saved.content !== filters) throw new Error('uBlock did not persist the exact enabled fixture filters: '+JSON.stringify(saved));
   await vAPI.messaging.send('dashboard', {what: 'reloadAllFilters'});
   console.log('UBO_FILTERS_READY');
   await wait(1000);
