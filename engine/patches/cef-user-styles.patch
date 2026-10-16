@@ -1,0 +1,184 @@
+diff --git a/include/cef_frame.h b/include/cef_frame.h
+index 083c9fd..24b0ae6 100644
+--- a/include/cef_frame.h
++++ b/include/cef_frame.h
+@@ -218,6 +218,29 @@ class CefFrame : public virtual CefBaseRefCounted {
+   /*--cef()--*/
+   virtual CefRefPtr<CefV8Context> GetV8Context() = 0;
+
++#if CEF_API_ADDED(CEF_EXPERIMENTAL)
++  ///
++  /// Insert |css| into the current document at the user cascade origin. Returns
++  /// an opaque stylesheet key, or an empty string if |css| is empty or the
++  /// frame has no current document. The key is valid only for this frame's
++  /// current document and can be passed to RemoveUserStyleSheet. Injecting a
++  /// stylesheet may prevent the document from entering the back-forward cache.
++  /// This method can only be called on the render process main thread.
++  ///
++  /*--cef(added=experimental,optional_param=css)--*/
++  virtual CefString InsertUserStyleSheet(const CefString& css) = 0;
++
++  ///
++  /// Remove the stylesheet previously inserted by InsertUserStyleSheet with
++  /// |key|. Returns true if the key belongs to this frame's current document
++  /// and has not already been removed. Returns false for empty, unknown, stale,
++  /// or other-frame keys. This method can only be called on the render process
++  /// main thread.
++  ///
++  /*--cef(added=experimental,optional_param=key)--*/
++  virtual bool RemoveUserStyleSheet(const CefString& key) = 0;
++#endif
++
+   ///
+   /// Visit the DOM document. This method can only be called from the render
+   /// process.
+diff --git a/libcef/browser/frame_host_impl.cc b/libcef/browser/frame_host_impl.cc
+index 26d5616..7a5e1e7 100644
+--- a/libcef/browser/frame_host_impl.cc
++++ b/libcef/browser/frame_host_impl.cc
+@@ -238,6 +238,18 @@ CefRefPtr<CefV8Context> CefFrameHostImpl::GetV8Context() {
+   return nullptr;
+ }
+
++CefString CefFrameHostImpl::InsertUserStyleSheet(const CefString& css) {
++  DCHECK(false)
++      << "InsertUserStyleSheet cannot be called from the browser process";
++  return CefString();
++}
++
++bool CefFrameHostImpl::RemoveUserStyleSheet(const CefString& key) {
++  DCHECK(false)
++      << "RemoveUserStyleSheet cannot be called from the browser process";
++  return false;
++}
++
+ void CefFrameHostImpl::VisitDOM(CefRefPtr<CefDOMVisitor> visitor) {
+   DCHECK(false) << "VisitDOM cannot be called from the browser process";
+ }
+diff --git a/libcef/browser/frame_host_impl.h b/libcef/browser/frame_host_impl.h
+index 0412716..4a74e18 100644
+--- a/libcef/browser/frame_host_impl.h
++++ b/libcef/browser/frame_host_impl.h
+@@ -75,6 +75,8 @@ class CefFrameHostImpl : public CefFrame, public cef::mojom::BrowserFrame {
+   CefString GetURL() override;
+   CefRefPtr<CefBrowser> GetBrowser() override;
+   CefRefPtr<CefV8Context> GetV8Context() override;
++  CefString InsertUserStyleSheet(const CefString& css) override;
++  bool RemoveUserStyleSheet(const CefString& key) override;
+   void VisitDOM(CefRefPtr<CefDOMVisitor> visitor) override;
+   CefRefPtr<CefURLRequest> CreateURLRequest(
+       CefRefPtr<CefRequest> request,
+diff --git a/libcef/renderer/frame_impl.cc b/libcef/renderer/frame_impl.cc
+index a91adcc..c369acc 100644
+--- a/libcef/renderer/frame_impl.cc
++++ b/libcef/renderer/frame_impl.cc
+@@ -252,6 +252,58 @@ CefRefPtr<CefV8Context> CefFrameImpl::GetV8Context() {
+   }
+ }
+
++CefString CefFrameImpl::InsertUserStyleSheet(const CefString& css) {
++  CefString result;
++  CEF_REQUIRE_RT_RETURN(result);
++
++  if (!frame_ || css.empty()) {
++    return result;
++  }
++  auto document = frame_->GetDocument();
++  if (document.IsNull()) {
++    return result;
++  }
++
++  if (user_style_document_ != document.Token()) {
++    user_style_keys_.clear();
++    user_style_document_ = document.Token();
++  }
++  const auto key = document.InsertStyleSheet(
++      blink::WebString::FromUtf16(css.ToString16()), nullptr,
++      blink::WebCssOrigin::kUser,
++      blink::BackForwardCacheAware::kPossiblyDisallow);
++  if (!key.IsEmpty()) {
++    user_style_keys_.insert(key.Utf16());
++    result = key.Utf16();
++  }
++  return result;
++}
++
++bool CefFrameImpl::RemoveUserStyleSheet(const CefString& key) {
++  CEF_REQUIRE_RT_RETURN(false);
++
++  if (!frame_ || key.empty()) {
++    return false;
++  }
++  auto document = frame_->GetDocument();
++  if (document.IsNull()) {
++    return false;
++  }
++  if (user_style_document_ != document.Token()) {
++    user_style_keys_.clear();
++    user_style_document_ = document.Token();
++    return false;
++  }
++  const auto it = user_style_keys_.find(key.ToString16());
++  if (it == user_style_keys_.end()) {
++    return false;
++  }
++  document.RemoveInsertedStyleSheet(blink::WebString::FromUtf16(*it),
++                                   blink::WebCssOrigin::kUser);
++  user_style_keys_.erase(it);
++  return true;
++}
++
+ void CefFrameImpl::VisitDOM(CefRefPtr<CefDOMVisitor> visitor) {
+   CEF_REQUIRE_RT_RETURN_VOID();
+
+@@ -420,6 +472,8 @@ void CefFrameImpl::OnContextReleased() {
+ }
+
+ void CefFrameImpl::OnDetached() {
++  user_style_keys_.clear();
++  user_style_document_.reset();
+   // Called when this frame has been detached from the view. This *will* be
+   // called for child frames when a parent frame is detached.
+   // The browser may hold the last reference to |this|. Take a reference here to
+diff --git a/libcef/renderer/frame_impl.h b/libcef/renderer/frame_impl.h
+index 91fe050..1679557 100644
+--- a/libcef/renderer/frame_impl.h
++++ b/libcef/renderer/frame_impl.h
+@@ -6,7 +6,9 @@
+ #define CEF_LIBCEF_RENDERER_FRAME_IMPL_H_
+ #pragma once
+
++#include <optional>
+ #include <queue>
++#include <set>
+ #include <string>
+
+ #include "base/memory/weak_ptr.h"
+@@ -18,6 +20,7 @@
+ #include "mojo/public/cpp/bindings/pending_receiver.h"
+ #include "mojo/public/cpp/bindings/receiver.h"
+ #include "mojo/public/cpp/bindings/remote.h"
++#include "third_party/blink/public/common/tokens/tokens.h"
+
+ namespace base {
+ class ListValue;
+@@ -73,6 +76,8 @@ class CefFrameImpl
+   CefString GetURL() override;
+   CefRefPtr<CefBrowser> GetBrowser() override;
+   CefRefPtr<CefV8Context> GetV8Context() override;
++  CefString InsertUserStyleSheet(const CefString& css) override;
++  bool RemoveUserStyleSheet(const CefString& key) override;
+   void VisitDOM(CefRefPtr<CefDOMVisitor> visitor) override;
+   CefRefPtr<CefURLRequest> CreateURLRequest(
+       CefRefPtr<CefRequest> request,
+@@ -91,6 +96,10 @@ class CefFrameImpl
+   blink::WebLocalFrame* web_frame() const { return frame_; }
+
+  private:
++  // Keys never retain documents and cannot affect a later document in the frame.
++  std::optional<blink::DocumentToken> user_style_document_;
++  std::set<std::u16string> user_style_keys_;
++
+   // Called for draggable region changes due to navigation. This is in addition
+   // to the standard notifications delivered via
+   // WebContentsDelegate::DraggableRegionsChanged.
