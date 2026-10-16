@@ -376,6 +376,10 @@ above.
 - [ ] Replace the temporary GNOME icon when the user's Jupiter artwork is ready.
 - [ ] Add built-in KeePassXC integration for saving and filling credentials,
   using KeePassXC's browser integration protocol and database authorization.
+- [ ] Build a proper native Jupiter MCP server: control real tabs and groups,
+  navigate and interact with pages, inspect the DOM, capture screenshots, and
+  expose console/network tools through Jupiter's existing CEF sessions. Preserve
+  profile and private-context boundaries.
 
 ## Completion rule
 
