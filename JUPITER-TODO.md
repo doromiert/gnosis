@@ -214,6 +214,11 @@ Keep Chromium memory core dumps disabled.
   scoped exception flow (delegated in an isolated worktree; main stays on main).
   Map actual certificate errors separately from informational status, retain the
   issuer chain and verify host/certificate/session isolation and navigation cleanup.
+- [ ] Preserve Chromium's strict certificate enforcement (including HSTS) in the
+  native exception UI. Pinned CEF `c1a097e` receives `strict_enforcement` in
+  `certificate_query::AllowCertificateError` but neither enforces it nor exposes
+  it to `OnCertificateError`; the SDK needs to retain that native policy before
+  the TLS migration can be considered complete.
 - [x] Synchronize notifications, location, microphone, and camera choices with
   Chromium content settings. Import existing policy-file choices once before
   navigation; persist a migration marker alongside native content settings.
@@ -294,7 +299,7 @@ Keep Chromium memory core dumps disabled.
   preferences Reset All, and the eight-launch permission workflow pass with
   development library paths unset. No compilation ran alongside this final suite;
   under-load stability remains unverified after the lifecycle changes.
-- [ ] Port declarative user scripts and private-world page messages plus their
+- [o] Port declarative user scripts and private-world page messages plus their
   remaining JavaScriptCore values. Preserve top/all-frame selection, timing,
   globals, CSP behavior, URL scopes, and isolated worlds. A native runtime probe
   showed root-only DevTools scripts miss cross-process frames and delayed main-
