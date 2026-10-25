@@ -50,25 +50,102 @@ std::string extension_id(const std::string& url) {
     return "";
   return url.substr(19, url.find('/', 19) - 19);
 }
+CefRefPtr<CefDictionaryValue> failure(const std::string& message) {
+  auto result = dict();
+  result->SetBool("jupiterError", true);
+  result->SetString("message", message);
+  return result;
+}
+std::string error_message(CefRefPtr<CefDictionaryValue> result) {
+  auto message = result->GetString("message").ToString();
+  auto error = result->GetDictionary("error");
+  if (message.empty() && error) message = error->GetString("message");
+  return message.empty() ? "The extension operation could not be completed" : message;
+}
 } // namespace
+bool ExtensionHost::current(const Origin& origin) const {
+  if (!origin.extension.empty() && !extension_ids.contains(origin.extension)) return false;
+  if (!origin.browser || !origin.browser->IsValid()) return false;
+  auto page = pages_.find(origin.browser->GetIdentifier());
+  if (page == pages_.end() || page->second.generation != origin.generation) return false;
+  if (!origin.session.empty()) {
+    auto session = sessions_.find(origin.session);
+    return session != sessions_.end() && session->second.generation == origin.generation &&
+      session->second.browser->GetIdentifier() == origin.browser->GetIdentifier();
+  }
+  if (!origin.context) return true;
+  auto contexts = contexts_.find(origin.browser->GetIdentifier());
+  if (contexts == contexts_.end()) return false;
+  auto context = contexts->second.find(origin.context);
+  return context != contexts->second.end() && context->second.extension == origin.extension;
+}
+void ExtensionHost::set_enabled(const std::string& id, bool enabled) {
+  if (enabled) { extension_ids.insert(id); return; }
+  extension_ids.erase(id);
+  std::set<std::string> revoked;
+  for (const auto& [session, origin] : sessions_) if (origin.extension == id) {
+    revoked.insert(session);
+    targets_.erase(origin.target);
+  }
+  std::erase_if(sessions_, [&](const auto& pair) { return revoked.contains(pair.first); });
+  std::erase_if(trusted_contexts_, [&](const auto& pair) { return pair.second == id; });
+  for (auto& [browser, contexts] : contexts_)
+    std::erase_if(contexts, [&](const auto& pair) { return pair.second.extension == id; });
+  std::erase_if(waiting_, [&](const auto& item) { return item.origin.extension == id; });
+  std::vector<int> cancelled;
+  for (const auto& [message, pending] : pending_)
+    if (revoked.contains(pending.session)) cancelled.push_back(message);
+  for (int message : cancelled) fail(message, "The extension was disabled");
+}
+void ExtensionHost::complete(int id, CefRefPtr<CefDictionaryValue> result) {
+  auto it = pending_.find(id);
+  if (it == pending_.end()) return;
+  auto callback = std::move(it->second.callback);
+  pending_.erase(it);
+  callback(result);
+}
+void ExtensionHost::fail(int id, const std::string& message) {
+  complete(id, failure(message));
+}
 void ExtensionHost::command(CefRefPtr<CefBrowser> b, const std::string& name,
-                            CefRefPtr<CefDictionaryValue> args, Result callback) {
-  if (!b || !b->IsValid())
+                            CefRefPtr<CefDictionaryValue> args, Result callback, const std::string& session) {
+  CefRefPtr<ExtensionHost> self = this;
+  auto page = b && b->IsValid() ? pages_.find(b->GetIdentifier()) : pages_.end();
+  if (page == pages_.end()) {
+    if (callback) callback(failure("The destination tab is closed or unavailable"));
     return;
+  }
+  auto generation = page->second.generation;
   int id = next_devtools_message_id();
+  bool has_callback = !!callback;
   if (callback)
-    pending_[id] = std::move(callback);
+    pending_[id] = {b->GetIdentifier(), generation, session, std::move(callback)};
   args = args ? args->Copy(false) : nullptr;
-  CefPostTask(TID_UI, new Dispatch([b, id, name, args] {
-                if (b->IsValid())
-                  send_devtools_method(b, id, name, args);
-              }));
+  if (!CefPostTask(TID_UI, new Dispatch([self, b, id, name, args, generation, has_callback, session] {
+        auto page = b->IsValid() ? self->pages_.find(b->GetIdentifier()) : self->pages_.end();
+        if (page == self->pages_.end() || page->second.generation != generation) {
+          self->fail(id, "The destination tab is closed or unavailable");
+          return;
+        }
+        if (has_callback && !self->pending_.contains(id)) return;
+        if (!session.empty()) {
+          auto source = self->sessions_.find(session);
+          if (source == self->sessions_.end() || source->second.generation != generation ||
+              source->second.browser->GetIdentifier() != b->GetIdentifier()) {
+            self->fail(id, "The extension session was detached");
+            return;
+          }
+        }
+        if (!send_devtools_method(b, id, name, args))
+          self->fail(id, "The native extension transport rejected the command");
+      })))
+    fail(id, "The native extension transport is shutting down");
 }
 void ExtensionHost::attach(CefRefPtr<CefBrowser> b) {
   int id = b->GetIdentifier();
   if (pages_.contains(id))
     return;
-  pages_[id] = {b, b->GetHost()->AddDevToolsMessageObserver(this)};
+  pages_[id] = {b, b->GetHost()->AddDevToolsMessageObserver(this), ++next_generation_};
   command(b, "Runtime.enable", dict());
   command(b, "DOM.enable", dict());
   command(b, "CSS.enable", dict());
@@ -88,56 +165,88 @@ void ExtensionHost::attach(CefRefPtr<CefBrowser> b) {
   scan();
 }
 void ExtensionHost::detach(int id) {
-  if (!pages_.empty() && pages_.begin()->first == id) {
-    sessions_.clear();
+  CefRefPtr<ExtensionHost> self = this;
+  if (!pages_.contains(id)) return;
+  if (pages_.begin()->first == id)
     targets_.clear();
-    pending_.clear();
-  }
+  // Keep the registration alive until its page and pending ownership have been invalidated.
+  auto page = std::move(pages_.at(id));
+  pages_.erase(id);
+  std::erase_if(sessions_, [&](const auto& pair) { return pair.second.browser->GetIdentifier() == id; });
   std::erase_if(trusted_contexts_, [&](const auto& pair) { return pair.first.first == id; });
   std::erase_if(styles_, [&](const auto& pair) { return pair.first.starts_with(std::to_string(id) + ":"); });
   contexts_.erase(id);
-  pages_.erase(id);
+  std::erase_if(frame_ids_, [&](const auto& pair) { return pair.first.first == id; });
+  std::vector<int> cancelled;
+  for (const auto& [message, pending] : pending_)
+    if (pending.browser == id) cancelled.push_back(message);
+  for (int message : cancelled) fail(message, "The destination tab was closed");
+  auto waiting = std::move(waiting_);
+  waiting_.clear();
+  for (auto& item : waiting) {
+    if (!current(item.origin)) continue;
+    if (item.destination == id) {
+      auto null = CefValue::Create(); null->SetNull();
+      reply(item.origin, item.request->GetInt("id"), null, "The destination tab was closed");
+    } else waiting_.push_back(std::move(item));
+  }
   if (pages_.empty())
     stop();
 }
 void ExtensionHost::stop() {
+  CefRefPtr<ExtensionHost> self = this;
   if (timer_)
     g_source_remove(timer_);
   timer_ = 0;
   waiting_.clear();
+  popup_preparations_.clear();
   trusted_contexts_.clear();
+  auto pending = std::move(pending_);
   pending_.clear();
   sessions_.clear();
   targets_.clear();
+  auto pages = std::move(pages_);
   pages_.clear();
   styles_.clear();
   context_id_.clear();
   contexts_.clear();
   frame_ids_.clear();
+  for (auto& [id, item] : pending)
+    item.callback(failure("The native extension host stopped"));
 }
-void ExtensionHost::OnDevToolsMethodResult(CefRefPtr<CefBrowser>, int id, bool success, const void* data,
+void ExtensionHost::OnDevToolsAgentDetached(CefRefPtr<CefBrowser> browser) {
+  // CEF drops pending responses and subscriptions. Reconnecting the source session is separate work.
+  if (browser) detach(browser->GetIdentifier());
+}
+void ExtensionHost::OnDevToolsMethodResult(CefRefPtr<CefBrowser> browser, int id, bool success, const void* data,
                                            size_t size) {
   auto it = pending_.find(id);
-  if (it == pending_.end())
+  if (it == pending_.end() || it->second.nested || !browser ||
+      it->second.browser != browser->GetIdentifier())
     return;
-  auto cb = std::move(it->second);
-  pending_.erase(it);
+  auto page = pages_.find(it->second.browser);
+  if (page == pages_.end() || page->second.generation != it->second.generation) return;
   auto result = parse(data, size);
   if (!success && g_getenv("JUPITER_EXTENSION_DEBUG"))
     g_print("Extension CDP error: %s\n", encode(value(result)).c_str());
   if (!success)
     result->SetBool("jupiterError", true);
-  cb(result);
+  complete(id, result);
 }
 void ExtensionHost::send(const Origin& origin, const std::string& method,
                          CefRefPtr<CefDictionaryValue> params, Result callback) {
+  CefRefPtr<ExtensionHost> self = this;
+  if (!current(origin)) {
+    if (callback) callback(failure("The extension session is closed or unavailable"));
+    return;
+  }
   if (origin.session.empty()) {
     command(origin.browser, method, params, std::move(callback));
     return;
   }
   int id = next_devtools_message_id();
   if (callback)
-    pending_[id] = std::move(callback);
+    pending_[id] = {origin.browser->GetIdentifier(), origin.generation, origin.session, std::move(callback), true};
   auto message = dict();
   message->SetInt("id", id);
   message->SetString("method", method);
@@ -145,15 +254,79 @@ void ExtensionHost::send(const Origin& origin, const std::string& method,
   auto args = dict();
   args->SetString("sessionId", origin.session);
   args->SetString("message", encode(value(message)));
-  command(origin.browser, "Target.sendMessageToTarget", args);
+  command(origin.browser, "Target.sendMessageToTarget", args, [self, id](auto result) {
+    if (result->GetBool("jupiterError")) self->complete(id, result);
+  }, origin.session);
+}
+void ExtensionHost::prepare_popup(const std::string& extension, std::function<bool()> live,
+                                  std::function<void(const std::string&)> done) {
+  auto path = extension_paths.find(extension);
+  if (!extension_ids.contains(extension) || path == extension_paths.end()) {
+    done("The extension is no longer available.");
+    return;
+  }
+  // Persistent MV2 background pages must finish loading before opening an action
+  // page. Worker/lazy backgrounds are woken by Chromium messaging instead; waiting
+  // for a DOM or an already-running target would deadlock those extensions.
+  std::ifstream input(std::filesystem::path(path->second) / "manifest.json");
+  std::string source((std::istreambuf_iterator<char>(input)), std::istreambuf_iterator<char>());
+  auto manifest = CefParseJSON(source, JSON_PARSER_RFC);
+  auto object = manifest && manifest->GetType() == VTYPE_DICTIONARY ? manifest->GetDictionary() : nullptr;
+  auto background = object ? object->GetDictionary("background") : nullptr;
+  if (!background || object->GetInt("manifest_version") != 2 ||
+      (background->HasKey("persistent") && !background->GetBool("persistent"))) {
+    done("");
+    return;
+  }
+  auto request = std::make_shared<PopupPreparation>(PopupPreparation{
+    extension, std::move(live), std::move(done), g_get_monotonic_time() + 10 * G_TIME_SPAN_SECOND});
+  popup_preparations_.push_back(request);
+  poll_popup_preparations();
+}
+void ExtensionHost::poll_popup_preparations() {
+  const auto requests = popup_preparations_;
+  for (const auto& request : requests) {
+    if (!request->live()) {
+      std::erase(popup_preparations_, request);
+      continue;
+    }
+    if (!extension_ids.contains(request->extension) || g_get_monotonic_time() > request->deadline) {
+      std::erase(popup_preparations_, request);
+      auto done = std::move(request->done);
+      if (done) done("The extension background page did not become ready.");
+      continue;
+    }
+    if (request->pending) continue;
+    auto found = std::find_if(sessions_.begin(), sessions_.end(), [&](const auto& item) {
+      return item.second.extension == request->extension && current(item.second);
+    });
+    if (found == sessions_.end()) continue;
+    request->pending = true;
+    auto args = dict();
+    args->SetString("expression", "(()=>{try{return document.readyState==='complete' && !!chrome.runtime.getManifest().version && !!chrome.runtime.getURL('')}catch(e){return false}})()");
+    args->SetBool("returnByValue", true);
+    CefRefPtr<ExtensionHost> self = this;
+    send(found->second, "Runtime.evaluate", args, [self, request](auto response) {
+      request->pending = false;
+      if (!request->done || !request->live() ||
+          std::find(self->popup_preparations_.begin(), self->popup_preparations_.end(), request) == self->popup_preparations_.end()) return;
+      auto result = response->GetDictionary("result");
+      if (!result || result->GetString("type") != "boolean" || !result->GetBool("value")) return;
+      std::erase(self->popup_preparations_, request);
+      auto done = std::move(request->done);
+      done("");
+    });
+  }
 }
 void ExtensionHost::scan() {
+  poll_popup_preparations();
   for (const auto& [id, origin] : sessions_)
     hook(origin);
   auto waiting = std::move(waiting_);
   waiting_.clear();
-  auto all = tabs ? tabs() : std::vector<ExtensionTab>{};
+  auto all = tabs ? tabs(nullptr) : std::vector<ExtensionTab>{};
   for (auto& item : waiting) {
+    if (!current(item.origin)) continue;
     int id = item.request->GetDictionary("args")->GetInt("tabId");
     auto found = std::find_if(all.begin(), all.end(), [&](const auto& tab) { return tab.id == id; });
     bool ready = found != all.end();
@@ -195,7 +368,9 @@ void ExtensionHost::scan() {
           targets_.erase(id);
           return;
         }
-        Origin o{session, b, 0, ext};
+        auto page = pages_.find(b->GetIdentifier());
+        if (page == pages_.end()) return;
+        Origin o{session, b, 0, ext, page->second.generation, id};
         sessions_[session] = o;
         hook(o);
       });
@@ -203,6 +378,7 @@ void ExtensionHost::scan() {
   });
 }
 void ExtensionHost::hook(const Origin& origin) {
+  if (!current(origin)) return;
   if (g_getenv("JUPITER_EXTENSION_DEBUG"))
     g_print("Extension hook session=%s context=%d\n", origin.session.c_str(), origin.context);
   if (origin.context)
@@ -211,7 +387,8 @@ void ExtensionHost::hook(const Origin& origin) {
   args->SetString("name", "__jupiterExtensionRequest");
   if (origin.context)
     args->SetInt("executionContextId", origin.context);
-  send(origin, "Runtime.addBinding", args, [this, origin](auto) {
+  send(origin, "Runtime.addBinding", args, [this, origin](auto result) {
+    if (result->GetBool("jupiterError") || !current(origin)) return;
     auto* bytes = g_resource_lookup_data(jupiter_engine_get_resource(), "/io/github/doromiert/Jupiter/extension-tabs.js",
                                           G_RESOURCE_LOOKUP_FLAGS_NONE, nullptr);
     if (!bytes)
@@ -228,24 +405,29 @@ void ExtensionHost::hook(const Origin& origin) {
 }
 void ExtensionHost::OnDevToolsEvent(CefRefPtr<CefBrowser> b, const CefString& method, const void* data,
                                     size_t size) {
+  if (!b || !b->IsValid() || !pages_.contains(b->GetIdentifier())) return;
   auto args = parse(data, size);
   std::string name = method;
   if (g_getenv("JUPITER_EXTENSION_DEBUG") && name.starts_with("Target."))
     g_print("Extension event %s: %.300s\n", name.c_str(), encode(value(args)).c_str());
   if (name == "Target.receivedMessageFromTarget") {
     auto session = args->GetString("sessionId").ToString();
-    if (!sessions_.contains(session))
+    auto source = sessions_.find(session);
+    if (source == sessions_.end() || !current(source->second) ||
+        source->second.browser->GetIdentifier() != b->GetIdentifier())
       return;
     auto message = args->GetString("message").ToString();
     auto event = parse(message.data(), message.size());
     if (event->HasKey("id")) {
       int id = event->GetInt("id");
       auto it = pending_.find(id);
-      if (it != pending_.end()) {
-        auto cb = std::move(it->second);
-        pending_.erase(it);
+      if (it != pending_.end() && it->second.nested && it->second.session == session &&
+          it->second.browser == b->GetIdentifier() &&
+          it->second.generation == source->second.generation) {
         auto result = event->GetDictionary("result");
-        cb(result ? result : dict());
+        auto error = event->GetDictionary("error");
+        if (error) complete(id, failure(error->GetString("message")));
+        else complete(id, result ? result : dict());
       }
     } else if (event->GetString("method") == "Runtime.bindingCalled") {
       auto params = event->GetDictionary("params");
@@ -256,10 +438,37 @@ void ExtensionHost::OnDevToolsEvent(CefRefPtr<CefBrowser> b, const CefString& me
     }
     return;
   }
+  if (name == "Target.detachedFromTarget") {
+    auto session = args->GetString("sessionId").ToString();
+    auto found = sessions_.find(session);
+    if (found == sessions_.end() || found->second.browser->GetIdentifier() != b->GetIdentifier()) return;
+    targets_.erase(found->second.target);
+    sessions_.erase(found);
+    std::vector<int> cancelled;
+    for (const auto& [id, pending] : pending_)
+      if (pending.session == session) cancelled.push_back(id);
+    for (int id : cancelled) fail(id, "The extension session was detached");
+    std::erase_if(waiting_, [&](const auto& item) { return item.origin.session == session; });
+    return;
+  }
   if (name == "Runtime.executionContextsCleared") {
     contexts_[b->GetIdentifier()].clear();
     std::erase_if(trusted_contexts_,
                   [&](const auto& pair) { return pair.first.first == b->GetIdentifier(); });
+    std::erase_if(frame_ids_, [&](const auto& pair) { return pair.first.first == b->GetIdentifier(); });
+  }
+  if (name == "Runtime.executionContextDestroyed") {
+    int context = args->GetInt("executionContextId");
+    auto& contexts = contexts_[b->GetIdentifier()];
+    auto found = contexts.find(context);
+    if (found != contexts.end()) {
+      auto frame = found->second.frame;
+      std::erase_if(frame_ids_, [&](const auto& pair) {
+        return pair.first.first == b->GetIdentifier() && pair.second == frame;
+      });
+      contexts.erase(found);
+    }
+    trusted_contexts_.erase({b->GetIdentifier(), context});
   }
   if (name == "Runtime.consoleAPICalled") {
     auto all = args->GetList("args");
@@ -288,12 +497,13 @@ void ExtensionHost::OnDevToolsEvent(CefRefPtr<CefBrowser> b, const CefString& me
       contexts_[b->GetIdentifier()][context->GetInt("id")] = {context->GetInt("id"), ext,
                                                               aux->GetString("frameId")};
     if (extension_ids.contains(ext) && aux && aux->GetBool("isDefault"))
-      hook({"", b, context->GetInt("id"), ext});
+      hook({"", b, context->GetInt("id"), ext, pages_.at(b->GetIdentifier()).generation});
   } else if (name == "Runtime.bindingCalled" && args->GetString("name") == "__jupiterExtensionRequest") {
     auto payload = args->GetString("payload").ToString();
     auto key = std::make_pair(b->GetIdentifier(), args->GetInt("executionContextId"));
     if (trusted_contexts_.contains(key))
-      request({"", b, key.second, trusted_contexts_[key]}, parse(payload.data(), payload.size()));
+      request({"", b, key.second, trusted_contexts_[key], pages_.at(b->GetIdentifier()).generation},
+              parse(payload.data(), payload.size()));
   }
 }
 void ExtensionHost::reply(const Origin& origin, int id, CefRefPtr<CefValue> result,
@@ -314,12 +524,13 @@ bool ExtensionHost::allowed(const std::string& id, const std::string& url, int) 
   return false;
 }
 void ExtensionHost::request(const Origin& origin, CefRefPtr<CefDictionaryValue> request, bool defer) {
+  if (!current(origin)) return;
   int id = request->GetInt("id");
   auto op = request->GetString("op").ToString();
   auto args = request->GetDictionary("args");
   if (!args)
     return;
-  auto all = tabs ? tabs() : std::vector<ExtensionTab>{};
+  auto all = tabs ? tabs(origin.session.empty() ? origin.browser : nullptr) : std::vector<ExtensionTab>{};
   auto result = CefValue::Create();
   result->SetNull();
   if (op == "query") {
@@ -348,6 +559,21 @@ void ExtensionHost::request(const Origin& origin, CefRefPtr<CefDictionaryValue> 
     reply(origin, id, result);
     return;
   }
+  if (op == "create") {
+    auto props = args->GetDictionary("properties");
+    if (!create || !props) { reply(origin, id, result, "Tab creation is unavailable"); return; }
+    auto url = props->GetString("url").ToString();
+    if (url.empty()) url = "about:blank";
+    CefRefPtr<ExtensionHost> self = this;
+    create(origin.session.empty() ? origin.browser : nullptr, origin.extension, url,
+           !props->HasKey("active") || props->GetBool("active"),
+           [self, origin, id](auto info, const auto& error) {
+      auto result = CefValue::Create();
+      if (info) result->SetDictionary(info); else result->SetNull();
+      if (self->current(origin)) self->reply(origin, id, result, error);
+    });
+    return;
+  }
   int tab_id = args->GetInt("tabId");
   auto found = std::find_if(all.begin(), all.end(), [&](const auto& t) { return t.id == tab_id; });
   if (found == all.end()) {
@@ -355,14 +581,16 @@ void ExtensionHost::request(const Origin& origin, CefRefPtr<CefDictionaryValue> 
       waiting_.push_back({origin, request->Copy(false), g_get_monotonic_time() + 3 * G_TIME_SPAN_SECOND});
       return;
     }
-    reply(origin, id, result);
+    reply(origin, id, result, (op == "executeScript" || op == "insertCSS" || op == "removeCSS")
+      ? "The destination tab is unavailable" : "");
     return;
   }
   auto details = args->GetDictionary("details");
   if (details && details->HasKey("frameId") && details->GetInt("frameId") > 0 &&
       !frame_ids_.contains({found->browser->GetIdentifier(), details->GetInt("frameId")})) {
     if (defer && waiting_.size() < 256) {
-      waiting_.push_back({origin, request->Copy(false), g_get_monotonic_time() + 3 * G_TIME_SPAN_SECOND});
+      waiting_.push_back({origin, request->Copy(false), g_get_monotonic_time() + 3 * G_TIME_SPAN_SECOND,
+                          found->browser->GetIdentifier()});
       return;
     }
     reply(origin, id, result, "The requested frame is unavailable");
@@ -537,6 +765,10 @@ void ExtensionHost::script(const ExtensionTab& tab, CefRefPtr<CefDictionaryValue
   }
   command(tab.browser, "Page.getFrameTree", dict(),
           [this, tab, details, extension, code, result, output, done](auto response) {
+            if (response->GetBool("jupiterError")) {
+              done(result, error_message(response));
+              return;
+            }
             auto tree = response->GetDictionary("frameTree");
             if (!tree) {
               done(result, "The page is unavailable");
@@ -576,7 +808,9 @@ void ExtensionHost::script(const ExtensionTab& tab, CefRefPtr<CefDictionaryValue
                 args->SetBool("awaitPromise", true);
                 command(tab.browser, "Runtime.evaluate", args,
                         [result, output, done, count, error, i](auto response) {
-                          if (response->HasKey("exceptionDetails"))
+                          if (response->GetBool("jupiterError"))
+                            *error = error_message(response);
+                          else if (response->HasKey("exceptionDetails"))
                             *error = "The extension script raised an exception";
                           auto remote = response->GetDictionary("result");
                           auto v = remote ? remote->GetValue("value") : nullptr;
@@ -601,7 +835,15 @@ void ExtensionHost::script(const ExtensionTab& tab, CefRefPtr<CefDictionaryValue
                 args->SetString("frameId", frames[i]);
                 args->SetString("worldName", "Jupiter extension " + extension);
                 command(tab.browser, "Page.createIsolatedWorld", args,
-                        [evaluate](auto response) { evaluate(response->GetInt("executionContextId")); });
+                        [evaluate, result, done, count, error](auto response) {
+                          if (response->GetBool("jupiterError") || !response->GetInt("executionContextId")) {
+                            *error = response->GetBool("jupiterError") ? error_message(response)
+                              : "The extension execution context is unavailable";
+                            if (!--*count) done(result, *error);
+                            return;
+                          }
+                          evaluate(response->GetInt("executionContextId"));
+                        });
               }
             }
           });

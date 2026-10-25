@@ -1,0 +1,573 @@
+--- a/BUILD.gn
++++ b/BUILD.gn
+@@ -967,6 +967,7 @@
+     "//crypto",
+     "//device/base",
+     "//extensions/browser",
++    "//extensions/common",
+     "//extensions/buildflags",
+     "//extensions/common/api",
+     "//extensions/common:core_api_provider",
+--- a/include/cef_request_context.h
++++ b/include/cef_request_context.h
+@@ -85,6 +85,40 @@
+   virtual void OnSettingChanged(const CefString& requesting_url,
+                                 const CefString& top_level_url,
+                                 cef_content_setting_types_t content_type) = 0;
++};
++#endif
++
++#if CEF_API_ADDED(CEF_EXPERIMENTAL)
++///
++/// Completion for a trusted embedder extension management operation. Never
++/// expose this interface or the request context management methods to
++/// renderers.
++///
++/*--cef(source=client,added=experimental)--*/
++class CefExtensionManagementCallback : public virtual CefBaseRefCounted {
++ public:
++  ///
++  /// Called once on the browser process UI thread, possibly before the request
++  /// method returns when called on that thread. Empty |error| indicates native
++  /// success. |extension_id| is the actual affected ID, or empty for
++  /// enumeration and for a load that failed before resolving an ID.
++  /// |extensions| is a copied authoritative native registry snapshot, or NULL
++  /// if unavailable (including shutdown). Its dictionaries contain string id,
++  /// name, description, version, path, location (unpacked, command_line or
++  /// other), state (enabled, disabled, terminated, blocklisted or blocked),
++  /// integer manifest_version, and boolean enabled (only actual enabled
++  /// registry membership). Integer-list disable_reasons contains native
++  /// DisableReason enum values; unknown native reasons are reported as
++  /// DISABLE_UNKNOWN. Component extensions are omitted. An unavailable snapshot
++  /// does not reverse a successful native mutation. Cancellation does not
++  /// promise rollback. Methods are unavailable in private profiles; this API
++  /// never redirects to the original or global profile.
++  ///
++  /*--cef(optional_param=error,optional_param=extension_id,optional_param=extensions)--*/
++  virtual void OnExtensionManagementComplete(
++      const CefString& error,
++      const CefString& extension_id,
++      CefRefPtr<CefListValue> extensions) = 0;
+ };
+ #endif
+ 
+@@ -365,6 +399,64 @@
+   ///
+   /*--cef(default_retval=CEF_COLOR_VARIANT_SYSTEM)--*/
+   virtual cef_color_variant_t GetChromeColorSchemeVariant() = 0;
++
++#if CEF_API_ADDED(CEF_EXPERIMENTAL)
++  ///
++  /// Enumerates actual installed extensions for this request context. This and
++  /// the following management methods may be called on any browser process
++  /// thread with a non-NULL |callback|. They fail for off-the-record profiles.
++  /// They are trusted embedder operations, not a renderer management transport.
++  /// The embedder must exclude its essential bridge extensions from mutation
++  /// requests, restrict installation paths to its owned inventory, and
++  /// reconcile desired state with the returned actual native state.
++  ///
++  /*--cef(added=experimental)--*/
++  virtual void GetInstalledExtensions(
++      CefRefPtr<CefExtensionManagementCallback> callback) = 0;
++
++  ///
++  /// Installs or updates an unpacked extension at the absolute |path| using
++  /// native manifest, policy, requirements and ruleset validation. This
++  /// operation grants the manifest permissions and requires prior embedder
++  /// install/update consent. It must not be used to bypass a disabled
++  /// extension's enable checks. File and incognito access are explicitly
++  /// disabled. This operation does not itself show a Chrome installation prompt
++  /// or alter manifest version policy.
++  ///
++  /*--cef(added=experimental)--*/
++  virtual void LoadUnpackedExtension(
++      const CefString& path,
++      CefRefPtr<CefExtensionManagementCallback> callback) = 0;
++
++  ///
++  /// Changes an unpacked or command-line extension's native enabled state.
++  /// Enable accepts only an unchanged extension disabled solely by the user;
++  /// permission escalation, requirements, policy, supervised approval and all
++  /// other disable reasons are refused. This bounded operation never silently
++  /// grants new permissions or clears unrelated disable reasons. A terminated
++  /// extension requires a separate native reload and is refused by this bounded
++  /// enable operation. Unsupported requirements are refused rather than
++  /// rechecked. Successful enablement indicates registry state, not that a
++  /// background page or worker is ready.
++  ///
++  /*--cef(added=experimental)--*/
++  virtual void SetExtensionEnabled(
++      const CefString& extension_id,
++      bool enabled,
++      CefRefPtr<CefExtensionManagementCallback> callback) = 0;
++
++  ///
++  /// Uninstalls an unpacked or command-line extension after prior embedder user
++  /// confirmation, subject to native removal policy. No additional Chrome
++  /// dialog is shown. Completion waits for the native cleanup closure. Source
++  /// files outside Chromium's owned installation directories are not removed by
++  /// this API; the embedder owns cleanup of its inventory after native success.
++  ///
++  /*--cef(added=experimental)--*/
++  virtual void UninstallExtension(
++      const CefString& extension_id,
++      CefRefPtr<CefExtensionManagementCallback> callback) = 0;
++#endif
+ };
+ 
+ #endif  // CEF_INCLUDE_CEF_REQUEST_CONTEXT_H_
+--- a/libcef/browser/request_context_impl.h
++++ b/libcef/browser/request_context_impl.h
+@@ -148,6 +148,19 @@
+   cef_color_t GetChromeColorSchemeColor() override;
+   cef_color_variant_t GetChromeColorSchemeVariant() override;
+ 
++  void GetInstalledExtensions(
++      CefRefPtr<CefExtensionManagementCallback> callback) override;
++  void LoadUnpackedExtension(
++      const CefString& path,
++      CefRefPtr<CefExtensionManagementCallback> callback) override;
++  void SetExtensionEnabled(
++      const CefString& extension_id,
++      bool enabled,
++      CefRefPtr<CefExtensionManagementCallback> callback) override;
++  void UninstallExtension(
++      const CefString& extension_id,
++      CefRefPtr<CefExtensionManagementCallback> callback) override;
++
+   const CefRequestContextSettings& settings() const { return config_.settings; }
+ 
+   // Called from CefBrowserContentsDelegate::RenderFrameCreated when a render
+--- a/libcef/browser/request_context_impl.cc
++++ b/libcef/browser/request_context_impl.cc
+@@ -5,8 +5,12 @@
+ #include "cef/libcef/browser/request_context_impl.h"
+ 
+ #include "base/atomic_sequence_num.h"
++#include "base/files/file_path.h"
+ #include "base/logging.h"
++#include "base/memory/ref_counted.h"
++#include "base/scoped_observation.h"
+ #include "base/strings/stringprintf.h"
++#include "base/strings/utf_string_conversions.h"
+ #include "cef/libcef/browser/browser_context.h"
+ #include "cef/libcef/browser/context.h"
+ #include "cef/libcef/browser/prefs/pref_helper.h"
+@@ -25,6 +29,18 @@
+ #include "content/public/browser/browser_task_traits.h"
+ #include "content/public/browser/child_process_host.h"
+ #include "content/public/browser/ssl_host_state_delegate.h"
++#include "extensions/browser/disable_reason.h"
++#include "extensions/browser/extension_prefs.h"
++#include "extensions/browser/extension_registrar.h"
++#include "extensions/browser/extension_registry.h"
++#include "extensions/browser/extension_registry_observer.h"
++#include "extensions/browser/extension_system.h"
++#include "extensions/browser/extensions_browser_client.h"
++#include "extensions/browser/management_policy.h"
++#include "extensions/browser/unpacked_installer.h"
++#include "extensions/common/extension.h"
++#include "extensions/common/manifest.h"
++#include "extensions/common/manifest_handlers/shared_module_info.h"
+ #include "mojo/public/cpp/bindings/receiver.h"
+ #include "mojo/public/cpp/bindings/remote.h"
+ #include "net/dns/host_resolver.h"
+@@ -37,6 +53,332 @@
+ namespace {
+ 
+ base::AtomicSequenceNumber g_next_id;
++
++// Created before waiting for context initialization, so dropped initialization
++// tasks and native installer/cleanup closures also complete on the UI thread.
++class ExtensionManagementCompletion : public CefExtensionManagementCallback {
++ public:
++  ExtensionManagementCompletion(
++      CefRefPtr<CefExtensionManagementCallback> callback,
++      std::string extension_id)
++      : callback_(std::move(callback)),
++        extension_id_(std::move(extension_id)) {}
++
++  void OnExtensionManagementComplete(
++      const CefString& error,
++      const CefString& extension_id,
++      CefRefPtr<CefListValue> extensions) override {
++    CEF_REQUIRE_UIT();
++    if (!callback_) {
++      return;
++    }
++    auto callback = std::move(callback_);
++    callback->OnExtensionManagementComplete(error, extension_id, extensions);
++  }
++
++ private:
++  ~ExtensionManagementCompletion() override {
++    CEF_REQUIRE_UIT();
++    if (callback_) {
++      OnExtensionManagementComplete("Native extension operation was cancelled.",
++                                    extension_id_, nullptr);
++    }
++  }
++
++  CefRefPtr<CefExtensionManagementCallback> callback_;
++  const std::string extension_id_;
++  IMPLEMENT_REFCOUNTING_DELETE_ON_UIT(ExtensionManagementCompletion);
++};
++
++// Only UI-thread code below touches the owner profile or native registry.
++class ExtensionManagementOperation
++    : public base::RefCountedThreadSafe<
++          ExtensionManagementOperation,
++          content::BrowserThread::DeleteOnUIThread>,
++      public extensions::ExtensionRegistryObserver {
++ public:
++  enum class Kind { kSnapshot, kLoad, kSetEnabled, kUninstall };
++
++  static void Start(Kind kind,
++                    std::string argument,
++                    bool enabled,
++                    CefRefPtr<CefExtensionManagementCallback> callback,
++                    CefBrowserContext::Getter getter) {
++    CEF_REQUIRE_UIT();
++    auto* context = getter.Run();
++    auto* profile = context ? context->AsProfile() : nullptr;
++    if (!profile || profile->IsOffTheRecord()) {
++      callback->OnExtensionManagementComplete(
++          profile ? "Extension management is unavailable in private profiles."
++                  : "Extension profile is no longer available.",
++          kind == Kind::kLoad || kind == Kind::kSnapshot ? std::string()
++                                                         : argument,
++          nullptr);
++      return;
++    }
++    auto* registry = extensions::ExtensionRegistry::Get(profile);
++    auto* system = extensions::ExtensionSystem::Get(profile);
++    auto* registrar = extensions::ExtensionRegistrar::Get(profile);
++    auto* prefs = extensions::ExtensionPrefs::Get(profile);
++    if (!registry || !system || !system->management_policy() || !registrar ||
++        !prefs) {
++      callback->OnExtensionManagementComplete(
++          "Native extension services are unavailable.",
++          kind == Kind::kLoad || kind == Kind::kSnapshot ? std::string()
++                                                         : argument,
++          nullptr);
++      return;
++    }
++    scoped_refptr<ExtensionManagementOperation> operation =
++        new ExtensionManagementOperation(profile, registry,
++                                         std::move(callback));
++    if (kind == Kind::kSnapshot) {
++      operation->Finish(std::string());
++    } else if (kind == Kind::kLoad) {
++      operation->Load(argument);
++    } else {
++      operation->extension_id_ = argument;
++      const auto* extension = registry->GetInstalledExtension(argument);
++      if (!extension) {
++        operation->Finish("Extension is not installed in this profile.");
++      } else if (!extensions::Manifest::IsUnpackedLocation(
++                     extension->location()) ||
++                 extensions::SharedModuleInfo::IsSharedModule(extension)) {
++        operation->Finish("Only ordinary unpacked extensions may be modified.");
++      } else if (extensions::ExtensionsBrowserClient::Get()
++                     ->IsAppModeForcedForApp(argument)) {
++        operation->Finish("The primary kiosk extension cannot be modified.");
++      } else if (kind == Kind::kSetEnabled) {
++        operation->SetEnabled(extension, enabled, system->management_policy(),
++                              registrar, prefs);
++      } else {
++        operation->Uninstall(registrar);
++      }
++    }
++  }
++
++  void OnShutdown(extensions::ExtensionRegistry* registry) override {
++    CEF_REQUIRE_UIT();
++    // Stop observing before notifying the embedder, which may release its
++    // owner.
++    observation_.Reset();
++    registry_ = nullptr;
++    profile_ = nullptr;
++    Finish("Extension profile shut down before the operation completed.");
++  }
++
++ private:
++  friend struct content::BrowserThread::DeleteOnThread<
++      content::BrowserThread::UI>;
++  friend class base::DeleteHelper<ExtensionManagementOperation>;
++
++  ExtensionManagementOperation(
++      Profile* profile,
++      extensions::ExtensionRegistry* registry,
++      CefRefPtr<CefExtensionManagementCallback> callback)
++      : profile_(profile), registry_(registry), callback_(std::move(callback)) {
++    observation_.Observe(registry);
++  }
++
++  ~ExtensionManagementOperation() override = default;
++
++  CefRefPtr<CefListValue> Snapshot() const {
++    if (!registry_) {
++      return nullptr;
++    }
++    auto result = CefListValue::Create();
++    size_t index = 0;
++    for (const auto& extension : registry_->GenerateInstalledExtensionsSet()) {
++      if (extensions::Manifest::IsComponentLocation(extension->location())) {
++        continue;
++      }
++      const auto& id = extension->id();
++      const bool enabled = registry_->enabled_extensions().Contains(id);
++      const bool terminated = registry_->terminated_extensions().Contains(id);
++      auto value = CefDictionaryValue::Create();
++      value->SetString("id", id);
++      value->SetString("name", extension->name());
++      value->SetString("description", extension->description());
++      value->SetString("version", extension->version().GetString());
++      value->SetString("path", extension->path().AsUTF8Unsafe());
++      value->SetInt("manifest_version", extension->manifest_version());
++      value->SetBool("enabled", enabled);
++      auto reasons = CefListValue::Create();
++      size_t reason_index = 0;
++      for (auto reason :
++           extensions::ExtensionPrefs::Get(profile_)->GetDisableReasons(id)) {
++        reasons->SetInt(reason_index++, static_cast<int>(reason));
++      }
++      value->SetList("disable_reasons", reasons);
++      value->SetString("location",
++                       extension->location() ==
++                               extensions::mojom::ManifestLocation::kUnpacked
++                           ? "unpacked"
++                       : extension->location() ==
++                               extensions::mojom::ManifestLocation::kCommandLine
++                           ? "command_line"
++                           : "other");
++      value->SetString(
++          "state", enabled      ? "enabled"
++                   : terminated ? "terminated"
++                   : registry_->blocklisted_extensions().Contains(id)
++                       ? "blocklisted"
++                   : registry_->blocked_extensions().Contains(id) ? "blocked"
++                                                                  : "disabled");
++      result->SetDictionary(index++, value);
++    }
++    return result;
++  }
++
++  void Finish(const std::string& error) {
++    CEF_REQUIRE_UIT();
++    if (!callback_) {
++      return;
++    }
++    // The callback can reenter management or close the owning request context.
++    auto callback = std::move(callback_);
++    auto snapshot = Snapshot();
++    observation_.Reset();
++    registry_ = nullptr;
++    profile_ = nullptr;
++    callback->OnExtensionManagementComplete(error, extension_id_, snapshot);
++  }
++
++  void Load(const std::string& path) {
++    if (path.empty() || path.find('\0') != std::string::npos) {
++      Finish("An absolute extension directory path is required.");
++      return;
++    }
++    const auto native_path = base::FilePath::FromUTF8Unsafe(path);
++    if (!native_path.IsAbsolute()) {
++      Finish("An absolute extension directory path is required.");
++      return;
++    }
++    auto installer = extensions::UnpackedInstaller::Create(profile_);
++    installer->set_be_noisy_on_failure(false);
++    installer->set_allow_file_access(false);
++    installer->set_allow_incognito_access(false);
++    installer->set_completion_callback(base::BindOnce(
++        &ExtensionManagementOperation::OnLoaded, base::WrapRefCounted(this)));
++    installer->Load(native_path);
++  }
++
++  void OnLoaded(const extensions::Extension* extension,
++                const base::FilePath& path,
++                const std::u16string& error) {
++    CEF_REQUIRE_UIT();
++    if (!callback_) {
++      return;
++    }
++    if (extension) {
++      extension_id_ = extension->id();
++    }
++    if (!error.empty()) {
++      Finish(base::UTF16ToUTF8(error));
++    } else if (!extension || !registry_->GetInstalledExtension(extension_id_)) {
++      Finish("The native installer did not register the extension.");
++    } else {
++      Finish(std::string());
++    }
++  }
++
++  void SetEnabled(const extensions::Extension* extension,
++                  bool enabled,
++                  extensions::ManagementPolicy* policy,
++                  extensions::ExtensionRegistrar* registrar,
++                  extensions::ExtensionPrefs* prefs) {
++    std::u16string error;
++    if (!policy->UserMayModifySettings(extension, &error) ||
++        (enabled ? policy->MustRemainDisabled(extension, nullptr)
++                 : policy->MustRemainEnabled(extension, &error))) {
++      Finish(error.empty() ? "Native policy forbids changing this extension."
++                           : base::UTF16ToUTF8(error));
++      return;
++    }
++    const bool currently_enabled =
++        registry_->enabled_extensions().Contains(extension_id_);
++    const bool terminated =
++        registry_->terminated_extensions().Contains(extension_id_);
++    if ((enabled && currently_enabled) ||
++        (!enabled && !currently_enabled && !terminated)) {
++      Finish(std::string());
++      return;
++    }
++    if (enabled) {
++      const auto reasons = prefs->GetDisableReasons(extension_id_);
++      if (!registry_->disabled_extensions().Contains(extension_id_) ||
++          prefs->DidExtensionEscalatePermissions(extension_id_) ||
++          reasons != extensions::DisableReasonSet{
++                         extensions::disable_reason::DISABLE_USER_ACTION}) {
++        Finish(
++            "Enable requires unchanged permissions and only user disablement; "
++            "native requirements, approval or another disable reason remains.");
++        return;
++      }
++      registrar->RemoveDisableReasonAndMaybeEnable(
++          extension_id_, extensions::disable_reason::DISABLE_USER_ACTION);
++    } else {
++      // The registrar replaces reasons for enabled/terminated entries. Refuse
++      // inconsistent transitional state instead of discarding a native reason.
++      if (!prefs->GetDisableReasons(extension_id_).empty()) {
++        Finish("Native disable reasons are pending for this extension.");
++        return;
++      }
++      registrar->DisableExtension(
++          extension_id_, {extensions::disable_reason::DISABLE_USER_ACTION});
++    }
++    if (!callback_) {
++      return;
++    }
++    const bool actual_enabled =
++        registry_->enabled_extensions().Contains(extension_id_);
++    const bool actual_terminated =
++        registry_->terminated_extensions().Contains(extension_id_);
++    if (enabled && !actual_enabled &&
++        registry_->disabled_extensions().Contains(extension_id_)) {
++      // A native refusal after removing the user's reason must retain that
++      // user's disabled intent, without replacing any newly added reasons.
++      prefs->AddDisableReason(extension_id_,
++                              extensions::disable_reason::DISABLE_USER_ACTION);
++      if (!callback_) {
++        return;
++      }
++    }
++    Finish(actual_enabled == enabled && (enabled || !actual_terminated)
++               ? std::string()
++               : "Native extension registrar refused the state transition.");
++  }
++
++  void Uninstall(extensions::ExtensionRegistrar* registrar) {
++    std::u16string error;
++    // The caller has already presented its own native removal confirmation.
++    if (!registrar->UninstallExtension(
++            extension_id_, extensions::UNINSTALL_REASON_USER_INITIATED, &error,
++            base::BindOnce(&ExtensionManagementOperation::OnUninstalled,
++                           base::WrapRefCounted(this)))) {
++      Finish(error.empty() ? "Native policy refused extension removal."
++                           : base::UTF16ToUTF8(error));
++    }
++  }
++
++  void OnUninstalled() {
++    CEF_REQUIRE_UIT();
++    if (!callback_) {
++      return;
++    }
++    Finish(registry_->GetInstalledExtension(extension_id_)
++               ? "Extension remained installed after native cleanup."
++               : std::string());
++  }
++
++  raw_ptr<Profile> profile_;
++  raw_ptr<extensions::ExtensionRegistry> registry_;
++  CefRefPtr<CefExtensionManagementCallback> callback_;
++  std::string extension_id_;
++  base::ScopedObservation<extensions::ExtensionRegistry,
++                          extensions::ExtensionRegistryObserver>
++      observation_{this};
++};
+ 
+ class ResolveHostHelper : public network::ResolveHostClientBase {
+  public:
+@@ -1095,3 +1437,65 @@
+ CefBrowserContext* CefRequestContextImpl::browser_context() const {
+   return browser_context_;
+ }
++
++void CefRequestContextImpl::GetInstalledExtensions(
++    CefRefPtr<CefExtensionManagementCallback> callback) {
++  if (!callback) {
++    DCHECK(false) << "callback is required";
++    return;
++  }
++  callback = new ExtensionManagementCompletion(callback, std::string());
++  GetBrowserContext(
++      content::GetUIThreadTaskRunner({}),
++      base::BindOnce(&ExtensionManagementOperation::Start,
++                     ExtensionManagementOperation::Kind::kSnapshot,
++                     std::string(), false, std::move(callback)));
++}
++
++void CefRequestContextImpl::LoadUnpackedExtension(
++    const CefString& path,
++    CefRefPtr<CefExtensionManagementCallback> callback) {
++  if (!callback) {
++    DCHECK(false) << "callback is required";
++    return;
++  }
++  callback = new ExtensionManagementCompletion(callback, std::string());
++  GetBrowserContext(
++      content::GetUIThreadTaskRunner({}),
++      base::BindOnce(&ExtensionManagementOperation::Start,
++                     ExtensionManagementOperation::Kind::kLoad, path.ToString(),
++                     false, std::move(callback)));
++}
++
++void CefRequestContextImpl::SetExtensionEnabled(
++    const CefString& extension_id,
++    bool enabled,
++    CefRefPtr<CefExtensionManagementCallback> callback) {
++  if (!callback) {
++    DCHECK(false) << "callback is required";
++    return;
++  }
++  callback =
++      new ExtensionManagementCompletion(callback, extension_id.ToString());
++  GetBrowserContext(
++      content::GetUIThreadTaskRunner({}),
++      base::BindOnce(&ExtensionManagementOperation::Start,
++                     ExtensionManagementOperation::Kind::kSetEnabled,
++                     extension_id.ToString(), enabled, std::move(callback)));
++}
++
++void CefRequestContextImpl::UninstallExtension(
++    const CefString& extension_id,
++    CefRefPtr<CefExtensionManagementCallback> callback) {
++  if (!callback) {
++    DCHECK(false) << "callback is required";
++    return;
++  }
++  callback =
++      new ExtensionManagementCompletion(callback, extension_id.ToString());
++  GetBrowserContext(
++      content::GetUIThreadTaskRunner({}),
++      base::BindOnce(&ExtensionManagementOperation::Start,
++                     ExtensionManagementOperation::Kind::kUninstall,
++                     extension_id.ToString(), false, std::move(callback)));
++}

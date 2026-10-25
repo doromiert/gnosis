@@ -30,21 +30,63 @@ engine_resource = gnome.compile_resources('jupiter-engine-resources',
   'data/engine.gresource.xml', c_name: 'jupiter_engine', source_dir: 'data')
 engine_includes = include_directories('.', 'select', cef_root)
 bridge_dir = developer_mode ? meson.current_source_dir() / 'data/tab-bridge' : pkgdatadir / 'tab-bridge'
+manager_dir = developer_mode ? meson.current_source_dir() / 'data/extension-manager' : pkgdatadir / 'extension-manager'
+integration_dir = developer_mode ? meson.current_source_dir() / 'data/native-integration' : pkgdatadir / 'native-integration'
+scanner = find_program('wayland-scanner')
+protocol_dir = dependency('wayland-protocols').get_variable(pkgconfig: 'pkgdatadir')
+compositor_protocols = []
+foreach item : [
+  ['stable/xdg-shell/xdg-shell.xml', 'xdg-shell-protocol.h', 'server-header'],
+  ['unstable/xdg-decoration/xdg-decoration-unstable-v1.xml', 'xdg-decoration-unstable-v1-protocol.h', 'server-header'],
+  ['unstable/pointer-constraints/pointer-constraints-unstable-v1.xml', 'pointer-constraints-unstable-v1-protocol.h', 'server-header'],
+  ['unstable/pointer-constraints/pointer-constraints-unstable-v1.xml', 'pointer-constraints-client.h', 'client-header'],
+  ['unstable/pointer-constraints/pointer-constraints-unstable-v1.xml', 'pointer-constraints-code.c', 'private-code'],
+  ['unstable/relative-pointer/relative-pointer-unstable-v1.xml', 'relative-pointer-client.h', 'client-header'],
+  ['unstable/relative-pointer/relative-pointer-unstable-v1.xml', 'relative-pointer-code.c', 'private-code'],
+]
+  compositor_protocols += custom_target(item[1], input: protocol_dir / item[0], output: item[1], command: [scanner, item[2], '@INPUT@', '@OUTPUT@'])
+endforeach
+compositor_deps = [gtk_dep, json_glib_dep, dependency('gio-unix-2.0'), dependency('wlroots-0.19'), dependency('wayland-server'), dependency('wayland-client'), dependency('xkbcommon'), dependency('libdrm'), dependency('glesv2'), dependency('pixman-1')]
+compositor_lib = static_library('jupiter-compositor', ['brave/compositor.c', 'brave/outer-pointer.c', 'brave/clipboard-bridge.c', 'brave/profile.c', compositor_protocols],
+  dependencies: compositor_deps, c_args: ['-Wno-declaration-after-statement'], pic: true)
+compositor_dep = declare_dependency(link_with: compositor_lib, dependencies: compositor_deps)
 engine = static_library('jupiter-engine',
-  ['ephy-engine-download.cpp', 'ephy-engine-permission.cpp', 'ephy-engine-session.cpp', 'ephy-engine-response.cpp', 'ephy-engine-settings.cpp', 'ephy-engine-origin.cpp', 'ephy-engine-favicon.c', 'ephy-engine-view.cpp', 'ephy-engine-scheme.cpp', 'ephy-engine-print.cpp', 'select/application.cpp', 'select/browser.cpp', 'select/file-dialog.cpp', 'select/page-messages.cpp', 'select/clipboard.cpp',
+  ['brave/browser.cpp', 'ephy-engine-download.cpp', 'ephy-engine-authentication.cpp', 'ephy-engine-client-certificate.cpp', 'ephy-engine-extensions.cpp', 'ephy-engine-permission.cpp', 'ephy-engine-session.cpp', 'ephy-engine-response.cpp', 'ephy-engine-settings.cpp', 'ephy-engine-origin.cpp', 'ephy-engine-certificate.cpp', 'ephy-engine-favicon.c', 'ephy-engine-view.cpp', 'ephy-engine-scheme.cpp', 'ephy-engine-print.cpp', 'select/application.cpp', 'select/browser.cpp', 'select/file-dialog.cpp', 'select/page-messages.cpp', 'select/webstore-guard.cpp', 'select/clipboard.cpp',
    'select/cursor.cpp', 'select/policy.cpp', 'select/extensions.cpp', 'select/extension-host.cpp', engine_resource],
   include_directories: engine_includes,
-  dependencies: [gtk_dep, libadwaita_dep, json_glib_dep, libsoup_dep, webkitgtk_dep, dependency('epoxy'), cef_dep, wrapper_dep],
+  dependencies: [gtk_dep, libadwaita_dep, json_glib_dep, libsoup_dep, webkitgtk_dep, dependency('epoxy'), dependency('x11'), compositor_dep, cef_dep, wrapper_dep],
   cpp_args: ['-DCEF_RESOURCE_DIR="' + cef_root / 'Resources' + '"',
     '-DJUPITER_UBLOCK_DIR="' + ublock_dir + '"',
-    '-DJUPITER_BRIDGE_DIR="' + bridge_dir + '"'],
+    '-DJUPITER_BRIDGE_DIR="' + bridge_dir + '"',
+    '-DJUPITER_MANAGER_DIR="' + manager_dir + '"',
+    '-DJUPITER_NATIVE_INTEGRATION_DIR="' + integration_dir + '"'],
   pic: true)
 ephyengine_dep = declare_dependency(link_with: engine, include_directories: include_directories('.'), dependencies: [cef_dep, wrapper_dep, json_glib_dep])
 install_subdir(cef_root / 'Resources', install_dir: pkglibdir / 'cef', strip_directory: true)
 install_subdir(cef_root / 'Release', install_dir: pkglibdir / 'cef', strip_directory: true)
 install_subdir('data/tab-bridge', install_dir: pkgdatadir)
+install_subdir('data/extension-manager', install_dir: pkgdatadir)
+install_subdir('data/native-integration', install_dir: pkgdatadir)
 install_data(cef_root / 'LICENSE.txt', cef_root / 'CREDITS.html', install_dir: datadir / 'licenses/jupiter-cef')
 if get_option('unit_tests').enabled()
+  extension_probe = executable('extension-probe', 'tests/extension-probe.cpp',
+    dependencies: [ephyengine_dep, gtk_dep, libadwaita_dep, webkitgtk_dep],
+    include_directories: engine_includes)
+  popup_test = executable('engine-popup-test', 'tests/popup-test.cpp',
+    dependencies: [ephyengine_dep, gtk_dep, libadwaita_dep, webkitgtk_dep],
+    include_directories: engine_includes)
+  test('Engine Chromium popup windows', find_program('python3'),
+    args: [files('tools/check-native.py'), '--timeout', '90', popup_test], timeout: 100, is_parallel: false)
+  gtk_selection_test = executable('gtk-x11-selection-clear-test', 'tests/gtk-x11-selection-clear-test.cpp',
+    dependencies: [gtk_dep, dependency('x11'), meson.get_compiler('cpp').find_library('dl')])
+  test('GTK X11 stale selection ownership', find_program('python3'),
+    args: [files('tools/check-native.py'), gtk_selection_test], timeout: 40, is_parallel: false)
+  tls_test = executable('engine-tls-test', 'tests/tls-test.cpp',
+    dependencies: [ephyengine_dep, gtk_dep, libadwaita_dep, webkitgtk_dep],
+    include_directories: engine_includes)
+  test('Engine Chromium TLS', find_program('python3'),
+    args: [files('tools/check-native.py'), '--timeout', '120', find_program('python3'), files('tools/check-tls.py'), tls_test],
+    timeout: 150, is_parallel: false)
   clipboard_test = executable('engine-clipboard-test', 'tests/capabilities-test.cpp',
     dependencies: [ephyengine_dep, gtk_dep, libadwaita_dep, webkitgtk_dep],
     include_directories: engine_includes)
@@ -56,7 +98,15 @@ if get_option('unit_tests').enabled()
   test('Engine internal page messages', find_program('python3'),
     args: [files('tools/check-native.py'), page_messages_test], timeout: 90, is_parallel: false)
   # Parallel CEF/GTK processes currently expose unresolved runtime timeouts.
+  native_authentication_test = executable('engine-authentication-test', 'tests/authentication-test.cpp',
+    dependencies: [ephyengine_dep, gtk_dep, libadwaita_dep, webkitgtk_dep, libsoup_dep],
+    include_directories: engine_includes)
+  test('Engine Chromium HTTP authentication', find_program('python3'),
+    args: [files('tools/check-native.py'), '--timeout', '120', native_authentication_test], timeout: 130, is_parallel: false)
   native_permission_test = executable('engine-permission-test', 'tests/permission-test.cpp',
+    dependencies: [ephyengine_dep, gtk_dep, libadwaita_dep, webkitgtk_dep],
+    include_directories: engine_includes)
+  portal_test = executable('engine-portal-test', 'tests/portal-test.cpp',
     dependencies: [ephyengine_dep, gtk_dep, libadwaita_dep, webkitgtk_dep],
     include_directories: engine_includes)
   test('Engine Chromium permissions', find_program('python3'),

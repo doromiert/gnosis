@@ -1,0 +1,4 @@
+# Empty unified-diff context lines contain a required leading space.
+engine/brave/patches/*.patch -whitespace
+patches/*.patch -whitespace
+engine/patches/*.patch -whitespace

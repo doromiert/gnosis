@@ -11,6 +11,13 @@ G_DECLARE_FINAL_TYPE(EphyEngineSession, ephy_engine_session, EPHY, ENGINE_SESSIO
 EphyEngineSession *ephy_engine_session_new(gboolean ephemeral);
 EphyEngineSession *ephy_engine_session_get_default(void);
 gboolean ephy_engine_session_is_ephemeral(EphyEngineSession *);
+/* UI-thread upload chooser memory. Returns a full reference to an existing local
+ * directory, or NULL. Regular profiles persist through their CEF preference;
+ * private sessions retain only their own memory until session/engine teardown.
+ * A successful set may be queued until the regular request context is ready. */
+GFile *ephy_engine_session_dup_last_upload_folder(EphyEngineSession *);
+gboolean ephy_engine_session_set_last_upload_folder(EphyEngineSession *, GFile *folder);
+
 typedef struct {
   EphyEnginePermissionKind kind;
   const char *origin;
@@ -46,6 +53,7 @@ G_END_DECLS
 #include "include/cef_resource_request_handler.h"
 CefRefPtr<CefRequestContext> ephy_engine_session_context(EphyEngineSession *);
 CefRefPtr<CefCookieAccessFilter> ephy_engine_session_cookie_filter(EphyEngineSession *);
+CefRefPtr<CefResourceRequestHandler> ephy_engine_session_request_handler(EphyEngineSession *);
 bool ephy_engine_session_certificate_allowed(EphyEngineSession *, const CefString& uri, CefRefPtr<CefX509Certificate>);
 void ephy_engine_sessions_initialize();
 void ephy_engine_sessions_preferences_changed();

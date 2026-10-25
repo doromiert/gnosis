@@ -26,48 +26,6 @@
 
 G_BEGIN_DECLS
 
-void context_cmd_link_in_new_window       (GSimpleAction *action,
-                                           GVariant      *parameter,
-                                           gpointer       user_data);
-void context_cmd_link_in_new_tab          (GSimpleAction *action,
-                                           GVariant      *parameter,
-                                           gpointer       user_data);
-void context_cmd_link_in_incognito_window (GSimpleAction *action,
-                                           GVariant      *parameter,
-                                           gpointer       user_data);
-void context_cmd_copy_link_address        (GSimpleAction *action,
-                                           GVariant      *parameter,
-                                           gpointer       user_data);
-void context_cmd_send_via_email           (GSimpleAction *action,
-                                           GVariant      *parameter,
-                                           gpointer       user_data);
-void context_cmd_download_link_as         (GSimpleAction *action,
-                                           GVariant      *parameter,
-                                           gpointer       user_data);
-void context_cmd_set_image_as_background  (GSimpleAction *action,
-                                           GVariant      *parameter,
-                                           gpointer       user_data);
-void context_cmd_copy_image_location      (GSimpleAction *action,
-                                           GVariant      *parameter,
-                                           gpointer       user_data);
-void context_cmd_view_image_in_new_tab    (GSimpleAction *action,
-                                           GVariant      *parameter,
-                                           gpointer       user_data);
-void context_cmd_save_image_as            (GSimpleAction *action,
-                                           GVariant      *parameter,
-                                           gpointer       user_data);
-void context_cmd_media_in_new_window      (GSimpleAction *action,
-                                           GVariant      *parameter,
-                                           gpointer       user_data);
-void context_cmd_media_in_new_tab         (GSimpleAction *action,
-                                           GVariant      *parameter,
-                                           gpointer       user_data);
-void context_cmd_copy_media_location      (GSimpleAction *action,
-                                           GVariant      *parameter,
-                                           gpointer       user_data);
-void context_cmd_save_media_as            (GSimpleAction *action,
-                                           GVariant      *parameter,
-                                           gpointer       user_data);
 void context_cmd_search_selection         (GSimpleAction *action,
                                            GVariant      *parameter,
                                            gpointer       user_data);
@@ -81,9 +39,6 @@ void context_cmd_open_selection_in_new_window       (GSimpleAction *action,
                                                      GVariant      *parameter,
                                                      gpointer       user_data);
 void context_cmd_open_selection_in_incognito_window (GSimpleAction *action,
-                                                     GVariant      *parameter,
-                                                     gpointer       user_data);
-void context_cmd_add_link_to_bookmarks              (GSimpleAction *action,
                                                      GVariant      *parameter,
                                                      gpointer       user_data);
 G_END_DECLS

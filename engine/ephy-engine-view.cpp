@@ -1,9 +1,12 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 #include "ephy-engine-view.h"
 #include "ephy-engine-scheme.h"
+#include "ephy-engine-extensions.h"
+#include "ephy-engine-certificate.hpp"
 #include "select/application.hpp"
 #include "select/clipboard.hpp"
 #include "select/page-messages.hpp"
+#include "select/policy.hpp"
 #include "select/devtools.hpp"
 #include "select/process-dumps.hpp"
 #include "select/extension-runtime.hpp"
@@ -11,9 +14,12 @@
 #include "include/cef_parser.h"
 #include "include/cef_task.h"
 #include "include/cef_version_info.h"
+#include "include/cef_pack_strings.h"
+#include "include/cef_resource_bundle_handler.h"
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
+#include <filesystem>
 #include <map>
 #include <memory>
 #include <set>
@@ -25,6 +31,7 @@ class ScriptEvaluation;
 class Protocol final : public CefDevToolsMessageObserver {
 public:
   CefRefPtr<CefBrowser> browser;
+  std::weak_ptr<JupiterBrave::Page> brave;
   CefRefPtr<CefRegistration> registration;
   std::map<int, Reply> pending;
   std::map<ScriptEvaluation*, std::weak_ptr<ScriptEvaluation>> evaluations;
@@ -35,6 +42,27 @@ public:
   std::string main_frame;
   guint64 document_epoch = 0;
   int send(const char* method, CefRefPtr<CefDictionaryValue> args, Reply done = {}) {
+    if (auto page = brave.lock()) {
+      const int id = next_devtools_message_id();
+      if (done) pending[id] = std::move(done);
+      auto value = CefValue::Create();
+      if (args) value->SetDictionary(args->Copy(false));
+      const auto params = args ? CefWriteJSON(value, JSON_WRITER_DEFAULT).ToString() : "{}";
+      CefRefPtr<Protocol> current = this;
+      page->command(method, params, [current, id](JsonObject* result, const std::string& error) {
+        auto found = current->pending.find(id); if (found == current->pending.end()) return;
+        auto callback = std::move(found->second); current->pending.erase(found);
+        CefRefPtr<CefDictionaryValue> converted;
+        if (result) {
+          auto* node = json_node_new(JSON_NODE_OBJECT); json_node_set_object(node, result);
+          char* json = json_to_string(node, false);
+          auto value = CefParseJSON(json, JSON_PARSER_RFC); if (value && value->GetType() == VTYPE_DICTIONARY) converted = value->GetDictionary();
+          g_free(json); json_node_free(node);
+        }
+        callback(converted, error);
+      });
+      return id;
+    }
     if (!browser) { if (done) done(nullptr, "Browser is not ready"); return 0; }
     int id = next_devtools_message_id();
     if (done) pending[id] = std::move(done);
@@ -111,7 +139,7 @@ public:
     for (auto& [id, reply] : calls) reply(nullptr, message);
   }
   void stop() {
-    registration = nullptr; browser = nullptr;
+    registration = nullptr; browser = nullptr; brave.reset();
     on_same_document = nullptr;
     contexts.clear();
     cancel_pending("Tab was closed");
@@ -194,6 +222,7 @@ struct _EphyEngineSessionState { gatomicrefcount refs; GBytes* bytes; };
 namespace {
 struct ViewData {
   EphyEngineView* self;
+  GWeakRef extension_owner;
   Window host;
   CefRefPtr<Browser> browser;
   CefRefPtr<Protocol> protocol;
@@ -204,19 +233,25 @@ struct ViewData {
   std::map<int, EphyEngineResponse*> history_responses;
   std::map<std::string, std::string> alternate_uris;
   std::set<std::string> page_message_handlers;
-  WebKitWebContext* context = nullptr;
   EphyEngineSession* session = nullptr;
   WebKitUserContentManager* ucm = nullptr;
   EphyEngineSettings* settings = nullptr;
-  WebKitWindowProperties* window_properties = nullptr;
-  WebKitEditorState* editor = nullptr;
+  EphyEnginePopupProperties popup_properties{};
+  bool creating_popup = false;
+  bool native_popup = false;
   GdkTexture* favicon = nullptr;
   std::string uri, title, charset;
   std::string user_agent_override;
   bool has_user_agent_override = false;
   bool loading = false, muted = false, disposed = false, detached = false;
+  GCancellable* external_uri = nullptr;
+  guint extension_context_timer = 0;
+  std::string extension_context_visit;
+  bool extension_context_reload_used = false;
+  guint64 extension_context_generation = 0;
   double progress = 0, zoom = 1;
   explicit ViewData(EphyEngineView* view) : self(view), host(*runtime) {
+    g_weak_ref_init(&extension_owner, nullptr);
     browser = new Browser("about:blank", g_getenv("JUPITER_SOFTWARE_RENDERING") || !ephy_engine_settings_get_hardware_acceleration());
     browser->host = &host;
     settings = EPHY_ENGINE_SETTINGS(g_object_ref(ephy_engine_settings_get_default()));
@@ -226,10 +261,54 @@ struct ViewData {
     find = reinterpret_cast<EphyEngineFind*>(g_object_new(ephy_engine_find_get_type(), nullptr)); find->view = this;
     inspector = reinterpret_cast<EphyEngineInspector*>(g_object_new(ephy_engine_inspector_get_type(), nullptr)); inspector->view = this;
     resource = new_resource(view, "about:blank");
-    window_properties = WEBKIT_WINDOW_PROPERTIES(g_object_new(WEBKIT_TYPE_WINDOW_PROPERTIES, nullptr));
-    editor = WEBKIT_EDITOR_STATE(g_object_new(WEBKIT_TYPE_EDITOR_STATE, nullptr));
     ucm = webkit_user_content_manager_new();
     browser->on_changed = [this] { changed(); };
+    browser->on_security_changed = [this] { if (!disposed) g_signal_emit_by_name(self, "tls-info-changed"); };
+    browser->on_fullscreen_changed = [this](bool value) {
+      if (disposed) return;
+      gboolean handled = false;
+      g_signal_emit_by_name(self, value ? "enter-fullscreen" : "leave-fullscreen", &handled);
+    };
+    browser->on_create_popup = [this](const std::string&, const CefPopupFeatures& features) -> CefRefPtr<Browser> {
+      if (disposed || detached) return nullptr;
+      g_autoptr(EphyEngineView) keep_alive = EPHY_ENGINE_VIEW(g_object_ref(self));
+      g_autoptr(EphyEngineView) owner = browser->is_extension_popup ?
+        EPHY_ENGINE_VIEW(g_weak_ref_get(&extension_owner)) : EPHY_ENGINE_VIEW(g_object_ref(self));
+      if (!owner || data(owner)->disposed || data(owner)->detached ||
+          !gtk_widget_get_root(GTK_WIDGET(owner)) ||
+          (browser->is_extension_popup && data(owner)->host.private_mode)) return nullptr;
+      auto *parent = data(owner);
+      EphyEnginePopupProperties properties{
+        {features.x, features.y, features.width, features.height},
+        features.xSet, features.ySet, features.widthSet, features.heightSet, features.isPopup
+      };
+      GtkWidget *child = nullptr;
+      parent->creating_popup = true;
+      g_signal_emit_by_name(owner, "create-popup", &properties, &child);
+      parent->creating_popup = false;
+      if (!child || !EPHY_IS_ENGINE_VIEW(child)) return nullptr;
+      auto *popup = data(EPHY_ENGINE_VIEW(child));
+      if (disposed || popup->disposed || popup == this || popup->session != session ||
+          popup->host.private_mode != host.private_mode || !popup->browser->defer_start ||
+          popup->browser->loaded || popup->browser->closing) return nullptr;
+      popup->popup_properties = properties;
+      popup->native_popup = true;
+      return popup->browser;
+    };
+    browser->on_ready = [this] {
+      if (!native_popup || disposed || detached) return;
+      g_autoptr(EphyEngineView) keep_alive = EPHY_ENGINE_VIEW(g_object_ref(self));
+      g_signal_emit_by_name(self, "ready-to-show");
+    };
+    browser->on_contents_bounds_change = [this](const CefRect& bounds) {
+      if (!native_popup || disposed || detached || !popup_properties.is_popup) return;
+      popup_properties.geometry = {bounds.x, bounds.y, bounds.width, bounds.height};
+      popup_properties.x_set = popup_properties.y_set = true;
+      popup_properties.width_set = popup_properties.height_set = true;
+      g_autoptr(EphyEngineView) keep_alive = EPHY_ENGINE_VIEW(g_object_ref(self));
+      g_signal_emit_by_name(self, "popup-geometry-changed");
+    };
+
     browser->on_page_message = [this](const std::string& url, const std::string& name, const std::string& payload) {
       if (disposed || detached || !page_message_handlers.contains(name) ||
           (!alternate_uris.contains(url) && !url.starts_with("ephy-about:"))) return;
@@ -239,11 +318,40 @@ struct ViewData {
       g_signal_emit(self, g_signal_lookup("page-message", EPHY_TYPE_ENGINE_VIEW),
                     g_quark_from_string(name.c_str()), json_parser_get_root(parser));
     };
+    browser->on_authentication = [this](EphyEngineAuthentication *request) {
+      if (disposed || detached || !gtk_widget_get_mapped(GTK_WIDGET(self))) return false;
+      g_autoptr(EphyEngineView) keep_alive = EPHY_ENGINE_VIEW(g_object_ref(self));
+      gboolean handled = false;
+      g_signal_emit_by_name(self, "authentication-request", request, &handled);
+      return bool(handled);
+    };
+    browser->on_client_certificate = [this](EphyEngineClientCertificate *request) {
+      if (disposed || detached || !gtk_widget_get_mapped(GTK_WIDGET(self))) return false;
+      g_autoptr(EphyEngineView) keep_alive = EPHY_ENGINE_VIEW(g_object_ref(self));
+      gboolean handled = false;
+      g_signal_emit_by_name(self, "client-certificate-request", request, &handled);
+      return bool(handled);
+    };
     browser->on_permission = [this](EphyEnginePermission *request) {
       if (disposed || detached) return false;
       gboolean handled = false;
       g_signal_emit_by_name(self, "permission-request", request, &handled);
       return bool(handled);
+    };
+    browser->on_webstore_install_blocked = [this] {
+      if (disposed || detached || !gtk_widget_get_mapped(GTK_WIDGET(self))) return;
+      g_autoptr(EphyEngineView) keep_alive = EPHY_ENGINE_VIEW(g_object_ref(self));
+      g_signal_emit_by_name(self, "webstore-install-blocked");
+    };
+    browser->on_external_uri = [this](const std::string& uri, const std::string& context, bool initiator_known) {
+      if (disposed || detached || !gtk_widget_get_mapped(GTK_WIDGET(self))) return;
+      g_autoptr(EphyEngineView) keep_alive = EPHY_ENGINE_VIEW(g_object_ref(self));
+      cancel_external_uri();
+      external_uri = g_cancellable_new();
+      gboolean handled = false;
+      g_signal_emit_by_name(self, "open-external-uri", uri.c_str(), context.c_str(), initiator_known,
+                            external_uri, &handled);
+      if (!handled) cancel_external_uri();
     };
     browser->on_favicon = [this](const std::string& page, const std::string& icon, GdkTexture* texture) {
       if (disposed) return;
@@ -255,6 +363,14 @@ struct ViewData {
     browser->on_closed = [this] { gboolean handled = FALSE; g_signal_emit_by_name(self, "close", &handled); };
     browser->prepare_navigation = [this] { apply_user_agent(); };
     browser->on_load_start = [this](const std::string& url) {
+      cancel_external_uri();
+      stop_extension_context_probe();
+      ++extension_context_generation;
+      const auto visit = url.substr(0, url.find('#'));
+      if (extension_context_visit != visit) {
+        extension_context_visit = visit;
+        extension_context_reload_used = false;
+      }
       g_clear_object(&resource);
       resource = new_resource(self, visible_uri(url).c_str());
       g_signal_emit_by_name(self, "load-changed", WEBKIT_LOAD_STARTED);
@@ -264,7 +380,34 @@ struct ViewData {
       g_clear_object(&resource->response);
       resource->response = ephy_engine_response_new(uri, response);
     };
+    browser->on_resource_complete = [this](const std::string& uri, CefRefPtr<CefResponse> response) {
+      if (disposed || detached) return;
+      auto signal = g_signal_lookup("resource-response", EPHY_TYPE_ENGINE_VIEW);
+      if (!g_signal_has_handler_pending(self, signal, 0, TRUE)) return;
+      g_autoptr(EphyEngineView) keep_alive = EPHY_ENGINE_VIEW(g_object_ref(self));
+      g_autoptr(EphyEngineResponse) native_response = ephy_engine_response_new(uri, response);
+      g_signal_emit_by_name(self, "resource-response", uri.c_str(), native_response);
+    };
     browser->on_load_end = [this](int) {
+      probe_extension_context();
+      if (browser->cef_browser() && browser->url.starts_with("chrome-extension://") && !browser->is_extension_popup && browser->native_tab_id < 0) {
+        auto args = CefDictionaryValue::Create();
+        args->SetString("expression", "new Promise(resolve => chrome.tabs.getCurrent(tab => { const error = chrome.runtime.lastError; resolve(error ? -1 : tab?.id ?? -1); }))");
+        args->SetBool("awaitPromise", true); args->SetBool("returnByValue", true);
+        auto document = std::shared_ptr<EphyEngineResource>(static_cast<EphyEngineResource *>(g_object_ref(resource)),
+          [](auto *resource) { g_object_unref(resource); });
+        const auto epoch = protocol->document_epoch, generation = extension_context_generation;
+        const int browser_id = browser->cef_browser()->GetIdentifier();
+        protocol->send("Runtime.evaluate", args, [document, epoch, generation, browser_id](auto reply, const auto& error) {
+          g_autoptr(EphyEngineView) view = EPHY_ENGINE_VIEW(g_weak_ref_get(&document->view));
+          if (!view || !error.empty() || !reply) return;
+          auto *current = data(view);
+          if (current->resource != document.get() || !current->extension_context_current(epoch, generation, browser_id)) return;
+          auto result = reply->GetDictionary("result");
+          if (result && result->GetString("type") == "number" && result->GetInt("value") >= 0)
+            current->browser->native_tab_id = result->GetInt("value");
+        });
+      }
       update_history();
     };
     browser->on_load_error = [this](const std::string& url, const std::string& message) {
@@ -275,9 +418,24 @@ struct ViewData {
       g_signal_emit_by_name(self, "load-failed", WEBKIT_LOAD_STARTED, url.c_str(), error, &handled);
       return bool(handled);
     };
+    browser->on_tls_error = [this](const std::string& url, CefRefPtr<CefSSLInfo> info) {
+      if (disposed || detached || !info) return false;
+      auto certificate = info->GetX509Certificate();
+      g_autoptr(GTlsCertificate) tls = ephy_engine_certificate_to_tls(certificate);
+      if (!tls) return false;
+      auto errors = ephy_engine_certificate_errors(info->GetCertStatus(), certificate);
+      if (!errors) errors = G_TLS_CERTIFICATE_GENERIC_ERROR;
+      g_autoptr(EphyEngineView) keep_alive = EPHY_ENGINE_VIEW(g_object_ref(self));
+      gboolean handled = false;
+      g_signal_emit_by_name(self, "load-failed-with-tls-errors", url.c_str(), tls, errors, &handled);
+      return bool(handled);
+    };
     host.open_tab = [this](const std::string& url, bool active, bool defer) -> CefRefPtr<Browser> {
+      g_autoptr(EphyEngineView) owner = browser->is_extension_popup ?
+        EPHY_ENGINE_VIEW(g_weak_ref_get(&extension_owner)) : EPHY_ENGINE_VIEW(g_object_ref(self));
+      if (!owner || data(owner)->disposed || (browser->is_extension_popup && (data(owner)->host.private_mode || !gtk_widget_get_root(GTK_WIDGET(owner))))) return nullptr;
       GtkWidget* view = nullptr;
-      g_signal_emit_by_name(self, "open-link", url.c_str(), active, defer, &view);
+      g_signal_emit_by_name(owner, "open-link", url.c_str(), active, defer, &view);
       if (!view || !EPHY_IS_ENGINE_VIEW(view)) return nullptr;
       return data(EPHY_ENGINE_VIEW(view))->browser;
     };
@@ -288,6 +446,82 @@ struct ViewData {
   const std::string& visible_uri(const std::string& url) const {
     auto found = alternate_uris.find(url);
     return found == alternate_uris.end() ? url : found->second;
+  }
+  void cancel_external_uri() {
+    g_autoptr(GCancellable) pending = external_uri;
+    external_uri = nullptr;
+    if (pending) g_cancellable_cancel(pending);
+  }
+  void stop_extension_context_probe() {
+    if (extension_context_timer) { g_source_remove(extension_context_timer); extension_context_timer = 0; }
+  }
+  bool extension_context_current(guint64 epoch, guint64 generation, int browser_id) {
+    if (disposed || detached || host.private_mode || browser->closing || protocol->document_epoch != epoch ||
+        extension_context_generation != generation ||
+        !browser->cef_browser() || browser->cef_browser()->GetIdentifier() != browser_id ||
+        !gtk_widget_get_root(GTK_WIDGET(self))) return false;
+    if (browser->is_extension_popup) {
+      g_autoptr(EphyEngineView) owner = EPHY_ENGINE_VIEW(g_weak_ref_get(&extension_owner));
+      if (!owner || data(owner)->disposed || data(owner)->host.private_mode ||
+          !gtk_widget_get_root(GTK_WIDGET(owner))) return false;
+    }
+    return true;
+  }
+  void probe_extension_context() {
+    stop_extension_context_probe();
+    if (extension_context_reload_used || !browser->url.starts_with("chrome-extension://") ||
+        !browser->cef_browser() || !runtime) return;
+    const auto id = browser->url.substr(19, browser->url.find('/', 19) - 19);
+    if (!runtime->extension_host->extension_ids.contains(id)) return;
+    struct Probe {
+      GWeakRef view;
+      guint64 epoch, generation;
+      gint64 deadline = g_get_monotonic_time() + 5 * G_TIME_SPAN_SECOND;
+      int browser;
+      unsigned checks = 0;
+      bool pending = false;
+      Probe(ViewData *owner) : epoch(owner->protocol->document_epoch), generation(owner->extension_context_generation), browser(owner->browser->cef_browser()->GetIdentifier()) {
+        g_weak_ref_init(&view, owner->self);
+      }
+      ~Probe() { g_weak_ref_clear(&view); }
+    };
+    auto state = std::make_shared<Probe>(this);
+    extension_context_timer = g_timeout_add_full(G_PRIORITY_DEFAULT, 250, +[](gpointer pointer) -> gboolean {
+      auto state = *static_cast<std::shared_ptr<Probe> *>(pointer);
+      g_autoptr(EphyEngineView) view = EPHY_ENGINE_VIEW(g_weak_ref_get(&state->view));
+      if (!view) return G_SOURCE_REMOVE;
+      auto *current = data(view);
+      if (!current->extension_context_current(state->epoch, state->generation, state->browser) || state->checks >= 20 || g_get_monotonic_time() > state->deadline) {
+        current->extension_context_timer = 0;
+        return G_SOURCE_REMOVE;
+      }
+      if (state->pending) return G_SOURCE_CONTINUE;
+      state->pending = true; ++state->checks;
+      auto args = CefDictionaryValue::Create();
+      args->SetString("expression", R"JS((()=>{try {
+        if (typeof chrome?.runtime?.getURL !== 'function' || typeof chrome.runtime.getManifest !== 'function') return false;
+        chrome.runtime.getURL(''); chrome.runtime.getManifest(); return false;
+      } catch(error) { return error?.message === 'Extension context invalidated.'; }})())JS");
+      args->SetBool("returnByValue", true);
+      current->protocol->send("Runtime.evaluate", args, [state](auto reply, const auto& error) {
+        state->pending = false;
+        g_autoptr(EphyEngineView) view = EPHY_ENGINE_VIEW(g_weak_ref_get(&state->view));
+        if (!view) return;
+        auto *current = data(view);
+        if (!current->extension_context_current(state->epoch, state->generation, state->browser) || current->extension_context_reload_used ||
+            !error.empty() || !reply || reply->HasKey("exceptionDetails")) return;
+        auto result = reply->GetDictionary("result");
+        if (!result || result->GetString("type") != "boolean" || !result->GetBool("value")) return;
+        // Extension self-reloads invalidate existing native bindings; one reload reconnects the document.
+        current->extension_context_reload_used = true;
+        if (runtime && runtime->render_test) g_print("CEF explicit native extension context invalidation: reloading once\n");
+        current->stop_extension_context_probe();
+        current->browser->reload();
+      });
+      return G_SOURCE_CONTINUE;
+    }, new std::shared_ptr<Probe>(std::move(state)), +[](gpointer pointer) {
+      delete static_cast<std::shared_ptr<Probe> *>(pointer);
+    });
   }
   void apply_user_agent() {
     if (!protocol->browser || disposed) return;
@@ -301,6 +535,45 @@ struct ViewData {
   }
   void changed() {
     if (disposed) return;
+    if (auto page = browser->brave_page(); page && protocol->brave.expired()) {
+      protocol->brave = page;
+      page->zoom_changed = [this](double factor) {
+        if (!disposed && !detached && zoom != factor) {
+          zoom = factor; g_object_notify(G_OBJECT(self),"zoom-level");
+        }
+      };
+      page->set_zoom(zoom);
+      page->download_begin = [this](const std::string& uri, const std::string& name, const std::string& staging,
+                                     std::function<void()> cancel) -> JupiterBrave::DownloadProgress {
+        if (disposed || detached) return {};
+        auto* download = ephy_engine_download_native_begin(host.session ? host.session : ephy_engine_session_get_default(),
+          uri, name, staging, std::move(cancel));
+        auto keep = std::shared_ptr<EphyEngineDownload>(download, [](auto* value) { g_object_unref(value); });
+        return [keep](guint64 received, guint64 total, const std::string& state) {
+          ephy_engine_download_native_update(keep.get(), received, total, state);
+        };
+      };
+      page->internal_resource = [this](const std::string& uri, bool main, JupiterBrave::ResourceReply reply) {
+        if (disposed || detached) { reply(nullptr, "", "The view is closed"); return; }
+        ephy_engine_uri_scheme_fetch_async(self, uri.c_str(), main, nullptr,
+          +[](GObject*, GAsyncResult* result, gpointer user) {
+            std::unique_ptr<JupiterBrave::ResourceReply> reply(static_cast<JupiterBrave::ResourceReply*>(user));
+            g_autoptr(GError) error = nullptr; g_autofree char* mime = nullptr;
+            g_autoptr(GBytes) bytes = ephy_engine_uri_scheme_fetch_finish(result, &mime, &error);
+            (*reply)(bytes, mime ? mime : "application/octet-stream", error ? error->message : "");
+          }, new JupiterBrave::ResourceReply(std::move(reply)));
+      };
+      page->page_message = [this](const std::string& uri, const std::string& name, const std::string& payload) {
+        if (!disposed && !detached && browser->on_page_message) browser->on_page_message(uri, name, payload);
+      };
+      auto current = protocol;
+      page->event = [current](const std::string& method, JsonObject* params) {
+        auto* node = json_node_new(JSON_NODE_OBJECT); json_node_set_object(node, params);
+        char* json = json_to_string(node, false);
+        current->OnDevToolsEvent(nullptr, method, json, strlen(json));
+        g_free(json); json_node_free(node);
+      };
+    }
     if (browser->cef_browser() && !protocol->browser) {
       protocol->browser = browser->cef_browser();
       protocol->registration = protocol->browser->GetHost()->AddDevToolsMessageObserver(protocol);
@@ -337,6 +610,7 @@ struct ViewData {
           auto entry = entries->GetDictionary(i);
           auto* item = reinterpret_cast<EphyEngineHistoryItem*>(g_object_new(ephy_engine_history_item_get_type(), nullptr));
           auto url = entry->GetString("url").ToString();
+          if (auto page = browser->brave_page()) url = page->canonical_uri(url);
           item->uri = g_strdup(visible_uri(url).c_str());
           item->alternate = alternate_uris.contains(url);
           item->title = g_strdup(entry->GetString("title").ToString().c_str());
@@ -367,12 +641,15 @@ struct ViewData {
     });
   }
   ~ViewData() {
+    cancel_external_uri();
+    stop_extension_context_probe();
     std::erase(views, this);
+    g_weak_ref_clear(&extension_owner);
     protocol->stop();
     for (const auto& [id, response] : history_responses) g_object_unref(response);
     for (GObject* object : {G_OBJECT(history), G_OBJECT(find), G_OBJECT(inspector), G_OBJECT(resource)}) g_object_unref(object);
-    g_clear_object(&context); g_clear_object(&session); g_clear_object(&ucm); g_clear_object(&settings);
-    g_clear_object(&favicon); g_clear_object(&window_properties); g_clear_object(&editor);
+    g_clear_object(&session); g_clear_object(&ucm); g_clear_object(&settings);
+    g_clear_object(&favicon);
   }
 };
 }
@@ -382,7 +659,7 @@ ViewData* ViewData::data(EphyEngineView* view) { return static_cast<EphyEngineVi
 namespace {
 ViewData* data(EphyEngineView* view) { return ViewData::data(view); }
 enum { P_NONE, P_TITLE, P_URI, P_LOADING, P_PROGRESS, P_ZOOM, P_MUTED, P_AUDIO, P_FAVICON, P_BACK, P_FORWARD,
- P_RESPONSIVE, P_CONTEXT, P_SESSION, P_UCM, P_SETTINGS, P_RELATED, P_AUTOMATION, P_EXTENSION_MODE, P_CSP };
+ P_RESPONSIVE, P_SESSION, P_UCM, P_SETTINGS, P_RELATED, P_AUTOMATION, P_EXTENSION_MODE, P_CSP };
 void unsupported(GTask* task, const char* message) {
   g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_NOT_SUPPORTED, "%s", message); g_object_unref(task);
 }
@@ -390,7 +667,7 @@ void set_object(GObject** slot, const GValue* value) { g_set_object(slot, G_OBJE
 }
 static void ephy_engine_web_view_class_init(EphyEngineViewClass* klass) {
   auto* object_class = G_OBJECT_CLASS(klass); auto* widget_class = GTK_WIDGET_CLASS(klass);
-  widget_class->grab_focus = +[](GtkWidget* widget) -> gboolean { return gtk_widget_grab_focus(data(EPHY_ENGINE_VIEW(widget))->browser->surface()); };
+  widget_class->grab_focus = +[](GtkWidget* widget) -> gboolean { data(EPHY_ENGINE_VIEW(widget))->browser->focus_native(); return true; };
   widget_class->root = +[](GtkWidget *widget) {
     data(EPHY_ENGINE_VIEW(widget))->detached = false;
     GTK_WIDGET_CLASS(ephy_engine_web_view_parent_class)->root(widget);
@@ -398,16 +675,25 @@ static void ephy_engine_web_view_class_init(EphyEngineViewClass* klass) {
   widget_class->unroot = +[](GtkWidget *widget) {
     auto *view = data(EPHY_ENGINE_VIEW(widget));
     view->detached = true;
+    view->cancel_external_uri();
+    view->stop_extension_context_probe();
     view->browser->cancel_permissions();
+    view->browser->cancel_authentication();
     // Pending GTasks retain their source widget, so disposal alone cannot cancel them.
     view->protocol->cancel_pending("Tab detached from its window");
     GTK_WIDGET_CLASS(ephy_engine_web_view_parent_class)->unroot(widget);
+  };
+  widget_class->unmap = +[](GtkWidget *widget) {
+    data(EPHY_ENGINE_VIEW(widget))->cancel_external_uri();
+    data(EPHY_ENGINE_VIEW(widget))->browser->cancel_authentication();
+    GTK_WIDGET_CLASS(ephy_engine_web_view_parent_class)->unmap(widget);
   };
   gtk_widget_class_set_layout_manager_type(widget_class, GTK_TYPE_BIN_LAYOUT);
   object_class->dispose = +[](GObject* object) {
     auto* d = data(EPHY_ENGINE_VIEW(object));
     if (d && !d->disposed) {
-      d->disposed = true; d->protocol->stop(); d->browser->detach_callbacks(); d->browser->close(); d->browser->host = nullptr;
+      d->cancel_external_uri();
+      d->disposed = true; d->stop_extension_context_probe(); d->protocol->stop(); d->browser->detach_callbacks(); d->browser->close(); d->browser->host = nullptr;
       if (gtk_widget_get_parent(d->browser->widget())) gtk_widget_unparent(d->browser->widget());
     }
     G_OBJECT_CLASS(ephy_engine_web_view_parent_class)->dispose(object);
@@ -427,7 +713,6 @@ static void ephy_engine_web_view_class_init(EphyEngineViewClass* klass) {
     case P_BACK: g_value_set_boolean(value, d->browser->can_back()); break;
     case P_FORWARD: g_value_set_boolean(value, d->browser->can_forward()); break;
     case P_FAVICON: g_value_set_object(value, d->favicon); break;
-    case P_CONTEXT: g_value_set_object(value, d->context); break;
     case P_SESSION: g_value_set_object(value, d->session); break;
     case P_UCM: g_value_set_object(value, d->ucm); break;
     case P_SETTINGS: g_value_set_object(value, d->settings); break;
@@ -441,7 +726,6 @@ static void ephy_engine_web_view_class_init(EphyEngineViewClass* klass) {
   object_class->set_property = +[](GObject* object, guint id, const GValue* value, GParamSpec* spec) {
     auto* d = data(EPHY_ENGINE_VIEW(object));
     switch(id) {
-    case P_CONTEXT: set_object(reinterpret_cast<GObject**>(&d->context), value); break;
     case P_SESSION: {
       auto* session = EPHY_ENGINE_SESSION(g_value_get_object(value));
       g_set_object(reinterpret_cast<GObject**>(&d->session), G_OBJECT(session ? session : ephy_engine_session_get_default()));
@@ -463,6 +747,7 @@ static void ephy_engine_web_view_class_init(EphyEngineViewClass* klass) {
         d->host.session = d->session;
         d->host.context = data(related)->host.context;
         d->host.private_mode = data(related)->host.private_mode;
+        d->browser->defer_start = data(related)->creating_popup;
       }
       break;
     }
@@ -479,7 +764,7 @@ static void ephy_engine_web_view_class_init(EphyEngineViewClass* klass) {
   g_object_class_install_property(object_class, P_PROGRESS, g_param_spec_double("estimated-load-progress", nullptr, nullptr, 0, 1, 0, flags));
   g_object_class_install_property(object_class, P_ZOOM, g_param_spec_double("zoom-level", nullptr, nullptr, .1, 10, 1, flags));
   g_object_class_install_property(object_class, P_FAVICON, g_param_spec_object("favicon", nullptr, nullptr, GDK_TYPE_TEXTURE, flags));
-  for (auto [id, name, type] : {std::tuple{P_CONTEXT,"web-context",WEBKIT_TYPE_WEB_CONTEXT}, {P_SESSION,"network-session",EPHY_TYPE_ENGINE_SESSION}, {P_UCM,"user-content-manager",WEBKIT_TYPE_USER_CONTENT_MANAGER}, {P_SETTINGS,"settings",EPHY_TYPE_ENGINE_SETTINGS}, {P_RELATED,"related-view",EPHY_TYPE_ENGINE_VIEW}})
+  for (auto [id, name, type] : {std::tuple{P_SESSION,"network-session",EPHY_TYPE_ENGINE_SESSION}, {P_UCM,"user-content-manager",WEBKIT_TYPE_USER_CONTENT_MANAGER}, {P_SETTINGS,"settings",EPHY_TYPE_ENGINE_SETTINGS}, {P_RELATED,"related-view",EPHY_TYPE_ENGINE_VIEW}})
     g_object_class_install_property(object_class, id, g_param_spec_object(name, nullptr, nullptr, type, construct));
   g_object_class_install_property(object_class, P_AUTOMATION, g_param_spec_boolean("is-controlled-by-automation", nullptr, nullptr, false, construct));
   g_object_class_install_property(object_class, P_EXTENSION_MODE, g_param_spec_enum("web-extension-mode", nullptr, nullptr, WEBKIT_TYPE_WEB_EXTENSION_MODE, WEBKIT_WEB_EXTENSION_MODE_NONE, construct));
@@ -487,48 +772,55 @@ static void ephy_engine_web_view_class_init(EphyEngineViewClass* klass) {
   g_signal_new("open-link", G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST, 0, nullptr, nullptr, nullptr, GTK_TYPE_WIDGET, 3, G_TYPE_STRING, G_TYPE_BOOLEAN, G_TYPE_BOOLEAN);
   g_signal_new("load-changed", G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST, G_STRUCT_OFFSET(EphyEngineViewClass, load_changed), nullptr, nullptr, nullptr, G_TYPE_NONE, 1, WEBKIT_TYPE_LOAD_EVENT);
   g_signal_new("load-failed", G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST, G_STRUCT_OFFSET(EphyEngineViewClass, load_failed), g_signal_accumulator_true_handled, nullptr, nullptr, G_TYPE_BOOLEAN, 3, WEBKIT_TYPE_LOAD_EVENT, G_TYPE_STRING, G_TYPE_ERROR);
-  g_signal_new("create", G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST, G_STRUCT_OFFSET(EphyEngineViewClass, create), nullptr, nullptr, nullptr, GTK_TYPE_WIDGET, 1, WEBKIT_TYPE_NAVIGATION_ACTION);
+  g_signal_new("create-popup", G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST, G_STRUCT_OFFSET(EphyEngineViewClass, create_popup), g_signal_accumulator_first_wins, nullptr, nullptr, GTK_TYPE_WIDGET, 1, G_TYPE_POINTER);
+  g_signal_new("popup-geometry-changed", G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST, 0, nullptr, nullptr, nullptr, G_TYPE_NONE, 0);
   g_signal_new("ready-to-show", G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST, G_STRUCT_OFFSET(EphyEngineViewClass, ready_to_show), nullptr, nullptr, nullptr, G_TYPE_NONE, 0);
+  g_signal_new("tls-info-changed", G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST, 0, nullptr, nullptr, nullptr, G_TYPE_NONE, 0);
   g_signal_new("run-as-modal", G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST, G_STRUCT_OFFSET(EphyEngineViewClass, run_as_modal), nullptr, nullptr, nullptr, G_TYPE_NONE, 0);
   g_signal_new("close", G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST, G_STRUCT_OFFSET(EphyEngineViewClass, close), nullptr, nullptr, nullptr, G_TYPE_NONE, 0);
-  g_signal_new("script-dialog", G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST, G_STRUCT_OFFSET(EphyEngineViewClass, script_dialog), g_signal_accumulator_true_handled, nullptr, nullptr, G_TYPE_BOOLEAN, 1, WEBKIT_TYPE_SCRIPT_DIALOG);
-  g_signal_new("decide-policy", G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST, G_STRUCT_OFFSET(EphyEngineViewClass, decide_policy), g_signal_accumulator_true_handled, nullptr, nullptr, G_TYPE_BOOLEAN, 2, WEBKIT_TYPE_POLICY_DECISION, WEBKIT_TYPE_POLICY_DECISION_TYPE);
   g_signal_new("permission-request", G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST, G_STRUCT_OFFSET(EphyEngineViewClass, permission_request), g_signal_accumulator_true_handled, nullptr, nullptr, G_TYPE_BOOLEAN, 1, EPHY_TYPE_ENGINE_PERMISSION);
-  g_signal_new("mouse-target-changed", G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST, G_STRUCT_OFFSET(EphyEngineViewClass, mouse_target_changed), nullptr, nullptr, nullptr, G_TYPE_NONE, 2, WEBKIT_TYPE_HIT_TEST_RESULT, G_TYPE_UINT);
-  g_signal_new("print", G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST, G_STRUCT_OFFSET(EphyEngineViewClass, print), g_signal_accumulator_true_handled, nullptr, nullptr, G_TYPE_BOOLEAN, 1, WEBKIT_TYPE_PRINT_OPERATION);
-  g_signal_new("resource-load-started", G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST, G_STRUCT_OFFSET(EphyEngineViewClass, resource_load_started), nullptr, nullptr, nullptr, G_TYPE_NONE, 2, ephy_engine_resource_get_type(), WEBKIT_TYPE_URI_REQUEST);
   g_signal_new("enter-fullscreen", G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST, G_STRUCT_OFFSET(EphyEngineViewClass, enter_fullscreen), g_signal_accumulator_true_handled, nullptr, nullptr, G_TYPE_BOOLEAN, 0);
   g_signal_new("leave-fullscreen", G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST, G_STRUCT_OFFSET(EphyEngineViewClass, leave_fullscreen), g_signal_accumulator_true_handled, nullptr, nullptr, G_TYPE_BOOLEAN, 0);
-  g_signal_new("run-file-chooser", G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST, G_STRUCT_OFFSET(EphyEngineViewClass, run_file_chooser), g_signal_accumulator_true_handled, nullptr, nullptr, G_TYPE_BOOLEAN, 1, WEBKIT_TYPE_FILE_CHOOSER_REQUEST);
-  g_signal_new("context-menu", G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST, G_STRUCT_OFFSET(EphyEngineViewClass, context_menu), g_signal_accumulator_true_handled, nullptr, nullptr, G_TYPE_BOOLEAN, 2, WEBKIT_TYPE_CONTEXT_MENU, WEBKIT_TYPE_HIT_TEST_RESULT);
-  g_signal_new("context-menu-dismissed", G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST, G_STRUCT_OFFSET(EphyEngineViewClass, context_menu_dismissed), nullptr, nullptr, nullptr, G_TYPE_NONE, 0);
-  g_signal_new("submit-form", G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST, G_STRUCT_OFFSET(EphyEngineViewClass, submit_form), nullptr, nullptr, nullptr, G_TYPE_NONE, 1, WEBKIT_TYPE_FORM_SUBMISSION_REQUEST);
-  g_signal_new("insecure-content-detected", G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST, G_STRUCT_OFFSET(EphyEngineViewClass, insecure_content_detected), nullptr, nullptr, nullptr, G_TYPE_NONE, 1, WEBKIT_TYPE_INSECURE_CONTENT_EVENT);
-  g_signal_new("web-process-crashed", G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST, G_STRUCT_OFFSET(EphyEngineViewClass, web_process_crashed), g_signal_accumulator_true_handled, nullptr, nullptr, G_TYPE_BOOLEAN, 0);
-  g_signal_new("authenticate", G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST, G_STRUCT_OFFSET(EphyEngineViewClass, authenticate), g_signal_accumulator_true_handled, nullptr, nullptr, G_TYPE_BOOLEAN, 1, WEBKIT_TYPE_AUTHENTICATION_REQUEST);
   g_signal_new("load-failed-with-tls-errors", G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST, G_STRUCT_OFFSET(EphyEngineViewClass, load_failed_with_tls_errors), g_signal_accumulator_true_handled, nullptr, nullptr, G_TYPE_BOOLEAN, 3, G_TYPE_STRING, G_TYPE_TLS_CERTIFICATE, G_TYPE_TLS_CERTIFICATE_FLAGS);
-  g_signal_new("show-notification", G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST, G_STRUCT_OFFSET(EphyEngineViewClass, show_notification), g_signal_accumulator_true_handled, nullptr, nullptr, G_TYPE_BOOLEAN, 1, WEBKIT_TYPE_NOTIFICATION);
-  g_signal_new("run-color-chooser", G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST, G_STRUCT_OFFSET(EphyEngineViewClass, run_color_chooser), g_signal_accumulator_true_handled, nullptr, nullptr, G_TYPE_BOOLEAN, 1, WEBKIT_TYPE_COLOR_CHOOSER_REQUEST);
-  g_signal_new("show-option-menu", G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST, G_STRUCT_OFFSET(EphyEngineViewClass, show_option_menu), g_signal_accumulator_true_handled, nullptr, nullptr, G_TYPE_BOOLEAN, 2, WEBKIT_TYPE_OPTION_MENU, GDK_TYPE_RECTANGLE);
-  g_signal_new("web-process-terminated", G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST, G_STRUCT_OFFSET(EphyEngineViewClass, web_process_terminated), nullptr, nullptr, nullptr, G_TYPE_NONE, 1, WEBKIT_TYPE_WEB_PROCESS_TERMINATION_REASON);
-  g_signal_new("user-message-received", G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST, G_STRUCT_OFFSET(EphyEngineViewClass, user_message_received), g_signal_accumulator_true_handled, nullptr, nullptr, G_TYPE_BOOLEAN, 1, WEBKIT_TYPE_USER_MESSAGE);
   g_signal_new("page-message", G_TYPE_FROM_CLASS(klass), static_cast<GSignalFlags>(G_SIGNAL_RUN_LAST | G_SIGNAL_DETAILED),
                0, nullptr, nullptr, nullptr, G_TYPE_NONE, 1, JSON_TYPE_NODE);
+  g_signal_new("resource-response", G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST, 0,
+               nullptr, nullptr, nullptr, G_TYPE_NONE, 2, G_TYPE_STRING, EPHY_TYPE_ENGINE_RESPONSE);
+  g_signal_new("authentication-request", G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST, 0,
+               g_signal_accumulator_true_handled, nullptr, nullptr, G_TYPE_BOOLEAN, 1,
+               EPHY_TYPE_ENGINE_AUTHENTICATION);
+  g_signal_new("client-certificate-request", G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST, 0,
+               g_signal_accumulator_true_handled, nullptr, nullptr, G_TYPE_BOOLEAN, 1,
+               EPHY_TYPE_ENGINE_CLIENT_CERTIFICATE);
+  g_signal_new("webstore-install-blocked", G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST, 0,
+               nullptr, nullptr, nullptr, G_TYPE_NONE, 0);
+  g_signal_new("open-external-uri", G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST, 0,
+               g_signal_accumulator_true_handled, nullptr, nullptr, G_TYPE_BOOLEAN, 4,
+               G_TYPE_STRING, G_TYPE_STRING, G_TYPE_BOOLEAN, G_TYPE_CANCELLABLE);
 }
 static void ephy_engine_web_view_init(EphyEngineView* view) {
   static_cast<EphyEngineViewPrivate*>(ephy_engine_web_view_get_instance_private(view))->data = new ViewData(view);
 }
 
 namespace {
-class Engine final : public CefApp, public CefBrowserProcessHandler {
+class Engine final : public CefApp, public CefBrowserProcessHandler, public CefResourceBundleHandler {
 public:
   std::string extension_paths;
   bool diagnostic = false;
   CefRefPtr<CefBrowserProcessHandler> GetBrowserProcessHandler() override { return this; }
+  CefRefPtr<CefResourceBundleHandler> GetResourceBundleHandler() override { return this; }
+  bool GetLocalizedString(int id, CefString& value) override {
+    if (id != IDS_PRODUCT_NAME) return false;
+    value = "Jupiter";
+    return true;
+  }
+  bool GetDataResource(int, void*&, size_t&) override { return false; }
+  bool GetDataResourceForScale(int, ScaleFactor, void*&, size_t&) override { return false; }
   CefRefPtr<CefRenderProcessHandler> GetRenderProcessHandler() override { return renderer_; }
   void OnBeforeCommandLineProcessing(const CefString& process, CefRefPtr<CefCommandLine> command) override {
     if (!process.empty()) return;
     configure_extensions(command, extension_paths);
+    command->AppendSwitch("disable-chrome-login-prompt");
     if (diagnostic) command->AppendSwitchWithValue("password-store", "basic");
     command->AppendSwitchWithValue("ozone-platform", g_getenv("WAYLAND_DISPLAY") ? "wayland" : "x11");
     // Dawn needs Chromium's Vulkan context on Linux; keep its adapter blocklist.
@@ -557,6 +849,93 @@ char* ephy_engine_dup_version_info() {
     version.chrome_version_major, version.chrome_version_minor,
     version.chrome_version_build, version.chrome_version_patch);
 }
+JsonArray *ephy_engine_extensions_dup_installed(void) {
+  auto *catalog = json_array_new();
+  if (!runtime) return catalog;
+  for (const auto& extension : runtime->extensions.installed) {
+    auto *item = json_object_new();
+    for (const auto& [key, value] : {std::pair{"id", extension.id}, {"name", extension.name},
+         {"version", extension.version}, {"path", extension.path}, {"popup", extension.popup},
+         {"options", extension.options}}) json_object_set_string_member(item, key, value.c_str());
+    json_object_set_boolean_member(item, "enabled", extension.enabled && !extension.restart_required);
+    json_object_set_boolean_member(item, "restart_required", extension.restart_required);
+    json_object_set_boolean_member(item, "builtin", extension.builtin);
+    json_object_set_int_member(item, "manifest_version", extension.manifest);
+    json_object_set_boolean_member(item, "has_action", false);
+    for (auto *key : {"description", "author", "homepage", "icon"}) json_object_set_string_member(item, key, "");
+    g_autoptr(JsonParser) parser = json_parser_new();
+    if (json_parser_load_from_file(parser, (extension.path + "/manifest.json").c_str(), nullptr) &&
+        JSON_NODE_HOLDS_OBJECT(json_parser_get_root(parser))) {
+      auto *manifest = json_node_get_object(json_parser_get_root(parser));
+      for (auto *key : {"description", "author", "homepage_url"}) {
+        auto *node = json_object_get_member(manifest, key);
+        if (node && JSON_NODE_HOLDS_VALUE(node) && json_node_get_value_type(node) == G_TYPE_STRING) {
+          std::string value = json_node_get_string(node);
+          if (value.starts_with("__MSG_") && value.ends_with("__")) {
+            auto token = value.substr(6, value.size() - 8);
+            value.clear();
+            auto *locale = json_object_get_member(manifest, "default_locale");
+            if (locale && JSON_NODE_HOLDS_VALUE(locale) && json_node_get_value_type(locale) == G_TYPE_STRING) {
+              std::string name = json_node_get_string(locale);
+              g_autoptr(JsonParser) messages = json_parser_new();
+              if (!name.empty() && std::all_of(name.begin(), name.end(), [](char c) { return g_ascii_isalnum(c) || c == '_' || c == '-'; }) &&
+                  json_parser_load_from_file(messages, (extension.path + "/_locales/" + name + "/messages.json").c_str(), nullptr) &&
+                  JSON_NODE_HOLDS_OBJECT(json_parser_get_root(messages))) {
+                auto *message = json_object_get_member(json_node_get_object(json_parser_get_root(messages)), token.c_str());
+                auto *text = message && JSON_NODE_HOLDS_OBJECT(message) ? json_object_get_member(json_node_get_object(message), "message") : nullptr;
+                if (text && JSON_NODE_HOLDS_VALUE(text) && json_node_get_value_type(text) == G_TYPE_STRING) value = json_node_get_string(text);
+              }
+            }
+          }
+          json_object_set_string_member(item, !strcmp(key, "homepage_url") ? "homepage" : key, value.c_str());
+        }
+      }
+      for (auto *key : {"action", "browser_action", "page_action"}) {
+        auto *node = json_object_get_member(manifest, key);
+        if (node && JSON_NODE_HOLDS_OBJECT(node)) json_object_set_boolean_member(item, "has_action", true);
+      }
+      auto *icons_node = json_object_get_member(manifest, "icons");
+      if (icons_node && JSON_NODE_HOLDS_OBJECT(icons_node)) {
+        auto *icons = json_node_get_object(icons_node);
+        g_autoptr(GList) keys = json_object_get_members(icons);
+        std::string best;
+        int distance = G_MAXINT;
+        for (auto *key = keys; key; key = key->next) {
+          auto *name = static_cast<const char *>(key->data);
+          auto *node = json_object_get_member(icons, name);
+          auto size = g_ascii_strtoll(name, nullptr, 10);
+          if (!node || !JSON_NODE_HOLDS_VALUE(node) || json_node_get_value_type(node) != G_TYPE_STRING ||
+              size < 1 || size > 4096 || std::abs(size - 48) >= distance) continue;
+          std::error_code error;
+          auto base = std::filesystem::weakly_canonical(extension.path, error).string();
+          if (error) continue;
+          auto path = std::filesystem::weakly_canonical(std::filesystem::path(base) / json_node_get_string(node), error).string();
+          if (error || !path.starts_with(base + "/") || !g_file_test(path.c_str(), G_FILE_TEST_IS_REGULAR)) continue;
+          best = path; distance = std::abs(size - 48);
+        }
+        json_object_set_string_member(item, "icon", best.c_str());
+      }
+    }
+    json_array_add_object_element(catalog, item);
+  }
+  return catalog;
+}
+gint ephy_engine_web_view_get_extension_tab_id(EphyEngineView *view) {
+  g_return_val_if_fail(EPHY_IS_ENGINE_VIEW(view), -1);
+  auto *d = data(view);
+  return d->disposed || d->host.private_mode || d->browser->is_extension_popup || d->browser->closing
+    ? -1 : d->browser->native_tab_id;
+}
+gboolean ephy_engine_web_view_set_extension_popup(EphyEngineView *popup, EphyEngineView *owner) {
+  g_return_val_if_fail(EPHY_IS_ENGINE_VIEW(popup), false);
+  g_return_val_if_fail(EPHY_IS_ENGINE_VIEW(owner), false);
+  auto *view = data(popup), *parent = data(owner);
+  if (view == parent || view->disposed || parent->disposed || view->host.private_mode ||
+      parent->host.private_mode || parent->browser->is_extension_popup || view->browser->loaded) return false;
+  view->browser->is_extension_popup = true;
+  g_weak_ref_set(&view->extension_owner, owner);
+  return true;
+}
 void ephy_engine_views_preferences_changed(const char *property) {
   if (strcmp(property, "user-agent")) return;
   for (auto *view : views) view->apply_user_agent();
@@ -568,19 +947,27 @@ void ephy_engine_web_view_set_user_agent_override(EphyEngineView *view, const ch
   d->browser->set_user_agent_override(agent);
   d->apply_user_agent();
 }
-int ephy_engine_execute_process(int argc, char** argv) {
+NO_STACK_PROTECTOR NOINLINE int ephy_engine_execute_process(int argc, char** argv) {
   if (!prevent_memory_core_dumps()) {
     g_printerr("Cannot disable Chromium memory core dumps; refusing to start.\n");
     return 1;
   }
+  if (JupiterBrave::enabled()) {
+    if (!JupiterBrave::composited()) g_setenv("GDK_BACKEND", "x11", true);
+    return -1;
+  }
   engine = new Engine;
-  return CefExecuteProcess(CefMainArgs(argc, argv), engine, nullptr);
+  const int child = CefExecuteProcess(CefMainArgs(argc, argv), engine, nullptr);
+  // Chromium resets child canaries on fork; do not unwind older embedder frames.
+  if (child >= 0) std::exit(child);
+  return child;
 }
 gboolean ephy_engine_initialize(int argc, char** argv, const char* profile, gboolean self_test) {
   try { runtime = new Application(profile); }
   catch (const std::exception& error) { g_printerr("Extensions: %s\n", error.what()); return false; }
   runtime->gtk_app = g_application_get_default();
   runtime->render_test = self_test;
+  if (JupiterBrave::enabled()) { JupiterBrave::initialize(profile); return true; }
   engine->extension_paths = runtime->extensions.load_paths();
   for (const auto& ext : runtime->extensions.installed) if (ext.enabled) {
     runtime->extension_host->extension_ids.insert(ext.id);
@@ -588,23 +975,95 @@ gboolean ephy_engine_initialize(int argc, char** argv, const char* profile, gboo
     runtime->extension_host->extension_paths[ext.id] = ext.path;
   }
   runtime->extension_host->tab_bridge_id = Extensions::id_for_path(JUPITER_BRIDGE_DIR);
-  runtime->extension_host->tabs = [] {
+  runtime->extension_host->tabs = [](CefRefPtr<CefBrowser> source) {
     std::vector<ExtensionTab> tabs;
-    int index = 0;
+    GtkRoot *current = nullptr;
+    for (auto *view : views) if (source && view->browser->cef_browser() && view->browser->cef_browser()->IsSame(source)) {
+      if (view->browser->is_extension_popup) {
+        g_autoptr(EphyEngineView) owner = EPHY_ENGINE_VIEW(g_weak_ref_get(&view->extension_owner));
+        if (!owner || data(owner)->disposed || data(owner)->host.private_mode) return tabs;
+        current = gtk_widget_get_root(GTK_WIDGET(owner));
+        if (!current) return tabs;
+      } else current = gtk_widget_get_root(GTK_WIDGET(view->self));
+      break;
+    }
+    // Background pages use the focused normal window; popup requests retain their owner's window.
+    if (!current) for (auto *view : views) {
+      if (view->disposed || view->host.private_mode || view->browser->is_extension_popup) continue;
+      auto *root = gtk_widget_get_root(GTK_WIDGET(view->self));
+      if (root && GTK_IS_WINDOW(root) && gtk_window_is_active(GTK_WINDOW(root))) { current = root; break; }
+    }
+    std::map<GtkRoot *, int> indices;
+    static int next_window = 0;
     for (auto* view : views) {
       auto b = view->browser;
-      if (view->disposed || view->host.private_mode || !b->cef_browser() || b->native_tab_id < 0) continue;
+      auto *widget = GTK_WIDGET(view->self);
+      auto *root = gtk_widget_get_root(widget);
+      if (view->disposed || view->host.private_mode || b->is_extension_popup || !root ||
+          !b->cef_browser() || b->native_tab_id < 0) continue;
+      if (!current) current = root;
+      int window = GPOINTER_TO_INT(g_object_get_data(G_OBJECT(root), "jupiter-extension-window-id"));
+      if (!window) { window = ++next_window; g_object_set_data(G_OBJECT(root), "jupiter-extension-window-id", GINT_TO_POINTER(window)); }
+      bool active = gtk_widget_get_mapped(widget);
+      for (auto *parent = gtk_widget_get_parent(widget); parent; parent = gtk_widget_get_parent(parent)) {
+        if (!ADW_IS_TAB_VIEW(parent)) continue;
+        auto *page = adw_tab_view_get_selected_page(ADW_TAB_VIEW(parent));
+        active = page && (widget == adw_tab_page_get_child(page) || gtk_widget_is_ancestor(widget, adw_tab_page_get_child(page)));
+        break;
+      }
       auto info = CefDictionaryValue::Create();
-      info->SetInt("id", b->native_tab_id); info->SetInt("index", index++);
+      info->SetInt("id", b->native_tab_id); info->SetInt("index", indices[root]++);
+      info->SetInt("windowId", window); info->SetBool("currentWindow", root == current);
       info->SetString("url", b->url); info->SetString("title", b->name);
-      info->SetBool("active", gtk_widget_get_mapped(GTK_WIDGET(view->self)));
-      info->SetBool("incognito", false);
+      info->SetString("status", b->loading ? "loading" : "complete");
+      info->SetBool("active", active); info->SetBool("incognito", false);
       tabs.push_back({b->native_tab_id, b->cef_browser(), info});
     }
     return tabs;
   };
+  runtime->extension_host->create = [](CefRefPtr<CefBrowser> source, const std::string& extension,
+                                      const std::string& url, bool active, ExtensionHost::Created done) {
+    if (!Policy::navigable(url) || (url.starts_with("chrome-extension://") &&
+        !url.starts_with("chrome-extension://" + extension + "/"))) {
+      done(nullptr, "The extension cannot open this URL"); return;
+    }
+    if (!source) {
+      auto tabs = runtime->extension_host->tabs(nullptr);
+      auto found = std::find_if(tabs.begin(), tabs.end(), [](const auto& tab) {
+        return tab.info->GetBool("currentWindow") && tab.info->GetBool("active");
+      });
+      if (found != tabs.end()) source = found->browser;
+    }
+    if (!source) { done(nullptr, "The owning browser tab is unavailable"); return; }
+    CefRefPtr<Browser> created;
+    for (auto *view : views) if (view->browser->cef_browser() && view->browser->cef_browser()->IsSame(source) && !view->disposed && !view->host.private_mode) {
+      created = view->host.open(url, active);
+      break;
+    }
+    if (!created) { done(nullptr, "The owning browser tab is unavailable"); return; }
+    struct Creating {
+      CefRefPtr<Browser> browser;
+      CefRefPtr<ExtensionHost> host;
+      ExtensionHost::Created done;
+      gint64 deadline;
+    };
+    g_timeout_add_full(G_PRIORITY_DEFAULT, 20, +[](gpointer pointer) -> gboolean {
+      auto *pending = static_cast<Creating *>(pointer);
+      if (pending->browser->closing || !runtime || g_get_monotonic_time() > pending->deadline) {
+        pending->done(nullptr, "The new browser tab was closed or did not become ready");
+        return G_SOURCE_REMOVE;
+      }
+      for (const auto& tab : pending->host->tabs(pending->browser->cef_browser())) {
+        if (!pending->browser->cef_browser() || !tab.browser->IsSame(pending->browser->cef_browser())) continue;
+        pending->done(tab.info->Copy(false), "");
+        return G_SOURCE_REMOVE;
+      }
+      return G_SOURCE_CONTINUE;
+    }, new Creating{created, runtime->extension_host, std::move(done), g_get_monotonic_time() + 10 * G_TIME_SPAN_SECOND},
+    +[](gpointer pointer) { delete static_cast<Creating *>(pointer); });
+  };
   runtime->extension_host->update = [](int id, const std::string& url, bool activate) {
-    for (auto* view : views) if (view->browser->native_tab_id == id && !view->host.private_mode) {
+    for (auto* view : views) if (view->browser->native_tab_id == id && !view->host.private_mode && !view->browser->is_extension_popup) {
       if (!url.empty()) ephy_engine_web_view_load_uri(view->self, url.c_str());
       if (activate) {
         auto* widget = GTK_WIDGET(view->self);
@@ -641,11 +1100,28 @@ gboolean ephy_engine_initialize(int argc, char** argv, const char* profile, gboo
   if (dpi <= 0) g_object_set(gtk_settings, "gtk-xft-dpi", 96 * 1024, nullptr);
   if (!CefInitialize(CefMainArgs(argc, argv), settings, engine, nullptr)) return false;
   pump = g_timeout_add(8, +[](gpointer) -> gboolean { CefDoMessageLoopWork(); return G_SOURCE_CONTINUE; }, nullptr);
+  auto *catalog = ephy_engine_extensions_dup_installed();
+  ephy_engine_extensions_initialize(catalog, CefRequestContext::GetGlobalContext(), [](JsonArray *snapshot) {
+    if (!runtime) return;
+    for (guint i = 0; i < json_array_get_length(snapshot); ++i) {
+      auto *item = json_array_get_object_element(snapshot, i);
+      runtime->extension_host->set_enabled(json_object_get_string_member(item, "id"),
+        json_object_get_boolean_member_with_default(item, "available", false) &&
+        json_object_get_boolean_member_with_default(item, "enabled", false));
+    }
+  }, &runtime->extensions);
+  json_array_unref(catalog);
   return true;
 }
 gboolean ephy_engine_prepare_shutdown() {
   if (!runtime) return true;
+  if (JupiterBrave::enabled()) {
+    for (auto* view : views) view->browser->shutdown();
+    JupiterBrave::shutdown();
+    return true;
+  }
   ephy_engine_downloads_shutdown();
+  ephy_engine_extensions_close();
   std::vector<std::pair<CefRefPtr<Protocol>, CefRefPtr<Browser>>> closing;
   for (auto *view : views) closing.emplace_back(view->protocol, view->browser);
   for (auto& [protocol, browser] : closing) { protocol->stop(); browser->shutdown(); }
@@ -653,17 +1129,24 @@ gboolean ephy_engine_prepare_shutdown() {
   do {
     CefDoMessageLoopWork();
     while (g_main_context_pending(nullptr)) g_main_context_iteration(nullptr, false);
-    if (!Browser::active_count) return true;
+    if (!Browser::active_count && ephy_engine_extensions_is_closed()) return true;
     g_usleep(1000);
   } while (g_get_monotonic_time() < deadline);
   return false;
 }
 void ephy_engine_shutdown() {
+  if (JupiterBrave::enabled()) {
+    ephy_engine_prepare_shutdown();
+    delete runtime; runtime = nullptr;
+    ephy_engine_clear_scheme_handlers();
+    return;
+  }
   if (!ephy_engine_prepare_shutdown()) {
     g_printerr("Chromium did not close its browsers; exiting without a core dump.\n");
     std::_Exit(1);
   }
   if (pump) { g_source_remove(pump); pump = 0; }
+  ephy_engine_extensions_shutdown();
   if (runtime) { runtime->extension_host->stop(); delete runtime; runtime = nullptr; ephy_engine_sessions_shutdown(); CefShutdown(); }
   ephy_engine_clear_scheme_handlers();
   engine = nullptr;
@@ -692,9 +1175,14 @@ const gchar* ephy_engine_back_forward_list_item_get_uri(EphyEngineHistoryItem* i
 const gchar* ephy_engine_back_forward_list_item_get_original_uri(EphyEngineHistoryItem* i) { return i->uri; }
 const gchar* ephy_engine_back_forward_list_item_get_title(EphyEngineHistoryItem* i) { return i->title; }
 gboolean ephy_engine_web_view_is_controlled_by_automation(EphyEngineView*) { return false; }
-WebKitWebContext* ephy_engine_web_view_get_context(EphyEngineView* v) { return data(v)->context; }
 void ephy_engine_web_view_try_close(EphyEngineView* v) { data(v)->browser->close(); }
-void ephy_engine_web_view_load_uri(EphyEngineView* v, const gchar* uri) { data(v)->browser->navigate(uri ? uri : "about:blank"); }
+void ephy_engine_web_view_load_uri(EphyEngineView* v, const gchar* uri) {
+  auto *view = data(v);
+  view->cancel_external_uri();
+  view->stop_extension_context_probe();
+  ++view->extension_context_generation;
+  view->browser->navigate(uri ? uri : "about:blank");
+}
 void ephy_engine_web_view_register_page_message_handler(EphyEngineView* view, const char* name) {
   g_return_if_fail(EPHY_IS_ENGINE_VIEW(view));
   g_return_if_fail(name && *name && strlen(name) <= 128);
@@ -705,19 +1193,43 @@ void ephy_engine_web_view_unregister_page_message_handler(EphyEngineView* view, 
   g_return_if_fail(name);
   data(view)->page_message_handlers.erase(name);
 }
+gboolean ephy_engine_web_view_has_native_uri(EphyEngineView* view, const char* uri) {
+  g_return_val_if_fail(EPHY_IS_ENGINE_VIEW(view), false);
+  if (!uri) return false;
+  auto *d = data(view);
+  return !d->disposed && !d->detached && !d->browser->closing && d->browser->requested_uri() == uri;
+}
+gboolean ephy_engine_web_view_is_current_page(EphyEngineView* view, const char* uri) {
+  if (!ephy_engine_web_view_has_native_uri(view, uri)) return false;
+  if (auto page = data(view)->browser->brave_page()) return page->is_internal_page(uri);
+  auto browser = data(view)->browser->cef_browser();
+  auto frame = browser ? browser->GetMainFrame() : nullptr;
+  return frame && frame->IsValid() && frame->GetURL().ToString() == uri;
+}
+gboolean ephy_engine_web_view_send_page_message(EphyEngineView* view, const char* expected_uri,
+                                                const char* name, JsonNode* message) {
+  g_return_val_if_fail(EPHY_IS_ENGINE_VIEW(view), false);
+  if (!expected_uri || !name || !message || !ephy_engine_web_view_is_current_page(view, expected_uri)) return false;
+  auto *d = data(view);
+  const std::string uri = expected_uri;
+  if (!uri.starts_with("ephy-about:") && !d->alternate_uris.contains(uri)) return false;
+  g_autofree char *json = json_to_string(message, false);
+  if (auto page = d->browser->brave_page()) return json && page->send_page_message(uri, name, json);
+  return json && PageMessages::send(*d->browser, uri, name, json);
+}
 void ephy_engine_web_view_load_alternate_html(EphyEngineView* v, const gchar* content, const gchar* content_uri, const gchar*) {
   char* encoded = g_base64_encode(reinterpret_cast<const guchar*>(content), strlen(content));
   std::string url = "data:text/html;charset=utf-8;base64," + std::string(encoded); g_free(encoded);
   g_autofree char *id = g_uuid_string_random();
   url += std::string("#jupiter-alternate-") + id;
   auto *d = data(v);
+  d->cancel_external_uri();
   // Keep the opaque data origin, but expose and save the intended page address.
   d->alternate_uris[url] = content_uri ? content_uri : "about:blank";
   d->browser->navigate(url);
   d->changed();
 }
-void ephy_engine_web_view_load_request(EphyEngineView* v, WebKitURIRequest* r) { ephy_engine_web_view_load_uri(v, webkit_uri_request_get_uri(r)); }
-void ephy_engine_web_view_stop_loading(EphyEngineView* v) { if (auto b=data(v)->browser->cef_browser()) b->StopLoad(); }
+void ephy_engine_web_view_stop_loading(EphyEngineView* v) { if (auto page = data(v)->browser->brave_page()) { page->stop(); return; } if (auto b=data(v)->browser->cef_browser()) b->StopLoad(); }
 gboolean ephy_engine_web_view_is_loading(EphyEngineView* v) { return data(v)->loading; }
 gboolean ephy_engine_web_view_is_playing_audio(EphyEngineView* v) { auto b=data(v)->browser->cef_browser(); return b && b->GetHost()->IsAudioMuted()==false && false; }
 void ephy_engine_web_view_set_is_muted(EphyEngineView* v, gboolean value) { data(v)->muted=value; if(auto b=data(v)->browser->cef_browser()) b->GetHost()->SetAudioMuted(value); g_object_notify(G_OBJECT(v), "is-muted"); }
@@ -730,6 +1242,7 @@ void ephy_engine_web_view_reload(EphyEngineView* v) {
   else d->browser->reload();
 }
 void ephy_engine_web_view_reload_bypass_cache(EphyEngineView* v) {
+  if (auto page = data(v)->browser->brave_page()) { page->reload(true); return; }
   if (data(v)->alternate_uris.contains(data(v)->browser->url)) ephy_engine_web_view_reload(v);
   else if(auto b=data(v)->browser->cef_browser()) b->ReloadIgnoreCache();
   else data(v)->browser->reload();
@@ -752,15 +1265,19 @@ void ephy_engine_web_view_set_custom_charset(EphyEngineView* v, const gchar* cha
   auto* d=data(v); d->charset=charset?charset:"";
   g_warning("Chromium does not expose a per-tab encoding override");
 }
-WebKitWindowProperties* ephy_engine_web_view_get_window_properties(EphyEngineView* v) { return data(v)->window_properties; }
+const EphyEnginePopupProperties* ephy_engine_web_view_get_popup_properties(EphyEngineView* v) { return &data(v)->popup_properties; }
 void ephy_engine_web_view_set_zoom_level(EphyEngineView* v, gdouble zoom) {
+  g_return_if_fail(std::isfinite(zoom));
   auto* d=data(v); d->zoom=std::clamp(zoom,.1,10.);
+  if(auto page=d->browser->brave_page()) page->set_zoom(d->zoom);
   if(auto b=d->browser->cef_browser()) b->GetHost()->SetZoomLevel(std::log(d->zoom)/std::log(1.2));
   g_object_notify(G_OBJECT(v),"zoom-level");
 }
 gdouble ephy_engine_web_view_get_zoom_level(EphyEngineView* v) { return data(v)->zoom; }
 void ephy_engine_web_view_execute_editing_command(EphyEngineView* v, const gchar* command) {
-  auto* d=data(v); auto b=d->browser->cef_browser(); if(!b) return;
+  auto* d=data(v);
+  if (auto page = d->browser->brave_page()) { page->edit(command); return; }
+  auto b=d->browser->cef_browser(); if(!b) return;
   auto frame=b->GetFocusedFrame(); if(!frame)frame=b->GetMainFrame();
   if(!g_ascii_strcasecmp(command,"Copy"))Clipboard::copy(*d->browser,false);
   else if(!g_ascii_strcasecmp(command,"Cut"))Clipboard::copy(*d->browser,true);
@@ -999,29 +1516,39 @@ void ephy_engine_web_view_save_to_file(EphyEngineView* v,GFile* file,WebKitSaveM
 }
 gboolean ephy_engine_web_view_get_tls_info(EphyEngineView* v,GTlsCertificate** certificate,GTlsCertificateFlags* errors) {
   if(certificate)*certificate=nullptr;if(errors)*errors=GTlsCertificateFlags(0);
+  if (auto page = data(v)->browser->brave_page()) return page->tls_info(certificate, errors);
   auto b=data(v)->browser->cef_browser();if(!b)return false;
   auto entry=b->GetHost()->GetVisibleNavigationEntry();auto ssl=entry?entry->GetSSLStatus():nullptr;
   auto cert=ssl?ssl->GetX509Certificate():nullptr;if(!cert)return false;
-  if(errors && ssl->GetCertStatus())*errors=G_TLS_CERTIFICATE_GENERIC_ERROR;
-  auto pem=cert->GetPEMEncoded(); if(certificate && pem) {
-    std::string text(pem->GetSize(),'\0');pem->GetData(text.data(),text.size(),0);
-    *certificate=g_tls_certificate_new_from_pem(text.c_str(),text.size(),nullptr);
+  if(errors)*errors=ephy_engine_certificate_errors(ssl->GetCertStatus(),cert);
+  if(certificate) {
+    *certificate=ephy_engine_certificate_to_tls(cert);
+    if(!*certificate)return false;
   }
   return true;
 }
-void ephy_engine_web_view_get_snapshot(EphyEngineView* v,WebKitSnapshotRegion,WebKitSnapshotOptions,GCancellable* cancel,GAsyncReadyCallback cb,gpointer user) {
-  auto* task=g_task_new(v,cancel,cb,user);auto* d=data(v);auto* image=d->browser->thumbnail();
-  auto* native=gtk_widget_get_native(GTK_WIDGET(v));auto* renderer=native?gtk_native_get_renderer(native):nullptr;
-  if(!image||!renderer) { if(image)g_object_unref(image);unsupported(task,"The tab has no rendered frame");return; }
-  auto* snapshot=gtk_snapshot_new();float w=gdk_paintable_get_intrinsic_width(image),h=gdk_paintable_get_intrinsic_height(image);
-  gdk_paintable_snapshot(image,GDK_SNAPSHOT(snapshot),w,h);g_object_unref(image);
-  auto* node=gtk_snapshot_free_to_node(snapshot);if(!node){unsupported(task,"The tab has no rendered frame");return;}
-  graphene_rect_t bounds=GRAPHENE_RECT_INIT(0,0,w,h);auto* texture=gsk_renderer_render_texture(renderer,node,&bounds);gsk_render_node_unref(node);
+gboolean ephy_engine_web_view_tls_is_secure(EphyEngineView* view) {
+  if (auto page = data(view)->browser->brave_page()) return page->tls_secure();
+  return true;
+}
+void ephy_engine_web_view_get_snapshot(EphyEngineView* v,WebKitSnapshotRegion region,WebKitSnapshotOptions,GCancellable* cancel,GAsyncReadyCallback cb,gpointer user) {
+  auto* task=g_task_new(v,cancel,cb,user);
+  if (g_task_return_error_if_cancelled(task)) { g_object_unref(task); return; }
+  if (auto page = data(v)->browser->brave_page()) {
+    page->snapshot([task](GdkTexture* texture, const std::string& error) {
+      if (g_task_return_error_if_cancelled(task)) { g_object_unref(task); return; }
+      if (texture) g_task_return_pointer(task, g_object_ref(texture), g_object_unref);
+      else g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_FAILED, "%s", error.c_str());
+      g_object_unref(task);
+    }, region == WEBKIT_SNAPSHOT_REGION_FULL_DOCUMENT);
+    return;
+  }
+  auto* texture=data(v)->browser->snapshot_texture();
+  if(!texture){unsupported(task,"The tab has no readable CEF frame");return;}
   g_task_return_pointer(task,texture,g_object_unref);g_object_unref(task);
 }
 GdkTexture* ephy_engine_web_view_get_snapshot_finish(EphyEngineView*,GAsyncResult* r,GError** e) { return GDK_TEXTURE(g_task_propagate_pointer(G_TASK(r),e)); }
 WebKitUserContentManager* ephy_engine_web_view_get_user_content_manager(EphyEngineView* v) { return data(v)->ucm; }
-WebKitEditorState* ephy_engine_web_view_get_editor_state(EphyEngineView* v) { return data(v)->editor; }
 EphyEngineSessionState* ephy_engine_web_view_get_session_state(EphyEngineView* v) {
   auto* d=data(v);auto* value=g_variant_ref_sink(g_variant_new("(ss)",d->uri.c_str(),d->title.c_str()));auto* bytes=g_variant_get_data_as_bytes(value);
   auto* state=ephy_engine_web_view_session_state_new(bytes);g_bytes_unref(bytes);g_variant_unref(value);return state;

@@ -91,18 +91,22 @@ void ephy_engine_settings_apply_request(CefRefPtr<CefRequest> request, const std
 namespace {
 class SettingsRequestHandler final : public CefResourceRequestHandler {
 public:
-  explicit SettingsRequestHandler(CefRefPtr<CefCookieAccessFilter> filter) : filter_(filter) {}
+  SettingsRequestHandler(CefRefPtr<CefCookieAccessFilter> filter, CefRefPtr<CefResourceRequestHandler> next)
+    : filter_(filter), next_(next) {}
   CefRefPtr<CefCookieAccessFilter> GetCookieAccessFilter(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame>, CefRefPtr<CefRequest>) override { return filter_; }
 private:
-  cef_return_value_t OnBeforeResourceLoad(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame>, CefRefPtr<CefRequest> request,
-                                         CefRefPtr<CefCallback>) override {
-    ephy_engine_settings_apply_request(request); return RV_CONTINUE;
+  cef_return_value_t OnBeforeResourceLoad(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> frame, CefRefPtr<CefRequest> request,
+                                         CefRefPtr<CefCallback> callback) override {
+    ephy_engine_settings_apply_request(request);
+    return next_ ? next_->OnBeforeResourceLoad(browser, frame, request, callback) : RV_CONTINUE;
   }
   CefRefPtr<CefCookieAccessFilter> filter_;
+  CefRefPtr<CefResourceRequestHandler> next_;
   IMPLEMENT_REFCOUNTING(SettingsRequestHandler);
 };
 }
-CefRefPtr<CefResourceRequestHandler> ephy_engine_settings_request_handler(CefRefPtr<CefCookieAccessFilter> filter) { return new SettingsRequestHandler(filter); }
+CefRefPtr<CefResourceRequestHandler> ephy_engine_settings_request_handler(CefRefPtr<CefCookieAccessFilter> filter,
+  CefRefPtr<CefResourceRequestHandler> next) { return new SettingsRequestHandler(filter, next); }
 static void ephy_engine_settings_init(EphyEngineSettings *settings) {
   for (guint i = 1; i < N_PROPERTIES; ++i) {
     g_value_init(&settings->values[i], G_PARAM_SPEC_VALUE_TYPE(properties[i]));

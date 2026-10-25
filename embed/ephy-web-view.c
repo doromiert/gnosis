@@ -32,9 +32,6 @@
 #include "ephy-engine-view.h"
 
 #include "ephy-about-handler.h"
-#include "ephy-autofill-field.h"
-#include "ephy-autofill-storage.h"
-#include "ephy-client-certificate-manager.h"
 #include "ephy-debug.h"
 #include "ephy-embed-autofill.h"
 #include "ephy-embed-container.h"
@@ -86,8 +83,8 @@ struct _EphyWebView {
   guint is_setting_zoom : 1;
   guint load_failed : 1;
   guint history_frozen : 1;
+  guint history_frozen_started : 1;
   guint ever_committed : 1;
-  guint in_auth_dialog : 1;
   guint placeholder_load : 1;
 
   char *address;
@@ -138,7 +135,6 @@ struct _EphyWebView {
   int location_entry_position;
   gboolean location_entry_has_focus;
 
-  EphyClientCertificateManager *client_certificate_manager;
 
   /* Autofill */
   gboolean autofill_popup_enabled;
@@ -171,138 +167,6 @@ enum {
 static guint signals[LAST_SIGNAL];
 
 G_DEFINE_FINAL_TYPE (EphyWebView, ephy_web_view, EPHY_TYPE_ENGINE_VIEW)
-
-static void
-open_dialog_cb (GtkFileDialog            *dialog,
-                GAsyncResult             *result,
-                WebKitFileChooserRequest *request)
-{
-  g_autoptr (GListModel) files = NULL;
-  guint num_items;
-
-  if (webkit_file_chooser_request_get_select_multiple (request)) {
-    files = gtk_file_dialog_open_multiple_finish (dialog, result, NULL);
-  } else {
-    g_autoptr (GFile) file = gtk_file_dialog_open_finish (dialog, result, NULL);
-
-    if (file) {
-      files = G_LIST_MODEL (g_list_store_new (G_TYPE_FILE));
-
-      g_list_store_append (G_LIST_STORE (files), file);
-    }
-  }
-
-  num_items = files ? g_list_model_get_n_items (files) : 0;
-
-  if (files && num_items > 0) {
-    GPtrArray *file_array = g_ptr_array_new ();
-    g_autoptr (GFile) first_file = NULL;
-    g_autoptr (GFile) current_folder = NULL;
-    g_autofree char *current_folder_path = NULL;
-
-    for (guint i = 0; i < num_items; i++) {
-      g_autoptr (GFile) file = g_list_model_get_item (files, i);
-
-      g_ptr_array_add (file_array, g_file_get_path (file));
-    }
-
-    g_ptr_array_add (file_array, NULL);
-    webkit_file_chooser_request_select_files (request, (const char * const *)file_array->pdata);
-
-    g_ptr_array_set_free_func (file_array, g_free);
-    g_ptr_array_free (file_array, TRUE);
-
-    first_file = G_FILE (g_list_model_get_item (files, 0));
-    current_folder = g_file_get_parent (first_file);
-    if (current_folder) {
-      current_folder_path = g_file_get_path (current_folder);
-      g_settings_set_string (EPHY_SETTINGS_WEB,
-                             EPHY_PREFS_WEB_LAST_UPLOAD_DIRECTORY,
-                             current_folder_path);
-    }
-  } else {
-    webkit_file_chooser_request_cancel (request);
-  }
-
-  g_object_unref (request);
-}
-
-static gboolean
-ephy_web_view_run_file_chooser (EphyEngineView            *web_view,
-                                WebKitFileChooserRequest *request)
-{
-  EphyWebView *ephy_web_view = EPHY_WEB_VIEW (web_view);
-  GtkRoot *root = gtk_widget_get_root (GTK_WIDGET (web_view));
-  g_autoptr (GtkFileDialog) dialog = NULL;
-  g_autofree char *last_directory_path = NULL;
-  const char * const *mime_types = webkit_file_chooser_request_get_mime_types (request);
-  g_autoptr (GtkFileFilter) all_filter = NULL;
-  g_autoptr (GListStore) filters = NULL;
-
-  dialog = gtk_file_dialog_new ();
-
-  filters = g_list_store_new (GTK_TYPE_FILE_FILTER);
-  gtk_file_dialog_set_filters (dialog, G_LIST_MODEL (filters));
-
-  all_filter = gtk_file_filter_new ();
-  gtk_file_filter_set_name (all_filter, _("All files"));
-  gtk_file_filter_add_pattern (all_filter, "*");
-  g_list_store_append (filters, all_filter);
-
-  if (mime_types && mime_types[0]) {
-    g_autoptr (GtkFileFilter) supported_filter = NULL;
-    int i;
-
-    supported_filter = gtk_file_filter_new ();
-    gtk_file_filter_set_name (supported_filter, _("All supported types"));
-    g_list_store_append (filters, supported_filter);
-    gtk_file_dialog_set_default_filter (dialog, supported_filter);
-
-    for (i = 0; mime_types[i]; i++) {
-      g_autoptr (GtkFileFilter) filter = NULL;
-      g_autofree char *content_type = NULL;
-      g_autofree char *description = NULL;
-
-      content_type = g_content_type_from_mime_type (mime_types[i]);
-
-      if (content_type)
-        description = g_content_type_get_description (content_type);
-      else
-        description = g_strdup (mime_types[i]);
-
-      filter = gtk_file_filter_new ();
-      gtk_file_filter_set_name (filter, description);
-      gtk_file_filter_add_mime_type (filter, mime_types[i]);
-      gtk_file_filter_add_mime_type (supported_filter, mime_types[i]);
-
-      g_list_store_append (filters, filter);
-    }
-  }
-
-  last_directory_path = g_settings_get_string (EPHY_SETTINGS_WEB, EPHY_PREFS_WEB_LAST_UPLOAD_DIRECTORY);
-
-  if (last_directory_path && last_directory_path[0]) {
-    g_autoptr (GFile) last_directory = NULL;
-
-    last_directory = g_file_new_for_path (last_directory_path);
-    gtk_file_dialog_set_initial_folder (dialog, last_directory);
-  }
-
-  if (webkit_file_chooser_request_get_select_multiple (request))
-    gtk_file_dialog_open_multiple (dialog,
-                                   GTK_WINDOW (root),
-                                   ephy_web_view->cancellable,
-                                   (GAsyncReadyCallback)open_dialog_cb,
-                                   g_object_ref (request));
-  else
-    gtk_file_dialog_open (dialog,
-                          GTK_WINDOW (root),
-                          ephy_web_view->cancellable,
-                          (GAsyncReadyCallback)open_dialog_cb,
-                          g_object_ref (request));
-
-  return TRUE;
-}
 
 static void
 ephy_web_view_get_property (GObject    *object,
@@ -427,12 +291,14 @@ static void
 ephy_web_view_freeze_history (EphyWebView *view)
 {
   view->history_frozen = TRUE;
+  view->history_frozen_started = FALSE;
 }
 
 static void
 ephy_web_view_thaw_history (EphyWebView *view)
 {
   view->history_frozen = FALSE;
+  view->history_frozen_started = FALSE;
 }
 
 static gboolean
@@ -750,54 +616,6 @@ uri_changed_cb (EphyEngineView *web_view,
   view->autofill_popup_enabled = TRUE;
 }
 
-static void
-mouse_target_changed_cb (EphyWebView         *web_view,
-                         WebKitHitTestResult *hit_test_result,
-                         guint                modifiers,
-                         gpointer             data)
-{
-  const char *message = NULL;
-
-  if (webkit_hit_test_result_context_is_link (hit_test_result))
-    message = webkit_hit_test_result_get_link_uri (hit_test_result);
-
-  ephy_web_view_set_link_message (web_view, message);
-}
-
-static void
-process_terminated_cb (EphyWebView                       *web_view,
-                       WebKitWebProcessTerminationReason  reason,
-                       gpointer                           user_data)
-{
-  EphyWebViewErrorPage error_page = EPHY_WEB_VIEW_ERROR_PROCESS_CRASH;
-  GtkWidget *widget;
-
-  switch (reason) {
-    case WEBKIT_WEB_PROCESS_CRASHED:
-      g_warning (_("Web process crashed"));
-      break;
-    case WEBKIT_WEB_PROCESS_EXCEEDED_MEMORY_LIMIT:
-      g_warning (_("Web process terminated due to exceeding memory limit"));
-      break;
-    case WEBKIT_WEB_PROCESS_TERMINATED_BY_API:
-      g_warning (_("Web process terminated by API request"));
-      error_page = EPHY_WEB_VIEW_ERROR_UNRESPONSIVE_PROCESS;
-      break;
-  }
-
-  /* We're getting the embed manually here because the web view might already be
-   * unparented by this point.
-   */
-  widget = gtk_widget_get_parent (GTK_WIDGET (web_view));
-  while (widget && !EPHY_IS_EMBED (widget))
-    widget = gtk_widget_get_parent (widget);
-
-  if (widget && !ephy_embed_has_load_pending (EPHY_EMBED (widget))) {
-    ephy_web_view_load_error_page (web_view, ephy_web_view_get_address (web_view),
-                                   error_page, NULL, NULL);
-  }
-}
-
 static gboolean
 unresponsive_process_timeout_cb (gpointer user_data);
 
@@ -1076,8 +894,6 @@ update_security_status_for_committed_load (EphyWebView *view,
   EphySecurityLevel security_level = EPHY_SECURITY_LEVEL_NO_SECURITY;
   EphyEmbed *embed = NULL;
   GtkRoot *root;
-  WebKitWebContext *web_context;
-  WebKitSecurityManager *security_manager;
   g_autoptr (GUri) guri = NULL;
   g_autofree char *tld = NULL;
 
@@ -1092,8 +908,6 @@ update_security_status_for_committed_load (EphyWebView *view,
   root = gtk_widget_get_root (GTK_WIDGET (view));
   if (EPHY_IS_EMBED_CONTAINER (root))
     embed = EPHY_GET_EMBED_FROM_EPHY_WEB_VIEW (view);
-  web_context = ephy_engine_web_view_get_context (EPHY_ENGINE_VIEW (view));
-  security_manager = webkit_web_context_get_security_manager (web_context);
   guri = g_uri_parse (uri, G_URI_FLAGS_PARSE_RELAXED, NULL);
 
   g_clear_object (&view->certificate);
@@ -1109,13 +923,17 @@ update_security_status_for_committed_load (EphyWebView *view,
       g_strcmp0 (tld, "127.0.0.1") == 0 ||
       g_strcmp0 (tld, "::1") == 0 ||
       (g_strcmp0 (tld, "localhost") == 0 && g_strcmp0 (g_uri_get_scheme (guri), "https") != 0) || /* We trust localhost to be local since glib!616. */
-      webkit_security_manager_uri_scheme_is_local (security_manager, g_uri_get_scheme (guri)) ||
-      webkit_security_manager_uri_scheme_is_empty_document (security_manager, g_uri_get_scheme (guri))) {
+      g_strcmp0 (g_uri_get_scheme (guri), "file") == 0 ||
+      g_strcmp0 (g_uri_get_scheme (guri), "about") == 0 ||
+      g_strcmp0 (g_uri_get_scheme (guri), EPHY_ABOUT_SCHEME) == 0 ||
+      g_strcmp0 (g_uri_get_scheme (guri), "ephy-resource") == 0 ||
+      g_strcmp0 (g_uri_get_scheme (guri), "chrome-extension") == 0) {
     security_level = EPHY_SECURITY_LEVEL_LOCAL_PAGE;
   } else if (ephy_engine_web_view_get_tls_info (EPHY_ENGINE_VIEW (view), &view->certificate, &view->tls_errors)) {
-    g_object_ref (view->certificate);
-    security_level = view->tls_errors == 0 ?
-                     EPHY_SECURITY_LEVEL_STRONG_SECURITY : EPHY_SECURITY_LEVEL_UNACCEPTABLE_CERTIFICATE;
+    if (view->tls_errors != 0)
+      security_level = EPHY_SECURITY_LEVEL_UNACCEPTABLE_CERTIFICATE;
+    else if (ephy_engine_web_view_tls_is_secure (EPHY_ENGINE_VIEW (view)))
+      security_level = EPHY_SECURITY_LEVEL_STRONG_SECURITY;
   } else if (!embed || view->placeholder_load) {
     security_level = EPHY_SECURITY_LEVEL_TO_BE_DETERMINED;
   }
@@ -1124,11 +942,21 @@ update_security_status_for_committed_load (EphyWebView *view,
 }
 
 static void
+tls_info_changed_cb (EphyWebView *view,
+                     gpointer     user_data)
+{
+  const char *uri = ephy_engine_web_view_get_uri (EPHY_ENGINE_VIEW (view));
+
+  if (uri)
+    update_security_status_for_committed_load (view, uri);
+}
+
+static void
 tls_error_page_message_received_cb (EphyEngineView           *engine_view,
                                     JsonNode                 *message,
                                     EphyWebView              *view)
 {
-  EphyEmbedShell *shell = ephy_embed_shell_get_default ();
+  g_autoptr (EphyEngineSession) session = NULL;
   g_autoptr (GUri) uri = NULL;
   double page_id;
 
@@ -1141,9 +969,12 @@ tls_error_page_message_received_cb (EphyEngineView           *engine_view,
     return;
 
   uri = g_uri_parse (view->tls_error_failing_uri, G_URI_FLAGS_PARSE_RELAXED, NULL);
-  ephy_engine_session_allow_tls_certificate_for_host (ephy_embed_shell_get_network_session (shell),
-                                                         view->certificate,
-                                                         g_uri_get_host (uri));
+  if (!uri || !g_uri_get_host (uri))
+    return;
+  g_object_get (engine_view, "network-session", &session, NULL);
+  ephy_engine_session_allow_tls_certificate_for_host (session,
+                                                    view->certificate,
+                                                    g_uri_get_host (uri));
   ephy_web_view_load_url (view, ephy_web_view_get_address (view));
 }
 
@@ -1259,6 +1090,14 @@ about_apps_message_received_cb (EphyEngineView *engine_view,
   }
 }
 
+static void
+overview_page_message_received_cb (EphyEngineView *engine_view,
+                                   JsonNode       *message,
+                                   EphyWebView    *view)
+{
+  ephy_embed_shell_handle_overview_message (ephy_embed_shell_get_default (), engine_view, message);
+}
+
 void
 ephy_web_view_register_message_handler (EphyWebView                    *view,
                                         EphyWebViewMessageHandler       handler,
@@ -1285,6 +1124,11 @@ ephy_web_view_register_message_handler (EphyWebView                    *view,
       ephy_engine_web_view_register_page_message_handler (engine_view, "reloadPage");
       g_signal_connect_object (view, "page-message::reloadPage",
                                G_CALLBACK (reload_page_message_received_cb), view, G_CONNECT_DEFAULT);
+      break;
+    case EPHY_WEB_VIEW_OVERVIEW_MESSAGE_HANDLER:
+      ephy_engine_web_view_register_page_message_handler (engine_view, "overview");
+      g_signal_connect_object (view, "page-message::overview",
+                               G_CALLBACK (overview_page_message_received_cb), view, G_CONNECT_DEFAULT);
       break;
     case EPHY_WEB_VIEW_ABOUT_APPS_MESSAGE_HANDLER:
       ephy_engine_web_view_register_page_message_handler (engine_view, "aboutApps");
@@ -1313,6 +1157,10 @@ unregister_message_handlers (EphyWebView *view)
     ephy_engine_web_view_unregister_page_message_handler (engine_view, "aboutApps");
     g_signal_handlers_disconnect_by_func (view, about_apps_message_received_cb, view);
   }
+  if (view->message_handlers_to_unregister & EPHY_WEB_VIEW_OVERVIEW_MESSAGE_HANDLER) {
+    ephy_engine_web_view_unregister_page_message_handler (engine_view, "overview");
+    g_signal_handlers_disconnect_by_func (view, overview_page_message_received_cb, view);
+  }
   view->message_handlers_to_unregister = 0;
 }
 
@@ -1330,9 +1178,9 @@ sort_opensearch_engines_list_func (gconstpointer a,
 }
 
 static void
-get_opensearch_links_cb (EphyEngineView *web_view,
-                         GAsyncResult  *result,
-                         gpointer       user_data)
+get_opensearch_links_cb (EphyEngineView     *web_view,
+                         GAsyncResult      *result,
+                         EphyEngineResource *expected_resource)
 {
   EphyWebView *view = EPHY_WEB_VIEW (web_view);
   g_autoptr (GError) error = NULL;
@@ -1340,10 +1188,17 @@ get_opensearch_links_cb (EphyEngineView *web_view,
   JsonArray *links;
   g_autoptr (GPtrArray) links_array = NULL;
   guint len;
+  gboolean current = view->opensearch_engines && view->cancellable &&
+                     !g_cancellable_is_cancelled (view->cancellable) &&
+                     expected_resource == ephy_engine_web_view_get_main_resource (web_view);
 
+  g_object_unref (expected_resource);
   script_result = ephy_engine_web_view_evaluate_javascript_finish (web_view, result, &error);
+  if (!current)
+    return;
   if (error) {
-    if (!g_error_matches (error, G_IO_ERROR, G_IO_ERROR_CANCELLED))
+    if (!g_error_matches (error, G_IO_ERROR, G_IO_ERROR_CANCELLED) &&
+        !g_error_matches (error, G_IO_ERROR, G_IO_ERROR_CLOSED))
       g_warning ("Couldn't run javascript to get list of OpenSearch Descriptions links: %s %s", ephy_engine_web_view_get_uri (web_view), error->message);
     return;
   }
@@ -1426,20 +1281,40 @@ static void
 on_document_loaded_cb (EphyEngineView *web_view)
 {
   EphyWebView *view = EPHY_WEB_VIEW (web_view);
+  /* Use the isolated native evaluation world, not the retired WebKit Ephy
+   * script or a page-exposed bridge. href resolves relative paths and <base>. */
+  const char *script =
+    "Array.from(document.querySelectorAll('link[rel~=\"search\" i]'))"
+    ".filter(link => link.type.split(';', 1)[0].trim().toLowerCase() === "
+    "'application/opensearchdescription+xml' && "
+    "(link.getAttribute('href') || '').trim())"
+    ".map(link => ({title: link.title, href: link.href}))";
 
-  /* Only query the list of search engines once we've finished loading the page and hence have a full DOM. */
   if (view->document_type == EPHY_WEB_VIEW_DOCUMENT_HTML &&
+      !view->load_failed &&
       !ephy_web_view_get_is_blank (view) &&
       !ephy_web_view_is_newtab (view) &&
       !ephy_web_view_is_overview (view)) {
-    /* Update the list of autodiscovered OpenSearch engines. */
     ephy_engine_web_view_evaluate_javascript (web_view,
-                                         "Ephy.getOpenSearchLinks();", -1,
-                                         ephy_embed_shell_get_guid (ephy_embed_shell_get_default ()),
-                                         NULL, NULL,
-                                         (GAsyncReadyCallback)get_opensearch_links_cb,
-                                         view->cancellable);
+                                              script, -1,
+                                              ephy_embed_shell_get_guid (ephy_embed_shell_get_default ()),
+                                              NULL, view->cancellable,
+                                              (GAsyncReadyCallback)get_opensearch_links_cb,
+                                              g_object_ref (ephy_engine_web_view_get_main_resource (web_view)));
   }
+}
+
+static void
+history_visit_added_cb (EphyHistoryService *history,
+                        GAsyncResult       *result,
+                        gpointer            user_data)
+{
+  g_autoptr (GError) error = NULL;
+
+  if (ephy_history_service_add_visit_finish (history, result, &error))
+    g_signal_emit_by_name (history, "urls-visited");
+  else if (!g_error_matches (error, G_IO_ERROR, G_IO_ERROR_CANCELLED))
+    g_warning ("Could not record history visit: %s", error ? error->message : "database write failed");
 }
 
 static void
@@ -1452,14 +1327,19 @@ load_changed_cb (EphyEngineView   *web_view,
 
   g_object_freeze_notify (object);
 
-  view->in_auth_dialog = 0;
-
   /* Warning: the URI property may remain set to the URI of the
    * previously-loaded page until WEBKIT_LOAD_COMMITTED! During
    * WEBKIT_LOAD_STARTED, it may or may not match the URI being loaded.
    */
   switch (load_event) {
     case WEBKIT_LOAD_STARTED: {
+      /* Old discovery rows must disappear even if the new document has no
+       * engines or fails to load. Pending replies are bound to its resource. */
+      g_list_store_remove_all (view->opensearch_engines);
+      /* An interrupted internal/placeholder load must not hide the next visit. */
+      if (view->history_frozen_started)
+        ephy_web_view_thaw_history (view);
+      view->history_frozen_started = view->history_frozen;
       view->load_failed = FALSE;
       view->document_type = EPHY_WEB_VIEW_DOCUMENT_HTML;
 
@@ -1476,6 +1356,9 @@ load_changed_cb (EphyEngineView   *web_view,
         view->just_registered_message_handlers = FALSE;
       else if (view->message_handlers_to_unregister)
         unregister_message_handlers (view);
+      if (ephy_engine_web_view_has_native_uri (web_view, "ephy-about:overview"))
+        ephy_web_view_register_message_handler (view, EPHY_WEB_VIEW_OVERVIEW_MESSAGE_HANDLER,
+                                                EPHY_WEB_VIEW_REGISTER_MESSAGE_HANDLER_FOR_CURRENT_PAGE);
       break;
     }
     case WEBKIT_LOAD_REDIRECTED:
@@ -1493,11 +1376,15 @@ load_changed_cb (EphyEngineView   *web_view,
       update_security_status_for_committed_load (view, uri);
 
       /* History. */
-      if (ephy_embed_utils_is_no_show_address (uri))
+      if (ephy_embed_utils_is_no_show_address (uri)) {
         ephy_web_view_freeze_history (view);
+        view->history_frozen_started = TRUE;
+      }
 
       if (!ephy_web_view_is_history_frozen (view)) {
         char *history_uri = NULL;
+        EphyHistoryPageVisit *visit;
+        const char *title = ephy_engine_web_view_get_title (web_view);
 
         /* TODO: move the normalization down to the history service? */
         if (g_str_has_prefix (uri, EPHY_ABOUT_SCHEME))
@@ -1505,12 +1392,15 @@ load_changed_cb (EphyEngineView   *web_view,
         else
           history_uri = g_strdup (uri);
 
-        ephy_history_service_visit_url (view->history_service,
-                                        history_uri,
-                                        NULL,
-                                        g_get_real_time (),
-                                        view->visit_type,
-                                        TRUE);
+        /* CEF can deliver the title before the URL exists. Insert it atomically
+         * with the visit instead of queuing a higher-priority title update. */
+        visit = ephy_history_page_visit_new (history_uri, g_get_real_time (), view->visit_type);
+        if (title && *title)
+          g_set_str (&visit->url->title, title);
+        visit->url->notify_visit = TRUE;
+        ephy_history_service_add_visit (view->history_service, visit, NULL,
+                                        (GAsyncReadyCallback)history_visit_added_cb, NULL);
+        ephy_history_page_visit_free (visit);
 
         g_free (history_uri);
       }
@@ -1525,6 +1415,7 @@ load_changed_cb (EphyEngineView   *web_view,
       break;
     }
     case WEBKIT_LOAD_FINISHED:
+      on_document_loaded_cb (web_view);
       g_clear_pointer (&view->reader_html, g_free);
       g_clear_pointer (&view->reader_uri, g_free);
       ephy_web_view_unset_loading_message (view);
@@ -1567,7 +1458,6 @@ load_changed_cb (EphyEngineView   *web_view,
       if (!ephy_embed_utils_is_no_show_address (view->address))
         view->reader_js_timeout = g_idle_add_once (run_readability_js_if_needed, web_view);
 
-      g_clear_pointer (&view->client_certificate_manager, ephy_client_certificate_manager_free);
       break;
 
     default:
@@ -2181,49 +2071,15 @@ load_failed_cb (EphyEngineView   *web_view,
   view->load_failed = TRUE;
   ephy_web_view_set_link_message (view, NULL);
 
-  if (error->domain != WEBKIT_MEDIA_ERROR &&
-      error->domain != WEBKIT_NETWORK_ERROR &&
-      error->domain != WEBKIT_POLICY_ERROR) {
-    if (view->address && g_str_has_prefix (view->address, "file:"))
-      ephy_web_view_load_error_page (view, uri, EPHY_WEB_VIEW_ERROR_NO_SUCH_FILE, error, NULL);
-    else
-      ephy_web_view_load_error_page (view, uri, EPHY_WEB_VIEW_ERROR_PAGE_NETWORK_ERROR, error, NULL);
-    return TRUE;
-  }
+  /* Native CEF load failures arrive as GIO errors. Aborted navigations,
+   * downloads and media handling are resolved by Chromium before this signal;
+   * foreign WebKit error domains cannot describe these requests. */
+  if (view->address && g_str_has_prefix (view->address, "file:"))
+    ephy_web_view_load_error_page (view, uri, EPHY_WEB_VIEW_ERROR_NO_SUCH_FILE, error, NULL);
+  else
+    ephy_web_view_load_error_page (view, uri, EPHY_WEB_VIEW_ERROR_PAGE_NETWORK_ERROR, error, NULL);
 
-  switch (error->code) {
-    case WEBKIT_NETWORK_ERROR_FAILED:
-    case WEBKIT_NETWORK_ERROR_TRANSPORT:
-    case WEBKIT_NETWORK_ERROR_UNKNOWN_PROTOCOL:
-    case WEBKIT_NETWORK_ERROR_FILE_DOES_NOT_EXIST:
-    case WEBKIT_POLICY_ERROR_FAILED:
-    case WEBKIT_POLICY_ERROR_CANNOT_SHOW_MIME_TYPE:
-    case WEBKIT_POLICY_ERROR_CANNOT_SHOW_URI:
-    case WEBKIT_POLICY_ERROR_CANNOT_USE_RESTRICTED_PORT:
-      ephy_web_view_load_error_page (view, uri, EPHY_WEB_VIEW_ERROR_PAGE_NETWORK_ERROR, error, NULL);
-      return TRUE;
-    case WEBKIT_NETWORK_ERROR_CANCELLED: {
-      if (!view->typed_address) {
-        const char *prev_uri;
-
-        prev_uri = ephy_engine_web_view_get_uri (web_view);
-        ephy_web_view_set_address (view, prev_uri);
-      }
-    }
-    break;
-    case WEBKIT_POLICY_ERROR_FRAME_LOAD_INTERRUPTED_BY_POLICY_CHANGE:
-      /* If we are going to download something, and this is the first
-       * page to load in this tab, we may want to close it down. */
-      if (!view->ever_committed)
-        g_signal_emit (view, signals[DOWNLOAD_ONLY_LOAD], 0, NULL);
-      break;
-    case WEBKIT_MEDIA_ERROR_WILL_HANDLE_LOAD:
-    /* Fallthrough so WebKit will start a new load to handle the media. */
-    default:
-      break;
-  }
-
-  return FALSE;
+  return TRUE;
 }
 
 static gboolean
@@ -2290,21 +2146,6 @@ zoom_changed_cb (EphyEngineView *web_view,
                                              address, zoom,
                                              NULL, NULL, NULL);
   }
-}
-
-static gboolean
-script_dialog_cb (EphyEngineView      *web_view,
-                  WebKitScriptDialog *dialog)
-{
-  if (webkit_script_dialog_get_dialog_type (dialog) != WEBKIT_SCRIPT_DIALOG_BEFORE_UNLOAD_CONFIRM)
-    return FALSE;
-
-  /* Ignore beforeunload events for now until we properly support ephy_engine_web_view_try_close()
-   * See https://bugzilla.gnome.org/show_bug.cgi?id=722032.
-   */
-  webkit_script_dialog_confirm_set_confirmed (dialog, TRUE);
-
-  return TRUE;
 }
 
 static const char *
@@ -2374,332 +2215,6 @@ ephy_web_view_autofill_disable_popup (EphyWebView *web_view)
 }
 
 static void
-authenticate_succeeded_cb (WebKitAuthenticationRequest *request,
-                           WebKitCredential            *credential)
-{
-  EphyEmbedShell *shell = ephy_embed_shell_get_default ();
-  EphyPasswordManager *password_manager;
-  g_autoptr (WebKitSecurityOrigin) security_origin = NULL;
-  g_autofree char *origin = NULL;
-
-  if (webkit_credential_get_persistence (credential) != WEBKIT_CREDENTIAL_PERSISTENCE_PERMANENT ||
-      !ephy_embed_shell_should_remember_passwords (shell))
-    return;
-
-  security_origin = webkit_authentication_request_get_security_origin (request);
-  origin = webkit_security_origin_to_string (security_origin);
-  password_manager = ephy_embed_shell_get_password_manager (ephy_embed_shell_get_default ());
-  ephy_password_manager_save (password_manager,
-                              origin,
-                              origin,
-                              webkit_credential_get_username (credential),
-                              webkit_credential_get_username (credential),
-                              webkit_credential_get_password (credential),
-                              "io.github.doromiert.Jupiter.HTTPAuthCredentials.Username",
-                              "io.github.doromiert.Jupiter.HTTPAuthCredentials.Password",
-                              TRUE);
-}
-
-typedef struct {
-  EphyWebView *web_view;
-  WebKitAuthenticationRequest *request;
-} AuthenticationData;
-
-static AuthenticationData *
-authentication_data_new (EphyWebView                 *web_view,
-                         WebKitAuthenticationRequest *request)
-{
-  AuthenticationData *data;
-
-  data = g_new (AuthenticationData, 1);
-  data->web_view = g_object_ref (web_view);
-  data->request = g_object_ref (request);
-
-  return data;
-}
-
-static void
-authentication_data_free (AuthenticationData *data)
-{
-  g_object_unref (data->web_view);
-  g_object_unref (data->request);
-  g_free (data);
-}
-
-static void
-prepare_for_authentication_dialog (EphyWebView                 *web_view,
-                                   WebKitAuthenticationRequest *request)
-{
-  EphyEmbedShell *shell = ephy_embed_shell_get_default ();
-
-  webkit_authentication_request_set_can_save_credentials (request, ephy_embed_shell_should_remember_passwords (shell));
-  g_signal_connect_object (request, "authenticated",
-                           G_CALLBACK (authenticate_succeeded_cb),
-                           web_view, G_CONNECT_DEFAULT);
-  web_view->in_auth_dialog = 1;
-}
-
-static void
-auth_password_query_finished_cb (GList              **records,
-                                 AuthenticationData  *data)
-{
-  EphyPasswordRecord *record;
-  g_autoptr (WebKitCredential) credential = NULL;
-
-  record = (*records) && (*records)->data ? EPHY_PASSWORD_RECORD ((*records)->data) : NULL;
-  if (record) {
-    credential = webkit_credential_new (ephy_password_record_get_username (record),
-                                        ephy_password_record_get_password (record),
-                                        WEBKIT_CREDENTIAL_PERSISTENCE_NONE);
-    webkit_authentication_request_authenticate (data->request, credential);
-  } else {
-    prepare_for_authentication_dialog (data->web_view, data->request);
-    /* Hack: display WebKit's default auth dialog by invoking the default handler, which we previously canceled. */
-    if (EPHY_ENGINE_VIEW_GET_CLASS (data->web_view)->authenticate)
-      EPHY_ENGINE_VIEW_GET_CLASS (data->web_view)->authenticate (EPHY_ENGINE_VIEW (data->web_view), data->request);
-    else
-      webkit_authentication_request_cancel (data->request);
-  }
-
-  authentication_data_free (data);
-}
-
-static gboolean
-authenticate_cb (EphyEngineView               *web_view,
-                 WebKitAuthenticationRequest *request,
-                 gpointer                     user_data)
-{
-  EphyWebView *ephy_web_view = EPHY_WEB_VIEW (web_view);
-  EphyEmbedShell *shell = ephy_embed_shell_get_default ();
-  EphyPasswordManager *password_manager;
-  AuthenticationData *data;
-  g_autoptr (WebKitSecurityOrigin) security_origin = NULL;
-  g_autofree char *origin = NULL;
-  WebKitAuthenticationScheme scheme = webkit_authentication_request_get_scheme (request);
-
-  if (scheme == WEBKIT_AUTHENTICATION_SCHEME_CLIENT_CERTIFICATE_REQUESTED) {
-    g_clear_pointer (&ephy_web_view->client_certificate_manager, ephy_client_certificate_manager_free);
-    ephy_web_view->client_certificate_manager = ephy_client_certificate_manager_request_certificate (web_view, request);
-    return TRUE;
-  } else if (scheme == WEBKIT_AUTHENTICATION_SCHEME_CLIENT_CERTIFICATE_PIN_REQUESTED) {
-    g_assert (ephy_web_view->client_certificate_manager);
-    ephy_client_certificate_manager_request_certificate_pin (ephy_web_view->client_certificate_manager, web_view, request);
-    g_clear_pointer (&ephy_web_view->client_certificate_manager, ephy_client_certificate_manager_free);
-    return TRUE;
-  }
-
-  if (!ephy_embed_shell_should_remember_passwords (shell)) {
-    prepare_for_authentication_dialog (ephy_web_view, request);
-    /* Return FALSE to display WebKit's default auth dialog. */
-    return FALSE;
-  }
-
-  data = authentication_data_new (ephy_web_view, request);
-  security_origin = webkit_authentication_request_get_security_origin (request);
-  origin = webkit_security_origin_to_string (security_origin);
-  password_manager = ephy_embed_shell_get_password_manager (ephy_embed_shell_get_default ());
-  ephy_password_manager_query (password_manager,
-                               NULL,
-                               origin,
-                               origin,
-                               NULL,
-                               "io.github.doromiert.Jupiter.HTTPAuthCredentials.Username",
-                               "io.github.doromiert.Jupiter.HTTPAuthCredentials.Password",
-                               FALSE,
-                               (EphyPasswordManagerQueryCallback)auth_password_query_finished_cb,
-                               data);
-  return TRUE;
-}
-
-typedef struct {
-  EphyEngineView *web_view;
-  char *origin;
-  WebKitUserMessage *message;
-} PasswordManagerData;
-
-static void
-password_manager_data_free (PasswordManagerData *data)
-{
-  g_object_unref (data->web_view);
-  g_object_unref (data->message);
-  g_free (data);
-}
-
-static void
-password_manager_query_finished_cb (GList               **records,
-                                    PasswordManagerData  *data)
-{
-  EphyPasswordRecord *record;
-  const char *origin;
-  const char *username = NULL;
-  const char *password = NULL;
-  g_autofree char *real_origin = NULL;
-
-  record = *records && (*records)->data ? EPHY_PASSWORD_RECORD ((*records)->data) : NULL;
-  if (record) {
-    username = ephy_password_record_get_username (record);
-    password = ephy_password_record_get_password (record);
-  }
-
-  g_variant_get (webkit_user_message_get_parameters (data->message), "(&s@sm@sm@sm@s)", &origin, NULL, NULL, NULL, NULL);
-  real_origin = ephy_uri_to_security_origin (ephy_engine_web_view_get_uri (data->web_view));
-  if (g_strcmp0 (real_origin, origin) != 0) {
-    g_debug ("Extension's origin '%s' doesn't match real origin '%s'", origin, real_origin);
-    password_manager_data_free (data);
-    return;
-  }
-
-  webkit_user_message_send_reply (data->message,
-                                  webkit_user_message_new ("PasswordManager.QueryPasswordResponse",
-                                                           g_variant_new ("(msms)", username, password)));
-  password_manager_data_free (data);
-}
-
-static gboolean
-password_manager_handle_query_usernames_message (EphyEngineView     *web_view,
-                                                 WebKitUserMessage *message)
-{
-  GVariant *parameters;
-  const char *origin;
-  EphyPasswordManager *password_manager;
-  GList *usernames, *l;
-  GVariantBuilder builder;
-  g_autofree char *real_origin = NULL;
-
-  parameters = webkit_user_message_get_parameters (message);
-  if (!parameters)
-    return FALSE;
-
-  g_variant_get (parameters, "&s", &origin);
-  real_origin = ephy_uri_to_security_origin (ephy_engine_web_view_get_uri (web_view));
-  if (g_strcmp0 (real_origin, origin) != 0) {
-    g_debug ("Extension's origin '%s' doesn't match real origin '%s'", origin, real_origin);
-    return FALSE;
-  }
-
-  password_manager = ephy_embed_shell_get_password_manager (ephy_embed_shell_get_default ());
-  usernames = ephy_password_manager_get_usernames_for_origin (password_manager, origin);
-
-  g_variant_builder_init (&builder, G_VARIANT_TYPE_STRING_ARRAY);
-  for (l = usernames; l; l = g_list_next (l))
-    g_variant_builder_add (&builder, "s", l->data);
-
-  webkit_user_message_send_reply (message, webkit_user_message_new ("PasswordManager.QueryUsernamesResponse",
-                                                                    g_variant_builder_end (&builder)));
-  return TRUE;
-}
-
-static gboolean
-password_manager_handle_query_password_message (EphyEngineView     *web_view,
-                                                WebKitUserMessage *message)
-{
-  GVariant *parameters;
-  const char *origin;
-  const char *target_origin;
-  const char *username;
-  const char *username_field;
-  const char *password_field;
-  EphyPasswordManager *password_manager;
-  PasswordManagerData *data;
-
-  parameters = webkit_user_message_get_parameters (message);
-  if (!parameters)
-    return FALSE;
-
-  g_variant_get (parameters, "(&s&sm&sm&sm&s)", &origin, &target_origin, &username, &username_field, &password_field);
-
-  /* Don't include username_field in queries unless we actually have a username
-   * to go along with it, or the query will fail because we don't save
-   * username_field without a corresponding username.
-   */
-  if (!username && username_field)
-    username_field = NULL;
-
-  data = g_new (PasswordManagerData, 1);
-  data->web_view = g_object_ref (web_view);
-  data->message = g_object_ref (message);
-
-  password_manager = ephy_embed_shell_get_password_manager (ephy_embed_shell_get_default ());
-  ephy_password_manager_query (password_manager,
-                               NULL,
-                               origin,
-                               target_origin,
-                               username,
-                               username_field,
-                               password_field,
-                               TRUE,
-                               (EphyPasswordManagerQueryCallback)password_manager_query_finished_cb,
-                               data);
-  return TRUE;
-}
-
-static void
-ephy_autofill_get_field_value_finished_cb (GObject      *source_object,
-                                           GAsyncResult *res,
-                                           gpointer      user_data)
-{
-  g_autoptr (GError) error = NULL;
-  g_autoptr (WebKitUserMessage) message = WEBKIT_USER_MESSAGE (user_data);
-  g_autofree char *autofill_value = ephy_autofill_storage_get_finish (res, &error);
-
-  if (error) {
-    if (!g_error_matches (error, G_IO_ERROR, G_IO_ERROR_CANCELLED))
-      g_warning ("Could not get autofill storage data: %s", error->message);
-
-    return;
-  }
-
-  webkit_user_message_send_reply (message, webkit_user_message_new ("EphyAutoFill.GetFieldValueResponse",
-                                                                    g_variant_new ("(s)", autofill_value ? autofill_value : "")));
-}
-
-static gboolean
-ephy_autofill_get_field_value (EphyEngineView     *web_view,
-                               WebKitUserMessage *message)
-{
-  EphyWebView *view = EPHY_WEB_VIEW (web_view);
-  GVariant *parameters;
-  EphyAutofillField field;
-
-  parameters = webkit_user_message_get_parameters (message);
-  if (!parameters)
-    return FALSE;
-
-  g_variant_get (parameters, "(t)", &field);
-
-  ephy_autofill_storage_get (field, view->cancellable, ephy_autofill_get_field_value_finished_cb, g_object_ref (message));
-
-  return TRUE;
-}
-
-static gboolean
-user_message_received_cb (EphyEngineView     *web_view,
-                          WebKitUserMessage *message)
-{
-  const char *name;
-
-  name = webkit_user_message_get_name (message);
-  if (g_strcmp0 (name, "PasswordManager.QueryUsernames") == 0)
-    return password_manager_handle_query_usernames_message (web_view, message);
-
-  if (g_strcmp0 (name, "PasswordManager.QueryPassword") == 0)
-    return password_manager_handle_query_password_message (web_view, message);
-
-  if (g_strcmp0 (name, "EphyAutoFill.GetFieldValue") == 0)
-    return ephy_autofill_get_field_value (web_view, message);
-
-  /* We don't have appropriate API here to know when the document is done loading,
-   * so the web process extension must tell us when that happens instead.
-   */
-  if (g_strcmp0 (name, "DocumentLoaded") == 0) {
-    on_document_loaded_cb (web_view);
-    return TRUE;
-  }
-
-  return FALSE;
-}
-
-static void
 scale_factor_changed_cb (EphyWebView *web_view,
                          GParamSpec  *pspec,
                          gpointer     user_data)
@@ -2707,30 +2222,18 @@ scale_factor_changed_cb (EphyWebView *web_view,
   _ephy_web_view_update_icon (web_view);
 }
 
-/**
- * ephy_web_view_load_request:
- * @view: the #EphyWebView in which to load the request
- * @request: the #WebKitNetworkRequest to be loaded
- *
- * Loads the given #WebKitNetworkRequest in the given #EphyWebView.
- **/
+/* Load a normalized URI without constructing a foreign engine request object. */
 void
-ephy_web_view_load_request (EphyWebView      *view,
-                            WebKitURIRequest *request)
+ephy_web_view_load_uri (EphyWebView *view,
+                        const char  *uri)
 {
-  const char *url;
-  char *effective_url;
+  g_autofree char *effective_uri = NULL;
 
-  g_assert (EPHY_IS_WEB_VIEW (view));
-  g_assert (WEBKIT_IS_URI_REQUEST (request));
+  g_return_if_fail (EPHY_IS_WEB_VIEW (view));
+  g_return_if_fail (uri != NULL);
 
-  url = webkit_uri_request_get_uri (request);
-  effective_url = ephy_embed_utils_normalize_address (url);
-
-  webkit_uri_request_set_uri (request, effective_url);
-  g_free (effective_url);
-
-  ephy_engine_web_view_load_request (EPHY_ENGINE_VIEW (view), request);
+  effective_uri = ephy_embed_utils_normalize_address (uri);
+  ephy_engine_web_view_load_uri (EPHY_ENGINE_VIEW (view), effective_uri);
 }
 
 /**
@@ -3723,12 +3226,6 @@ ephy_web_view_get_reader_mode_state (EphyWebView *view)
   return g_str_has_prefix (view->address, EPHY_READER_SCHEME);
 }
 
-gboolean
-ephy_web_view_is_in_auth_dialog (EphyWebView *view)
-{
-  return view->in_auth_dialog;
-}
-
 static void
 ephy_web_view_dispose (GObject *object)
 {
@@ -3748,7 +3245,6 @@ ephy_web_view_dispose (GObject *object)
   g_clear_handle_id (&view->reader_js_timeout, g_source_remove);
   g_clear_handle_id (&view->unresponsive_process_timeout_id, g_source_remove);
 
-  g_clear_pointer (&view->client_certificate_manager, ephy_client_certificate_manager_free);
 
   G_OBJECT_CLASS (ephy_web_view_parent_class)->dispose (object);
 }
@@ -3793,8 +3289,6 @@ ephy_web_view_constructed (GObject *object)
 
   g_signal_emit_by_name (ephy_embed_shell_get_default (), "web-view-created", web_view);
 
-  g_signal_connect (web_view, "web-process-terminated",
-                    G_CALLBACK (process_terminated_cb), NULL);
   g_signal_connect_swapped (ephy_engine_web_view_get_back_forward_list (EPHY_ENGINE_VIEW (web_view)),
                             "changed", G_CALLBACK (update_navigation_flags), web_view);
 
@@ -3853,6 +3347,9 @@ ephy_web_view_init (EphyWebView *web_view)
   g_signal_connect (web_view, "load-changed",
                     G_CALLBACK (load_changed_cb),
                     NULL);
+  g_signal_connect (web_view, "tls-info-changed",
+                    G_CALLBACK (tls_info_changed_cb),
+                    NULL);
 
   g_signal_connect (web_view, "close",
                     G_CALLBACK (close_web_view_cb),
@@ -3881,24 +3378,8 @@ ephy_web_view_init (EphyWebView *web_view)
                     G_CALLBACK (is_web_process_responsive_changed_cb),
                     NULL);
 
-  g_signal_connect (web_view, "mouse-target-changed",
-                    G_CALLBACK (mouse_target_changed_cb),
-                    NULL);
-
   g_signal_connect (web_view, "notify::favicon",
                     G_CALLBACK (icon_changed_cb),
-                    NULL);
-
-  g_signal_connect (web_view, "script-dialog",
-                    G_CALLBACK (script_dialog_cb),
-                    NULL);
-
-  g_signal_connect (web_view, "authenticate",
-                    G_CALLBACK (authenticate_cb),
-                    NULL);
-
-  g_signal_connect (web_view, "user-message-received",
-                    G_CALLBACK (user_message_received_cb),
                     NULL);
 
   g_signal_connect (web_view, "notify::scale-factor",
@@ -3933,7 +3414,6 @@ ephy_web_view_class_init (EphyWebViewClass *klass)
   gobject_class->constructed = ephy_web_view_constructed;
 
 
-  webkit_webview_class->run_file_chooser = ephy_web_view_run_file_chooser;
 
 /**
  * EphyWebView:address:
@@ -4150,7 +3630,6 @@ ephy_web_view_new (void)
   g_autoptr (WebKitUserContentManager) ucm = webkit_user_content_manager_new ();
 
   return g_object_new (EPHY_TYPE_WEB_VIEW,
-                       "web-context", ephy_embed_shell_get_web_context (shell),
                        "network-session", ephy_embed_shell_get_network_session (shell),
                        "user-content-manager", ucm,
                        "settings", ephy_embed_prefs_get_settings (),

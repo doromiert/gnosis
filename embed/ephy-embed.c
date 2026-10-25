@@ -67,7 +67,7 @@ struct _EphyEmbed {
   GtkWidget *fullscreen_message_label;
 
   char *title;
-  WebKitURIRequest *delayed_request;
+  char *delayed_uri;
   EphyEngineSessionState *delayed_state;
   guint delayed_request_source_id;
   char *typed_input;
@@ -415,7 +415,7 @@ ephy_embed_dispose (GObject *object)
   g_clear_signal_handler (&embed->status_handler_id, embed->web_view);
   g_clear_signal_handler (&embed->progress_update_handler_id, embed->web_view);
 
-  g_clear_object (&embed->delayed_request);
+  g_clear_pointer (&embed->delayed_uri, g_free);
   g_clear_pointer (&embed->delayed_state, ephy_engine_web_view_session_state_unref);
 
   G_OBJECT_CLASS (ephy_embed_parent_class)->dispose (object);
@@ -663,9 +663,9 @@ load_delayed_request_if_mapped (gpointer user_data)
   if (item)
     ephy_engine_web_view_go_to_back_forward_list_item (EPHY_ENGINE_VIEW (web_view), item);
   else
-    ephy_web_view_load_request (web_view, embed->delayed_request);
+    ephy_web_view_load_uri (web_view, embed->delayed_uri);
 
-  g_clear_object (&embed->delayed_request);
+  g_clear_pointer (&embed->delayed_uri, g_free);
   g_clear_pointer (&embed->delayed_state, ephy_engine_web_view_session_state_unref);
 
   /* We have a binding to `is-loading` in `ephy_tab_view_add_tab ()` that depends on
@@ -677,7 +677,7 @@ load_delayed_request_if_mapped (gpointer user_data)
 static void
 ephy_embed_maybe_load_delayed_request (EphyEmbed *embed)
 {
-  if (!embed->delayed_request || embed->delayed_request_source_id != 0)
+  if (!embed->delayed_uri || embed->delayed_request_source_id != 0)
     return;
 
   /* Add a very small delay before loading the request, so that if the user
@@ -939,25 +939,25 @@ ephy_embed_remove_top_widget (EphyEmbed *embed,
 }
 
 /**
- * ephy_embed_set_delayed_load_request:
+ * ephy_embed_set_delayed_load_uri:
  * @embed: a #EphyEmbed
- * @request: a #WebKitNetworkRequest
+ * @uri: the URI to load
  * @state: (nullable): a #EphyEngineSessionState
  *
- * Sets the #WebKitNetworkRequest that should be loaded when the tab this embed
+ * Sets the URI that should be loaded when the tab this embed
  * is on is switched to.
  */
 void
-ephy_embed_set_delayed_load_request (EphyEmbed                 *embed,
-                                     WebKitURIRequest          *request,
-                                     EphyEngineSessionState *state)
+ephy_embed_set_delayed_load_uri (EphyEmbed              *embed,
+                                 const char             *uri,
+                                 EphyEngineSessionState *state)
 {
   g_assert (EPHY_IS_EMBED (embed));
-  g_assert (WEBKIT_IS_URI_REQUEST (request));
+  g_assert (uri != NULL);
 
   g_clear_pointer (&embed->delayed_state, ephy_engine_web_view_session_state_unref);
 
-  g_set_object (&embed->delayed_request, request);
+  g_set_str (&embed->delayed_uri, uri);
   if (state)
     embed->delayed_state = ephy_engine_web_view_session_state_ref (state);
 }
@@ -975,7 +975,7 @@ ephy_embed_has_load_pending (EphyEmbed *embed)
 {
   g_assert (EPHY_IS_EMBED (embed));
 
-  return !!embed->delayed_request;
+  return !!embed->delayed_uri;
 }
 
 const char *

@@ -10,12 +10,15 @@ struct Print {
   GtkPrintDialog* dialog;
   GtkPrintSetup* setup=nullptr;
   GtkWindow* parent=nullptr;
+  GCancellable* cancel=nullptr;
+  gulong unmap=0;
   std::string directory, path;
   ~Print() {
+    if(unmap)g_signal_handler_disconnect(g_task_get_source_object(task),unmap);
     if(!path.empty())g_unlink(path.c_str());
     if(!directory.empty())g_rmdir(directory.c_str());
     if(setup)gtk_print_setup_unref(setup);
-    g_clear_object(&parent);g_object_unref(dialog);g_object_unref(task);
+    g_clear_object(&cancel);g_clear_object(&parent);g_object_unref(dialog);g_object_unref(task);
   }
   void fail(GError* error) {g_task_return_error(task,error);delete this;}
 };
@@ -24,9 +27,10 @@ public:
   explicit PDF(Print* job):job_(job){}
   void OnPdfPrintFinished(const CefString&,bool success) override {
     auto* job=job_;job_=nullptr;
+    if(g_cancellable_is_cancelled(job->cancel)){job->fail(g_error_new_literal(G_IO_ERROR,G_IO_ERROR_CANCELLED,"Printing was cancelled"));return;}
     if(!success) {job->fail(g_error_new_literal(G_IO_ERROR,G_IO_ERROR_FAILED,"Chromium could not render this document for printing"));return;}
     auto* file=g_file_new_for_path(job->path.c_str());
-    gtk_print_dialog_print_file(job->dialog,job->parent,job->setup,file,nullptr,
+    gtk_print_dialog_print_file(job->dialog,job->parent,job->setup,file,job->cancel,
       +[](GObject* object,GAsyncResult* result,gpointer user) {
         auto* job=static_cast<Print*>(user);GError* error=nullptr;
         if(!gtk_print_dialog_print_file_finish(GTK_PRINT_DIALOG(object),result,&error)){job->fail(error);return;}
@@ -40,10 +44,13 @@ private:
 };
 }
 void ephy_engine_web_view_print(EphyEngineView* view,GtkPageSetup* page,GtkPrintSettings* settings,GAsyncReadyCallback cb,gpointer user) {
-  auto* job=new Print{g_task_new(view,nullptr,cb,user),gtk_print_dialog_new()};
+  auto* cancel=g_cancellable_new();
+  auto* job=new Print{g_task_new(view,cancel,cb,user),gtk_print_dialog_new()};
+  job->cancel=cancel;
+  job->unmap=g_signal_connect(view,"unmap",G_CALLBACK(+[](GtkWidget*,Print* job){g_cancellable_cancel(job->cancel);}),job);
   if(auto* root=gtk_widget_get_root(GTK_WIDGET(view));root&&GTK_IS_WINDOW(root))job->parent=GTK_WINDOW(g_object_ref(root));
   gtk_print_dialog_set_page_setup(job->dialog,page);gtk_print_dialog_set_print_settings(job->dialog,settings);
-  gtk_print_dialog_setup(job->dialog,job->parent,nullptr,+[](GObject* object,GAsyncResult* result,gpointer user) {
+  gtk_print_dialog_setup(job->dialog,job->parent,job->cancel,+[](GObject* object,GAsyncResult* result,gpointer user) {
     auto* job=static_cast<Print*>(user);GError* error=nullptr;
     job->setup=gtk_print_dialog_setup_finish(GTK_PRINT_DIALOG(object),result,&error);
     if(!job->setup){job->fail(error);return;}

@@ -18,12 +18,9 @@
  const tabs=chrome.tabs;
  Object.defineProperty(tabs,'__jupiter',{value:true});
  for(const op of ['insertCSS','removeCSS','executeScript']) tabs[op]=(tabId,details,callback)=>call(op,{tabId,details},callback);
- const query=tabs.query.bind(tabs);
- tabs.query=(queryInfo,callback)=>{
-  const promise=Promise.all([query(queryInfo),call('query',queryInfo)]).then(([native,alloy])=>[...native,...alloy.filter(t=>!native.some(n=>n.id===t.id))]);
-  if(typeof callback==='function'){promise.then(callback,()=>callback([]));return;}
-  return promise;
- };
+ // The GTK shell owns the tab inventory; native queries also include popup web contents.
+ tabs.query=(queryInfo,callback)=>call('query',queryInfo,callback);
+ tabs.create=(properties,callback)=>call('create',{properties},callback);
  const get=tabs.get.bind(tabs);
  tabs.get=(tabId,callback)=>{
   const promise=call('get',{tabId}).then(tab=>tab||get(tabId));

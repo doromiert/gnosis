@@ -1,3 +1,14 @@
+# Jupiter native extensions
+
+Jupiter runs Manifest V2 and V3 extensions through CEF/Chromium. The shell catalog
+uses the native owned extension store and Chromium inventory for the running
+profile. It does not import the default profile's legacy `web_extensions`
+directory; existing files there are left untouched.
+
+The remaining document describes the upstream Epiphany provider and is retained
+as migration reference. Its JavaScriptCore handlers are not the native extension
+API implementation.
+
 # Epiphany WebExtensions
 
 This is an experimental implementation of [WebExtensions](https://developer.mozilla.org/en-US/docs/Mozilla/Add-ons/WebExtensions/API).

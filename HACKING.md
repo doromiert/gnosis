@@ -146,6 +146,12 @@ cases, there is no shared state with the main Epiphany browser process.
 
 ## Epiphany Web Process Extension
 
+Jupiter does not build or install this WebKit plugin. Its source is retained as
+upstream reference while the remaining services are ported. CEF renderer hooks
+live in `engine/select/page-messages.cpp` and `engine/select/clipboard.cpp`; native
+extensions use Chromium rather than this plugin. The description below documents
+the upstream Epiphany architecture.
+
 For some Epiphany features, we need to run code in the web process. This code is
 called the "web process extension" and lives in `embed/web-process-extension/`.
 It is compiled into a shared library `libephywebprocessextension.so` and

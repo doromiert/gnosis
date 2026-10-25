@@ -46,6 +46,7 @@ G_DECLARE_FINAL_TYPE (EphyWebView, ephy_web_view, EPHY, WEB_VIEW, EphyEngineView
                                         "^inspector://.*$|" \
                                         "^webkit://.*$|" \
                                         "^ephy-resource://.*$|" \
+                                        "^chrome-extension://.*$|" \
                                         "^view-source:.*$|" \
                                         "^ephy-reader:.*$" \
                                         ")"
@@ -81,6 +82,7 @@ typedef enum {
   EPHY_WEB_VIEW_TLS_ERROR_PAGE_MESSAGE_HANDLER = 1 << 0,
   EPHY_WEB_VIEW_RELOAD_PAGE_MESSAGE_HANDLER = 1 << 1,
   EPHY_WEB_VIEW_ABOUT_APPS_MESSAGE_HANDLER = 1 << 2,
+  EPHY_WEB_VIEW_OVERVIEW_MESSAGE_HANDLER = 1 << 3,
 } EphyWebViewMessageHandler;
 
 typedef enum {
@@ -90,8 +92,8 @@ typedef enum {
 
 GtkWidget *                ephy_web_view_new                      (void);
 GtkWidget                 *ephy_web_view_new_with_related_view    (EphyEngineView             *related_view);
-void                       ephy_web_view_load_request             (EphyWebView               *view,
-                                                                   WebKitURIRequest          *request);
+void                       ephy_web_view_load_uri             (EphyWebView               *view,
+                                                                   const char                *uri);
 void                       ephy_web_view_load_url                 (EphyWebView               *view,
                                                                    const char                *url);
 gboolean                   ephy_web_view_is_loading               (EphyWebView               *view);
@@ -174,8 +176,6 @@ void                       ephy_web_view_toggle_reader_mode       (EphyWebView  
 gboolean                   ephy_web_view_is_reader_mode_available (EphyWebView               *view);
 
 gboolean                   ephy_web_view_get_reader_mode_state    (EphyWebView               *view);
-
-gboolean                   ephy_web_view_is_in_auth_dialog        (EphyWebView               *view);
 
 guint64                    ephy_web_view_get_uid                       (EphyWebView *web_view);
 

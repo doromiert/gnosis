@@ -5,13 +5,13 @@ template $PrefsExtensionsPage: Adw.PreferencesPage {
   icon-name: "application-x-addon-symbolic";
   title: _("Extensions");
 
-  Adw.PreferencesGroup {
-    Adw.ActionRow {
+  Adw.PreferencesGroup install_group {
+    Adw.ActionRow native_install_row {
       activatable: true;
-      title: _("Add New Extension");
-      subtitle: _("Extensions must be installed manually from their files");
+      title: _("Install Unpacked Extension…");
+      subtitle: _("Select a folder containing manifest.json");
       use-underline: true;
-      activated => $on_add_button_clicked();
+      activated => $on_install_unpacked_clicked();
 
       [suffix]
       Image {
@@ -19,19 +19,7 @@ template $PrefsExtensionsPage: Adw.PreferencesPage {
       }
     }
 
-    Label {
-      wrap: true;
-      use-markup: true;
-      label: _(
-        "Epiphany is compatible with web extensions for Mozilla Firefox. To find and add web extensions, visit <a href=\"https://addons.mozilla.org\">addons.mozilla.org</a>"
-      );
-      margin-top: 12;
-      xalign: 0;
 
-      styles [
-        "dim-label",
-      ]
-    }
   }
 
   Adw.PreferencesGroup {

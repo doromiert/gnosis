@@ -68,6 +68,11 @@
                         <summary>Whether to delay loading of tabs that are not immediately visible on session restore</summary>
                         <description>When this option is set to true, tabs will not start loading until the user switches to them, upon session restore.</description>
                 </key>
+                <key type="b" name="tab-switcher-mru">
+                        <default>false</default>
+                        <summary>Cycle tabs in most recently used order</summary>
+                        <description>When enabled, Ctrl+Tab follows recently viewed tabs. Otherwise it follows tab bar order.</description>
+                </key>
                 <key type="as" name="content-filters">
                         <default>['https://github.com/bnema/ublock-webkit-filters/releases/latest/download/combined-part1.json', 'https://github.com/bnema/ublock-webkit-filters/releases/latest/download/combined-part2.json']</default>
                         <summary>List of adblock filters</summary>

@@ -54,6 +54,7 @@ static const SchemeTest tests_has_scheme[] = {
   { "data", "data:\%20\%40" },
   { "about", "about:epiphany" },
   { "ephy-about", "ephy-about:memory" },
+  { "chrome-extension", "chrome-extension://abcdefghijklmnopabcdefghijklmnop/dashboard.html" },
   { "gopher", "gopher://gnome.org/" },
 };
 
@@ -126,6 +127,16 @@ test_is_empty (const IsEmptyTest *test)
   g_assert_true (ephy_embed_utils_url_is_empty (test->test) == test->result);
 }
 
+static void
+test_native_extension_address (void)
+{
+  const char *uri = "chrome-extension://abcdefghijklmnopabcdefghijklmnop/dashboard.html";
+  g_autofree char *normalized = ephy_embed_utils_normalize_or_autosearch_address (uri);
+
+  g_assert_true (ephy_embed_utils_address_is_valid (uri));
+  g_assert_cmpstr (normalized, ==, uri);
+}
+
 int
 main (int   argc,
       char *argv[])
@@ -136,6 +147,8 @@ main (int   argc,
 
   ephy_file_helpers_init (NULL, EPHY_FILE_HELPERS_TESTING_MODE, NULL);
   _ephy_shell_create_instance (EPHY_EMBED_SHELL_MODE_TEST);
+
+  g_test_add_func ("/embed/ephy-embed-utils/native_extension_address", test_native_extension_address);
 
   for (i = 0; i < G_N_ELEMENTS (tests_has_scheme); i++) {
     SchemeTest test;

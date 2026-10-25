@@ -1,0 +1,40 @@
+{
+  "cef_commit": "c1a097eaa7738483abe2ea9d6297a937d6a884c0",
+  "chromium": "150.0.7871.256",
+  "patches": [
+    {
+      "name": "cef-directory-picker.patch",
+      "sha256": "5d7a1d84592a87a3c113a0ea99b781f3eac6cb8a097d9c90d71245e0f98d1249"
+    },
+    {
+      "name": "cef-user-styles.patch",
+      "sha256": "1576f52d87759c76e6755c9d9b0d5c73f5e44615eaf3e829102f63cf59bfe681"
+    },
+    {
+      "name": "cef-user-content-lifecycle.patch",
+      "sha256": "bd50cc23aaf709ef5ea178e4487ce4abd5b624bdb98f950d46900795ea28c6ca"
+    },
+    {
+      "name": "cef-certificate-overridability.patch",
+      "sha256": "9973f331f0d32bd2621dbdd98514f780be1308752da77045fc33246ba1e7246d"
+    }
+  ],
+  "sources": {
+    "libcef/browser/file_dialog_manager.cc": "2c15248e6b3527692958f5fd8e3c43226f8363ed6b4719cf93030df500bc31b2",
+    "include/cef_frame.h": "a35c6985118a514c0cd77a3047b3bb4e4a8ceb5295ac8b6c27b513d499c85eec",
+    "libcef/browser/frame_host_impl.cc": "cddcb3eae46d0fb4519a97c4a8b2fa4e991300c5c44d6ea70b4925621b81d43b",
+    "libcef/browser/frame_host_impl.h": "6661c28e58a0ca55d3399176dbb829b8cf6bdf0281da46523aa645c8a0b46219",
+    "libcef/renderer/frame_impl.cc": "2de57e0baa3fb3971ec41f5b8ec3d1ea078c893943a6edb39a8aad37586956d9",
+    "libcef/renderer/frame_impl.h": "b5984e68cdb12bc8b023b941c27027028cc43a9437158c4a1bc582cdd59c96c5",
+    "include/cef_render_process_handler.h": "fc632cc07abf8a9a0f1fa1294d7b4ae926ba3e7e63f0480cfe1192bf225c2a0a",
+    "libcef/renderer/chrome/chrome_content_renderer_client_cef.h": "fb156a9bd7e0aaf379143afa195047283cfaa3cbeb53654bc39f475bae940c9b",
+    "libcef/renderer/chrome/chrome_content_renderer_client_cef.cc": "8a7419f58efd0a493bede025e22d3146d14d35a48cc948a6d8c20559743ea8ef",
+    "BUILD.gn": "b35c16e3512e14b3ac9227ae2c6d8471b7b544f85359edaf6d3517e977c5878b",
+    "include/cef_ssl_info.h": "ed69dda88651450227dc87109f95a3c5e6d06085ab6689570780cb0c0a17c2d8",
+    "libcef/browser/ssl_info_impl.h": "c3ae345298de7fc73421f25337a7ad2f3858625fdbf7e9a06277a64d0dcaafd3",
+    "libcef/browser/ssl_info_impl.cc": "9dca95207dbb98450fcd8eeaf4af7aa1cd0c8c65dc3f3f03af3f87254fda3cda",
+    "libcef/browser/certificate_query.h": "64087ce53ef06f30bb8efc5f7e33b4ccec94efa11ee0a4c1128bd858e6124f6a",
+    "libcef/browser/certificate_query.cc": "02d9b18382f795d24aca1efb1053c01024446ed19ccddd83117b7d1257e10b78",
+    "libcef/browser/chrome/chrome_content_browser_client_cef.cc": "7f3a5682a1258561cb845ff99c0cab82f2842cf1579c8b8b835b04641b217297"
+  }
+}

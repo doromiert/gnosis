@@ -34,5 +34,12 @@ void              ephy_action_bar_end_set_show_bookmarks_button (EphyActionBarEn
                                                                  gboolean          show);
 void              ephy_action_bar_end_show_downloads            (EphyActionBarEnd *action_bar_end);
 GtkWidget        *ephy_action_bar_end_get_downloads_revealer    (EphyActionBarEnd *action_bar_end);
+GtkWidget        *ephy_action_bar_end_get_downloads_button      (EphyActionBarEnd *action_bar_end);
+void              ephy_action_bar_end_clear_page_actions        (EphyActionBarEnd *action_bar_end);
+void              ephy_action_bar_end_add_page_action           (EphyActionBarEnd *action_bar_end,
+                                                                 GtkWidget        *action,
+                                                                 const char       *extension_name);
+void              ephy_action_bar_end_remove_page_action        (EphyActionBarEnd *action_bar_end,
+                                                                 GtkWidget        *action);
 
 G_END_DECLS

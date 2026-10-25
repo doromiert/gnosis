@@ -20,6 +20,8 @@
  */
 
 #include "config.h"
+
+#include <glib/gi18n.h>
 #include "ephy-browser-action-row.h"
 
 #include "ephy-indicator-bin-private.h"
@@ -33,6 +35,8 @@ struct _EphyBrowserActionRow {
   GtkWidget *browser_action_image;
   GtkWidget *title_label;
   GtkWidget *badge;
+  GtkWidget *status_spinner;
+  GtkWidget *settings_button;
 };
 
 G_DEFINE_FINAL_TYPE (EphyBrowserActionRow, ephy_browser_action_row, GTK_TYPE_LIST_BOX_ROW)
@@ -42,6 +46,54 @@ typedef enum {
 } EphyBrowserActionRowProps;
 
 static GParamSpec *obj_properties[PROP_BROWSER_ACTION + 1];
+
+enum {
+  OPTIONS_ACTIVATED,
+  LAST_SIGNAL
+};
+
+static guint signals[LAST_SIGNAL];
+
+static void
+update_native_state (EphyBrowserActionRow *self)
+{
+  EphyWebExtension *web_extension = ephy_browser_action_get_web_extension (self->browser_action);
+  const char *options_page = ephy_web_extension_get_option_ui_page (web_extension);
+  const char *popup = ephy_web_extension_get_browser_popup (web_extension);
+  gboolean pending = ephy_web_extension_native_is_pending (web_extension);
+  gboolean available = ephy_web_extension_native_is_available (web_extension);
+  gboolean enabled = ephy_web_extension_native_is_enabled (web_extension);
+  gboolean ready = available && enabled && !pending;
+
+  gtk_spinner_set_spinning (GTK_SPINNER (self->status_spinner), pending);
+  gtk_widget_set_visible (self->status_spinner, pending);
+  gtk_widget_set_visible (self->settings_button, options_page && *options_page);
+  gtk_widget_set_sensitive (self->settings_button, ready);
+  gtk_list_box_row_set_activatable (GTK_LIST_BOX_ROW (self),
+                                    ready && popup && *popup);
+  gtk_widget_set_tooltip_text (GTK_WIDGET (self),
+                               pending ? _("Updating Extension") :
+                               !available ? _("Extension Unavailable") :
+                               !enabled ? _("Extension Disabled") : NULL);
+  gtk_accessible_update_state (GTK_ACCESSIBLE (self),
+                               GTK_ACCESSIBLE_STATE_BUSY, pending,
+                               GTK_ACCESSIBLE_STATE_DISABLED, !ready,
+                               -1);
+}
+
+static void
+on_native_state_changed (EphyWebExtension      *web_extension,
+                         EphyBrowserActionRow *self)
+{
+  update_native_state (self);
+}
+
+static void
+on_settings_button_clicked (GtkButton            *button,
+                            EphyBrowserActionRow *self)
+{
+  g_signal_emit (self, signals[OPTIONS_ACTIVATED], 0);
+}
 
 static void
 ephy_browser_action_row_set_property (GObject      *object,
@@ -99,13 +151,14 @@ static void
 ephy_browser_action_row_constructed (GObject *object)
 {
   EphyBrowserActionRow *self = EPHY_BROWSER_ACTION_ROW (object);
+  EphyWebExtension *web_extension = ephy_browser_action_get_web_extension (self->browser_action);
   g_autoptr (GdkTexture) texture = NULL;
   GdkPixbuf *pixbuf;
 
   gtk_label_set_label (GTK_LABEL (self->title_label),
                        ephy_browser_action_get_title (self->browser_action));
 
-  pixbuf = ephy_browser_action_get_pixbuf (self->browser_action, 16);
+  pixbuf = ephy_browser_action_get_pixbuf (self->browser_action, 20);
   if (pixbuf)
     texture = ephy_texture_new_for_pixbuf (pixbuf);
   gtk_image_set_from_paintable (GTK_IMAGE (self->browser_action_image), GDK_PAINTABLE (texture));
@@ -113,6 +166,15 @@ ephy_browser_action_row_constructed (GObject *object)
   ephy_indicator_bin_set_badge (EPHY_INDICATOR_BIN (self->badge), ephy_browser_action_get_badge_text (EPHY_BROWSER_ACTION (self->browser_action)));
   g_signal_connect (EPHY_BROWSER_ACTION (self->browser_action), "notify::badge-text", G_CALLBACK (on_badge_text), self);
   g_signal_connect (EPHY_BROWSER_ACTION (self->browser_action), "notify::badge-color", G_CALLBACK (on_badge_color), self);
+
+  if (ephy_web_extension_is_native (web_extension)) {
+    update_native_state (self);
+    g_signal_connect_object (web_extension, "native-state-changed",
+                             G_CALLBACK (on_native_state_changed), self, 0);
+    gtk_accessible_update_property (GTK_ACCESSIBLE (self->settings_button),
+                                    GTK_ACCESSIBLE_PROPERTY_LABEL, _("Extension Settings"),
+                                    -1);
+  }
 
   G_OBJECT_CLASS (ephy_browser_action_row_parent_class)->constructed (object);
 }
@@ -146,10 +208,20 @@ ephy_browser_action_row_class_init (EphyBrowserActionRowClass *klass)
 
   g_object_class_install_properties (object_class, G_N_ELEMENTS (obj_properties), obj_properties);
 
+  signals[OPTIONS_ACTIVATED] =
+    g_signal_new ("options-activated",
+                  EPHY_TYPE_BROWSER_ACTION_ROW,
+                  G_SIGNAL_RUN_LAST,
+                  0, NULL, NULL, NULL,
+                  G_TYPE_NONE, 0);
+
   gtk_widget_class_set_template_from_resource (widget_class, "/org/gnome/epiphany/gtk/browser-action-row.ui");
   gtk_widget_class_bind_template_child (widget_class, EphyBrowserActionRow, browser_action_image);
   gtk_widget_class_bind_template_child (widget_class, EphyBrowserActionRow, title_label);
   gtk_widget_class_bind_template_child (widget_class, EphyBrowserActionRow, badge);
+  gtk_widget_class_bind_template_child (widget_class, EphyBrowserActionRow, status_spinner);
+  gtk_widget_class_bind_template_child (widget_class, EphyBrowserActionRow, settings_button);
+  gtk_widget_class_bind_template_callback (widget_class, on_settings_button_clicked);
 }
 
 static void

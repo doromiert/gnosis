@@ -23,6 +23,8 @@
 
 #include "prefs-extensions-page.h"
 
+#include "ephy-embed-shell.h"
+#include "ephy-engine-extensions.h"
 #include "ephy-pixbuf-utils.h"
 #include "ephy-web-extension-manager.h"
 #include "ephy-web-extension.h"
@@ -39,6 +41,8 @@ struct _PrefsExtensionsPage {
 
   GtkWidget *stack;
   GtkWidget *listbox;
+  GtkWidget *install_group;
+  GtkWidget *native_install_row;
   GCancellable *cancellable;
 };
 
@@ -55,122 +59,223 @@ on_extension_row_activated (GtkWidget           *row,
   g_signal_emit (page, signals[EXTENSION_ROW_ACTIVATED], 0, web_extension);
 }
 
-typedef struct {
-  PrefsExtensionsPage *page;
-  GFile *file;
-} AskForExtensionInstallationData;
-
-static AskForExtensionInstallationData *
-ask_for_extension_installation_data_new (GFile               *file,
-                                         PrefsExtensionsPage *page)
+static void
+show_native_install_result (PrefsExtensionsPage *self,
+                            const char           *title,
+                            const char           *body)
 {
-  AskForExtensionInstallationData *data = g_new0 (AskForExtensionInstallationData, 1);
+  AdwDialog *dialog;
 
-  data->page = g_object_ref (page);
-  data->file = file;
+  dialog = adw_alert_dialog_new (title, body);
+  adw_alert_dialog_set_body_use_markup (ADW_ALERT_DIALOG (dialog), FALSE);
+  adw_alert_dialog_add_response (ADW_ALERT_DIALOG (dialog), "close", _("_Close"));
+  adw_alert_dialog_set_default_response (ADW_ALERT_DIALOG (dialog), "close");
+  adw_alert_dialog_set_close_response (ADW_ALERT_DIALOG (dialog), "close");
+  adw_dialog_present (dialog, GTK_WIDGET (self));
+}
+
+static gboolean
+native_install_error_is_cancelled (const GError *error)
+{
+  return g_error_matches (error, G_IO_ERROR, G_IO_ERROR_CANCELLED) ||
+         g_error_matches (error, GTK_DIALOG_ERROR, GTK_DIALOG_ERROR_CANCELLED) ||
+         g_error_matches (error, GTK_DIALOG_ERROR, GTK_DIALOG_ERROR_DISMISSED);
+}
+
+typedef struct {
+  GWeakRef page;
+  EphyWebExtensionManager *manager;
+} NativeInstallData;
+
+static NativeInstallData *
+native_install_data_new (PrefsExtensionsPage *page)
+{
+  NativeInstallData *data = g_new0 (NativeInstallData, 1);
+
+  g_weak_ref_init (&data->page, page);
+  data->manager = g_object_ref (page->web_extension_manager);
   return data;
 }
 
 static void
-ask_for_installation_data_free (AskForExtensionInstallationData *data)
+native_install_data_free (NativeInstallData *data)
 {
-  g_clear_object (&data->file);
-  g_clear_object (&data->page);
-  g_clear_pointer (&data, g_free);
+  g_weak_ref_clear (&data->page);
+  g_clear_object (&data->manager);
+  g_free (data);
 }
 
 static void
-on_install_extension (AdwAlertDialog *self,
-                      char           *response,
-                      gpointer        user_data)
+native_install_finished_cb (EphyEngineSession *session,
+                            GAsyncResult      *result,
+                            gpointer           user_data)
 {
-  AskForExtensionInstallationData *data = user_data;
-
-  if (g_strcmp0 (response, "install") == 0)
-    ephy_web_extension_manager_install (data->page->web_extension_manager, data->file);
-
-  g_clear_pointer (&data, ask_for_installation_data_free);
-}
-
-static void
-ask_for_extension_installation (gpointer user_data)
-{
-  AskForExtensionInstallationData *data = user_data;
-  AdwDialog *dialog;
-
-  dialog = adw_alert_dialog_new (_("Install WebExtension?"), NULL);
-
-  adw_alert_dialog_format_body (ADW_ALERT_DIALOG (dialog), _("Do you want to install `%s`?"), g_file_get_basename (data->file));
-  adw_alert_dialog_add_responses (ADW_ALERT_DIALOG (dialog),
-                                  "cancel", _("Cancel"),
-                                  "install", _("Install"),
-                                  NULL);
-  adw_alert_dialog_set_response_appearance (ADW_ALERT_DIALOG (dialog), "install", ADW_RESPONSE_SUGGESTED);
-  adw_alert_dialog_set_default_response (ADW_ALERT_DIALOG (dialog), "install");
-  adw_alert_dialog_set_close_response (ADW_ALERT_DIALOG (dialog), "cancel");
-
-  g_signal_connect (dialog, "response", G_CALLBACK (on_install_extension), data);
-
-  adw_dialog_present (dialog, GTK_WIDGET (data->page));
-}
-
-static void
-on_add_file_selected (GtkFileDialog       *dialog,
-                      GAsyncResult        *result,
-                      PrefsExtensionsPage *self)
-{
+  g_autoptr (JsonObject) metadata = NULL;
   g_autoptr (GError) error = NULL;
-  g_autoptr (GFile) file = gtk_file_dialog_open_finish (dialog, result, &error);
-  AskForExtensionInstallationData *data = NULL;
+  g_autoptr (PrefsExtensionsPage) self = NULL;
+  NativeInstallData *data = user_data;
 
-  if (!file) {
-    if (!g_error_matches (error, G_IO_ERROR, G_IO_ERROR_CANCELLED))
-      g_warning ("Could not open WebExtension file: %s", error->message);
+  metadata = ephy_engine_extensions_install_unpacked_finish (session, result, &error);
+  self = g_weak_ref_get (&data->page);
+
+  if (self)
+    gtk_widget_set_sensitive (self->native_install_row, TRUE);
+
+  if (metadata)
+    ephy_web_extension_manager_refresh_native_installed (data->manager);
+
+  if (self && error && !native_install_error_is_cancelled (error)) {
+    show_native_install_result (self, _("Could Not Install Extension"), error->message);
+  } else if (self && metadata) {
+    const char *name = json_object_get_string_member_with_default (metadata, "name", _("Extension"));
+    g_autofree char *body = g_strdup_printf (_("%s will be installed after you restart Jupiter."), name);
+
+    show_native_install_result (self, _("Restart Required"), body);
+  }
+
+  native_install_data_free (data);
+}
+
+static void
+native_install_folder_selected_cb (GtkFileDialog *dialog,
+                                   GAsyncResult  *result,
+                                   gpointer       user_data)
+{
+  g_autoptr (GFile) directory = NULL;
+  g_autoptr (GError) error = NULL;
+  g_autoptr (PrefsExtensionsPage) self = NULL;
+  NativeInstallData *data = user_data;
+
+  directory = gtk_file_dialog_select_folder_finish (dialog, result, &error);
+  self = g_weak_ref_get (&data->page);
+
+  if (!directory) {
+    if (self)
+      gtk_widget_set_sensitive (self->native_install_row, TRUE);
+    if (self && error && !native_install_error_is_cancelled (error))
+      show_native_install_result (self, _("Could Not Select Extension Folder"), error->message);
+    native_install_data_free (data);
     return;
   }
 
-  data = ask_for_extension_installation_data_new (g_steal_pointer (&file), self);
-  g_idle_add_once (ask_for_extension_installation, g_steal_pointer (&data));
+  if (!self) {
+    native_install_data_free (data);
+    return;
+  }
+
+  ephy_engine_extensions_install_unpacked_async (ephy_embed_shell_get_network_session (ephy_embed_shell_get_default ()),
+                                                 directory,
+                                                 self->cancellable,
+                                                 (GAsyncReadyCallback)native_install_finished_cb,
+                                                 data);
 }
 
 static void
-on_add_button_clicked (GtkButton *button,
-                       gpointer   user_data)
+on_install_unpacked_clicked (GtkButton *button,
+                             gpointer   user_data)
 {
   PrefsExtensionsPage *self = EPHY_PREFS_EXTENSIONS_PAGE (user_data);
-  GtkFileDialog *dialog;
-  g_autoptr (GtkFileFilter) filter = NULL;
-  g_autoptr (GListStore) filters = NULL;
+  g_autoptr (GtkFileDialog) dialog = NULL;
+  NativeInstallData *data;
 
   dialog = gtk_file_dialog_new ();
-  /* Translators: this is the title of a file chooser dialog. */
-  gtk_file_dialog_set_title (dialog, _("Open File (manifest.json/xpi)"));
+  gtk_file_dialog_set_title (dialog, _("Select an Unpacked Extension"));
 
-  filter = gtk_file_filter_new ();
-  gtk_file_filter_set_name (filter, "WebExtensions");
-  gtk_file_filter_add_mime_type (filter, "application/json");
-  gtk_file_filter_add_mime_type (filter, "application/x-xpinstall");
+  gtk_widget_set_sensitive (self->native_install_row, FALSE);
+  data = native_install_data_new (self);
+  gtk_file_dialog_select_folder (dialog,
+                                 GTK_WINDOW (gtk_widget_get_root (GTK_WIDGET (self))),
+                                 self->cancellable,
+                                 (GAsyncReadyCallback)native_install_folder_selected_cb,
+                                 data);
+}
 
-  filters = g_list_store_new (GTK_TYPE_FILE_FILTER);
-  g_list_store_append (filters, filter);
-  gtk_file_dialog_set_filters (dialog, G_LIST_MODEL (filters));
+static gboolean toggle_state_set_cb (GtkSwitch *widget,
+                                     gboolean   state,
+                                     gpointer   user_data);
 
-  gtk_file_dialog_open (dialog,
-                        GTK_WINDOW (gtk_widget_get_root (GTK_WIDGET (self))),
-                        self->cancellable,
-                        (GAsyncReadyCallback)on_add_file_selected,
-                        self);
+static void
+update_native_toggle (EphyWebExtension *web_extension,
+                      GtkSwitch       *toggle)
+{
+  g_signal_handlers_block_by_func (toggle, toggle_state_set_cb, web_extension);
+  gtk_switch_set_active (toggle, ephy_web_extension_native_is_enabled (web_extension));
+  g_signal_handlers_unblock_by_func (toggle, toggle_state_set_cb, web_extension);
+
+  gtk_widget_set_sensitive (GTK_WIDGET (toggle),
+                            ephy_web_extension_native_is_available (web_extension) &&
+                            !ephy_web_extension_native_is_pending (web_extension));
+  gtk_widget_set_tooltip_text (GTK_WIDGET (toggle),
+                               ephy_web_extension_native_is_available (web_extension)
+                                 ? NULL
+                                 : ephy_web_extension_native_is_restart_required (web_extension)
+                                   ? _("Restart Required")
+                                   : _("Unavailable"));
 }
 
 static void
+show_native_toggle_error (GtkWidget    *parent,
+                          const GError *error)
+{
+  AdwDialog *dialog;
+
+  dialog = adw_alert_dialog_new (_("Could Not Update Extension"), error->message);
+  adw_alert_dialog_set_body_use_markup (ADW_ALERT_DIALOG (dialog), FALSE);
+  adw_alert_dialog_add_response (ADW_ALERT_DIALOG (dialog), "close", _("_Close"));
+  adw_alert_dialog_set_default_response (ADW_ALERT_DIALOG (dialog), "close");
+  adw_alert_dialog_set_close_response (ADW_ALERT_DIALOG (dialog), "close");
+  adw_dialog_present (dialog, parent);
+}
+
+static void
+native_toggle_finished_cb (EphyWebExtensionManager *manager,
+                           GAsyncResult            *result,
+                           gpointer                 user_data)
+{
+  g_autoptr (GError) error = NULL;
+  g_autoptr (PrefsExtensionsPage) page = NULL;
+  GWeakRef *weak_page = user_data;
+
+  ephy_web_extension_manager_set_native_enabled_finish (manager, result, &error);
+  page = g_weak_ref_get (weak_page);
+
+  if (page && error && !g_error_matches (error, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
+    GtkRoot *root = gtk_widget_get_root (GTK_WIDGET (page));
+
+    if (root)
+      show_native_toggle_error (GTK_WIDGET (root), error);
+  }
+
+  g_weak_ref_clear (weak_page);
+  g_free (weak_page);
+}
+
+static gboolean
 toggle_state_set_cb (GtkSwitch *widget,
                      gboolean   state,
                      gpointer   user_data)
 {
   EphyWebExtensionManager *manager = ephy_web_extension_manager_get_default ();
   EphyWebExtension *web_extension = EPHY_WEB_EXTENSION (user_data);
+  PrefsExtensionsPage *page = EPHY_PREFS_EXTENSIONS_PAGE (gtk_widget_get_ancestor (GTK_WIDGET (widget), EPHY_TYPE_PREFS_EXTENSIONS_PAGE));
+  GWeakRef *weak_page;
 
-  ephy_web_extension_manager_set_active (manager, web_extension, state);
+  if (!page || !ephy_web_extension_native_is_available (web_extension) ||
+      ephy_web_extension_native_is_pending (web_extension)) {
+    update_native_toggle (web_extension, widget);
+    return TRUE;
+  }
+
+  weak_page = g_new0 (GWeakRef, 1);
+  g_weak_ref_init (weak_page, page);
+  ephy_web_extension_manager_set_native_enabled_async (manager,
+                                                       web_extension,
+                                                       state,
+                                                       page->cancellable,
+                                                       (GAsyncReadyCallback)native_toggle_finished_cb,
+                                                       weak_page);
+  update_native_toggle (web_extension, widget);
+  return TRUE;
 }
 
 static GtkWidget *
@@ -206,13 +311,23 @@ create_row (PrefsExtensionsPage *self,
   /* Titles */
   adw_preferences_row_set_use_markup (ADW_PREFERENCES_ROW (row), FALSE);
   adw_preferences_row_set_title (ADW_PREFERENCES_ROW (row), ephy_web_extension_get_name (web_extension));
-  adw_action_row_set_subtitle (ADW_ACTION_ROW (row), ephy_web_extension_get_description (web_extension));
+  adw_action_row_set_subtitle (ADW_ACTION_ROW (row),
+                               ephy_web_extension_is_native (web_extension) &&
+                               ephy_web_extension_native_is_restart_required (web_extension)
+                                 ? _("Restart Required")
+                                 : ephy_web_extension_get_description (web_extension));
   adw_action_row_set_subtitle_lines (ADW_ACTION_ROW (row), 1);
 
   /* Toggle */
   toggle = gtk_switch_new ();
-  gtk_switch_set_active (GTK_SWITCH (toggle), ephy_web_extension_manager_is_active (manager, web_extension));
-  g_signal_connect (toggle, "state-set", G_CALLBACK (toggle_state_set_cb), web_extension);
+  if (ephy_web_extension_is_native (web_extension)) {
+    update_native_toggle (web_extension, GTK_SWITCH (toggle));
+    g_signal_connect_object (web_extension, "native-state-changed", G_CALLBACK (update_native_toggle), toggle, 0);
+    g_signal_connect (toggle, "state-set", G_CALLBACK (toggle_state_set_cb), web_extension);
+  } else {
+    gtk_switch_set_active (GTK_SWITCH (toggle), ephy_web_extension_manager_is_active (manager, web_extension));
+    g_signal_connect (toggle, "state-set", G_CALLBACK (toggle_state_set_cb), web_extension);
+  }
   gtk_widget_set_valign (toggle, GTK_ALIGN_CENTER);
   adw_action_row_add_suffix (ADW_ACTION_ROW (row), toggle);
 
@@ -235,6 +350,7 @@ refresh_listbox (PrefsExtensionsPage *self)
   for (guint i = 0; i < extensions->len; i++) {
     EphyWebExtension *web_extension = g_ptr_array_index (extensions, i);
     GtkWidget *row;
+
 
     row = create_row (self, web_extension);
     gtk_list_box_insert (GTK_LIST_BOX (self->listbox), row, -1);
@@ -289,8 +405,10 @@ prefs_extensions_page_class_init (PrefsExtensionsPageClass *klass)
 
   gtk_widget_class_bind_template_child (widget_class, PrefsExtensionsPage, stack);
   gtk_widget_class_bind_template_child (widget_class, PrefsExtensionsPage, listbox);
+  gtk_widget_class_bind_template_child (widget_class, PrefsExtensionsPage, install_group);
+  gtk_widget_class_bind_template_child (widget_class, PrefsExtensionsPage, native_install_row);
 
-  gtk_widget_class_bind_template_callback (widget_class, on_add_button_clicked);
+  gtk_widget_class_bind_template_callback (widget_class, on_install_unpacked_clicked);
 }
 
 static void

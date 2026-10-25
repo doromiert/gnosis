@@ -1,0 +1,145 @@
+--- a/include/cef_render_process_handler.h
++++ b/include/cef_render_process_handler.h
+@@ -87,6 +87,32 @@
+   /*--cef()--*/
+   virtual CefRefPtr<CefLoadHandler> GetLoadHandler() { return nullptr; }
+ 
++#if CEF_API_ADDED(CEF_EXPERIMENTAL)
++  ///
++  /// Called at Chromium's document-start script injection point for each frame,
++  /// after the current window/document bindings have been updated and Chrome has
++  /// processed its own document-start injections. This callback is synchronous on
++  /// the render process main thread. Retrieve the frame's V8 context to execute
++  /// JavaScript before authored page scripts. This callback is skipped if
++  /// Chrome's injections detach the frame or replace its document.
++  ///
++  /*--cef(added=experimental)--*/
++  virtual void OnDocumentStart(CefRefPtr<CefBrowser> browser,
++                              CefRefPtr<CefFrame> frame) {}
++
++  ///
++  /// Called at Chromium's document-end script injection point for each frame,
++  /// after Chrome has processed its own document-end injections. This callback
++  /// is synchronous on the render process main thread and is not tied to the
++  /// completion of resource loading. Retrieve the frame's V8 context to execute
++  /// JavaScript. This callback is skipped if Chrome's injections detach the
++  /// frame or replace its document.
++  ///
++  /*--cef(added=experimental)--*/
++  virtual void OnDocumentEnd(CefRefPtr<CefBrowser> browser,
++                            CefRefPtr<CefFrame> frame) {}
++#endif
++
+   ///
+   /// Called immediately after the V8 context for a frame has been created. To
+   /// retrieve the JavaScript 'window' object use the CefV8Context::GetGlobal()
+--- a/libcef/renderer/chrome/chrome_content_renderer_client_cef.h
++++ b/libcef/renderer/chrome/chrome_content_renderer_client_cef.h
+@@ -43,6 +43,8 @@
+   void RenderThreadStarted() override;
+   void RenderThreadConnected() override;
+   void RenderFrameCreated(content::RenderFrame* render_frame) override;
++  void RunScriptsAtDocumentStart(content::RenderFrame* render_frame) override;
++  void RunScriptsAtDocumentEnd(content::RenderFrame* render_frame) override;
+   void WebViewCreated(blink::WebView* web_view,
+                       bool was_created_by_renderer,
+                       const url::Origin* outermost_origin) override;
+@@ -51,6 +53,8 @@
+   void ExposeInterfacesToBrowser(mojo::BinderMap* binders) override;
+ 
+  private:
++  void RunScriptsAtDocument(content::RenderFrame* render_frame, bool at_start);
++
+   void OnBrowserCreated(blink::WebView* web_view,
+                         const cef::BrowserConfig& config);
+ 
+--- a/libcef/renderer/chrome/chrome_content_renderer_client_cef.cc
++++ b/libcef/renderer/chrome/chrome_content_renderer_client_cef.cc
+@@ -5,13 +5,20 @@
+ 
+ #include "cef/libcef/renderer/chrome/chrome_content_renderer_client_cef.h"
+ 
++#include <optional>
++
++#include "cef/libcef/common/api_version_util.h"
++#include "cef/libcef/common/app_manager.h"
+ #include "cef/libcef/renderer/blink_glue.h"
++#include "cef/libcef/renderer/browser_impl.h"
+ #include "cef/libcef/renderer/render_frame_observer.h"
+ #include "cef/libcef/renderer/render_manager.h"
+ #include "cef/libcef/renderer/thread_util.h"
+ #include "chrome/renderer/printing/chrome_print_render_frame_helper_delegate.h"
+ #include "content/public/renderer/render_frame.h"
+ #include "content/public/renderer/render_thread.h"
++#include "third_party/blink/public/web/web_document.h"
++#include "third_party/blink/public/web/web_local_frame.h"
+ #include "third_party/blink/public/web/web_view.h"
+ 
+ ChromeContentRendererClientCef::ChromeContentRendererClientCef()
+@@ -63,6 +70,66 @@
+   }
+ 
+   ChromeContentRendererClient::RenderFrameCreated(render_frame);
++}
++
++void ChromeContentRendererClientCef::RunScriptsAtDocumentStart(
++    content::RenderFrame* render_frame) {
++  RunScriptsAtDocument(render_frame, true);
++}
++
++void ChromeContentRendererClientCef::RunScriptsAtDocumentEnd(
++    content::RenderFrame* render_frame) {
++  RunScriptsAtDocument(render_frame, false);
++}
++
++void ChromeContentRendererClientCef::RunScriptsAtDocument(
++    content::RenderFrame* render_frame,
++    bool at_start) {
++  const auto run_chrome = [this, render_frame, at_start] {
++    if (at_start) {
++      ChromeContentRendererClient::RunScriptsAtDocumentStart(render_frame);
++    } else {
++      ChromeContentRendererClient::RunScriptsAtDocumentEnd(render_frame);
++    }
++  };
++  if (!CEF_API_IS_ADDED(CEF_EXPERIMENTAL)) {
++    run_chrome();
++    return;
++  }
++
++  auto* web_frame = render_frame->GetWebFrame();
++  auto browser = CefBrowserImpl::GetBrowserForMainFrame(web_frame->Top());
++  CefRefPtr<CefFrameImpl> frame;
++  std::optional<blink::DocumentToken> document_token;
++  if (browser) {
++    frame = browser->GetWebFrameImpl(web_frame);
++    auto document = web_frame->GetDocument();
++    if (!document.IsNull()) {
++      document_token = document.Token();
++    }
++  }
++
++  // Chrome's injections may destroy render_frame. Use only retained CEF objects
++  // after this call, and do not deliver the old document's event to a new one.
++  run_chrome();
++  if (!browser || !browser->IsValid() || !frame || !frame->IsValid() ||
++      !document_token) {
++    return;
++  }
++  auto document = frame->web_frame()->GetDocument();
++  if (document.IsNull() || document.Token() != *document_token) {
++    return;
++  }
++
++  auto app = CefAppManager::Get()->GetApplication();
++  auto handler = app ? app->GetRenderProcessHandler() : nullptr;
++  if (handler) {
++    if (at_start) {
++      handler->OnDocumentStart(browser, frame);
++    } else {
++      handler->OnDocumentEnd(browser, frame);
++    }
++  }
+ }
+ 
+ void ChromeContentRendererClientCef::WebViewCreated(

@@ -3,14 +3,18 @@
 #include "ephy-engine-scheme.h"
 #include "ephy-engine-settings.h"
 #include "ephy-engine-origin.h"
+#include "ephy-engine-certificate.hpp"
 #include "include/cef_cookie.h"
+#include "include/cef_browser.h"
 #include "include/cef_request_context_handler.h"
 #include "include/cef_parser.h"
+#include "include/cef_task.h"
 #include <algorithm>
 #include <atomic>
 #include <cstring>
 #include <memory>
 #include <map>
+#include <mutex>
 #include <optional>
 #include <set>
 #include <string>
@@ -18,6 +22,7 @@
 
 namespace {
 constexpr const char *permission_migration_pref = "jupiter.permission_policy_version";
+constexpr const char *upload_folder_pref = "jupiter.last_upload_folder";
 using PermissionKey = std::pair<EphyEnginePermissionKind, std::pair<std::string, std::string>>;
 std::optional<cef_content_setting_types_t> permission_type(EphyEnginePermissionKind kind) {
   switch (kind) {
@@ -44,11 +49,28 @@ std::optional<PermissionKey> permission_key(EphyEnginePermissionKind kind, const
 }
 struct Session {
   bool ephemeral = false, ready = false, storage = true, storage_overridden = false;
+  std::atomic<bool> alive{true};
   std::atomic<bool> storage_allowed{true};
   CefRefPtr<CefRequestContext> context;
   std::set<std::pair<std::string, std::string>> certificates;
+  std::mutex tls_hosts_mutex;
+  std::set<std::string> tls_hosts;
   std::map<PermissionKey, EphyEnginePermissionState> pending_permissions, legacy_permissions;
   bool import_permissions = false;
+  std::optional<std::string> upload_folder;
+  bool upload_folder_dirty = false;
+  bool apply_upload_folder() {
+    if (ephemeral || !upload_folder_dirty || !ready || !context) return true;
+    auto value = CefValue::Create(); value->SetString(upload_folder.value_or(""));
+    CefString error;
+    if (!context->SetPreference(upload_folder_pref, value, error)) {
+      g_warning("Could not remember Chromium upload folder: %s", error.ToString().c_str());
+      return false;
+    }
+    upload_folder_dirty = false;
+    return true;
+  }
+
   void apply_permission(const PermissionKey& key, EphyEnginePermissionState state) {
     context->SetContentSetting(key.second.first, key.second.second, *permission_type(key.first), permission_value(state));
   }
@@ -78,6 +100,7 @@ struct Session {
     storage_allowed.store(allowed);
     if (!ready || !context) return;
     apply_permissions();
+    apply_upload_folder();
     ephy_engine_settings_apply_context(context);
     auto value = CefValue::Create();
     value->SetInt(allowed ? CEF_CONTENT_SETTING_VALUE_ALLOW : CEF_CONTENT_SETTING_VALUE_BLOCK);
@@ -99,6 +122,55 @@ private:
   std::shared_ptr<Session> session_;
   IMPLEMENT_REFCOUNTING(CookieFilter);
 };
+class TlsPreparation final : public CefTask {
+public:
+  TlsPreparation(std::shared_ptr<Session> session, std::string uri, std::string host,
+                 CefRefPtr<CefBrowser> browser, CefRefPtr<CefCallback> reply)
+    : session_(std::move(session)), uri_(std::move(uri)), host_(std::move(host)), browser_(browser), reply_(reply) {}
+  void Execute() override {
+    if (!session_->alive || !session_->ready || !session_->context || (browser_ && !browser_->IsValid())) {
+      reply_->Cancel(); return;
+    }
+    bool prepared;
+    { std::lock_guard lock(session_->tls_hosts_mutex); prepared = session_->tls_hosts.contains(host_); }
+    if (!prepared) {
+      if (!ephy_engine_certificate_reset_cached_decisions(session_->context, uri_, true)) {
+        reply_->Cancel();
+        return;
+      }
+      // Publish only after the native setting exists; overlapping requests wait on UI.
+      std::lock_guard lock(session_->tls_hosts_mutex);
+      session_->tls_hosts.insert(host_);
+    }
+    reply_->Continue();
+  }
+private:
+  std::shared_ptr<Session> session_;
+  std::string uri_, host_;
+  CefRefPtr<CefBrowser> browser_;
+  CefRefPtr<CefCallback> reply_;
+  IMPLEMENT_REFCOUNTING(TlsPreparation);
+};
+class SessionRequestHandler final : public CefResourceRequestHandler {
+public:
+  explicit SessionRequestHandler(std::shared_ptr<Session> session) : session_(std::move(session)) {}
+  cef_return_value_t OnBeforeResourceLoad(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame>,
+      CefRefPtr<CefRequest> request, CefRefPtr<CefCallback> reply) override {
+    if (!session_->alive) return RV_CANCEL;
+    if (!session_->ephemeral) return RV_CONTINUE;
+    CefURLParts parts;
+    auto uri = request->GetURL();
+    if (!CefParseURL(uri, parts) || CefString(&parts.scheme) != "https") return RV_CONTINUE;
+    auto host = CefString(&parts.host).ToString();
+    if (host.empty()) return RV_CONTINUE;
+    { std::lock_guard lock(session_->tls_hosts_mutex); if (session_->tls_hosts.contains(host)) return RV_CONTINUE; }
+    if (!CefPostTask(TID_UI, new TlsPreparation(session_, uri.ToString(), host, browser, reply))) return RV_CANCEL;
+    return RV_CONTINUE_ASYNC;
+  }
+private:
+  std::shared_ptr<Session> session_;
+  IMPLEMENT_REFCOUNTING(SessionRequestHandler);
+};
 std::vector<EphyEngineSession*> sessions;
 bool initialized = false;
 class ContextHandler final : public CefRequestContextHandler {
@@ -107,10 +179,16 @@ public:
   void OnRequestContextInitialized(CefRefPtr<CefRequestContext> context) override {
     if (auto session = session_.lock()) {
       session->context = context;
+      session->alive = true;
       session->ready = true;
       session->apply();
       ephy_engine_install_scheme_handlers(context);
     }
+  }
+  CefRefPtr<CefResourceRequestHandler> GetResourceRequestHandler(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame>,
+      CefRefPtr<CefRequest>, bool, bool, const CefString&, bool&) override {
+    auto session = session_.lock();
+    return session && session->ephemeral ? new SessionRequestHandler(std::move(session)) : nullptr;
   }
 private:
   std::weak_ptr<Session> session_;
@@ -125,6 +203,7 @@ static void ephy_engine_session_class_init(EphyEngineSessionClass *klass) {
   G_OBJECT_CLASS(klass)->finalize = +[](GObject *object) {
     auto *session = EPHY_ENGINE_SESSION(object);
     std::erase(sessions, session);
+    (*session->data)->alive = false;
     delete session->data;
     G_OBJECT_CLASS(ephy_engine_session_parent_class)->finalize(object);
   };
@@ -146,11 +225,45 @@ gboolean ephy_engine_session_is_ephemeral(EphyEngineSession *session) {
   g_return_val_if_fail(EPHY_IS_ENGINE_SESSION(session), true);
   return (*session->data)->ephemeral;
 }
+GFile *ephy_engine_session_dup_last_upload_folder(EphyEngineSession *session) {
+  g_return_val_if_fail(EPHY_IS_ENGINE_SESSION(session), nullptr);
+  auto data = *session->data;
+  // Never consult a Chromium preference, even an in-memory one, for private
+  // sessions. Their last directory belongs only to this exact session object.
+  if (!data->ephemeral && !data->upload_folder_dirty) {
+    auto context = ephy_engine_session_context(session);
+    if (!context || !data->ready) return nullptr;
+    auto value = context->GetPreference(upload_folder_pref);
+    if (!value || value->GetType() != VTYPE_STRING) return nullptr;
+    data->upload_folder = value->GetString().ToString();
+  }
+  const auto &path = data->upload_folder;
+  if (!path || path->empty() || path->find('\0') != std::string::npos ||
+      !g_utf8_validate(path->c_str(), -1, nullptr) ||
+      !g_path_is_absolute(path->c_str()) || !g_file_test(path->c_str(), G_FILE_TEST_IS_DIR)) return nullptr;
+  return g_file_new_for_path(path->c_str());
+}
+gboolean ephy_engine_session_set_last_upload_folder(EphyEngineSession *session, GFile *folder) {
+  g_return_val_if_fail(EPHY_IS_ENGINE_SESSION(session), false);
+  g_return_val_if_fail(G_IS_FILE(folder), false);
+  g_autofree char *path = g_file_get_path(folder);
+  if (!path || !g_utf8_validate(path, -1, nullptr) || !g_path_is_absolute(path)) return false;
+  auto data = *session->data;
+  data->upload_folder = path;
+  if (data->ephemeral) return true;
+  data->upload_folder_dirty = true;
+  ephy_engine_session_context(session);
+  return data->apply_upload_folder();
+}
 CefRefPtr<CefCookieAccessFilter> ephy_engine_session_cookie_filter(EphyEngineSession *session) {
   auto data = *session->data;
   data->apply();
   // CEF preloads cookies outside the network service when a request handler is installed.
   return new CookieFilter(std::move(data));
+}
+CefRefPtr<CefResourceRequestHandler> ephy_engine_session_request_handler(EphyEngineSession *session) {
+  auto data = *session->data;
+  return data->ephemeral ? new SessionRequestHandler(std::move(data)) : nullptr;
 }
 CefRefPtr<CefRequestContext> ephy_engine_session_context(EphyEngineSession *session) {
   g_return_val_if_fail(EPHY_IS_ENGINE_SESSION(session), nullptr);
@@ -162,6 +275,7 @@ CefRefPtr<CefRequestContext> ephy_engine_session_context(EphyEngineSession *sess
       data->context = CefRequestContext::CreateContext(settings, new ContextHandler(data));
     } else {
       data->context = CefRequestContext::GetGlobalContext();
+      data->alive = true;
       data->ready = true;
       data->apply();
     }
@@ -176,6 +290,8 @@ void ephy_engine_sessions_register_preferences(cef_preferences_type_t type, CefR
   if (type != CEF_PREFERENCES_TYPE_REQUEST_CONTEXT) return;
   auto value = CefValue::Create(); value->SetInt(0);
   registrar->AddPreference(permission_migration_pref, value);
+  auto folder = CefValue::Create(); folder->SetString("");
+  registrar->AddPreference(upload_folder_pref, folder);
 }
 void ephy_engine_sessions_preferences_changed() {
   if (initialized) for (auto *session : sessions) (*session->data)->apply();
@@ -183,12 +299,16 @@ void ephy_engine_sessions_preferences_changed() {
 void ephy_engine_sessions_shutdown() {
   initialized = false;
   for (auto *session : sessions) {
+    (*session->data)->alive = false;
     (*session->data)->ready = false;
     (*session->data)->context = nullptr;
     (*session->data)->certificates.clear();
+    { std::lock_guard lock((*session->data)->tls_hosts_mutex); (*session->data)->tls_hosts.clear(); }
     (*session->data)->pending_permissions.clear();
     (*session->data)->legacy_permissions.clear();
     (*session->data)->import_permissions = false;
+    (*session->data)->upload_folder.reset();
+    (*session->data)->upload_folder_dirty = false;
   }
 }
 void ephy_engine_session_set_storage_enabled(EphyEngineSession *session, gboolean enabled) {

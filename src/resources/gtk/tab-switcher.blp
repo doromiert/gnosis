@@ -1,0 +1,47 @@
+using Gtk 4.0;
+using Adw 1;
+
+template $EphyTabSwitcher: Adw.Bin {
+  visible: false;
+  hexpand: true;
+  halign: fill;
+  valign: center;
+  margin-start: 24;
+  margin-end: 24;
+  margin-top: 24;
+  margin-bottom: 24;
+
+  child: Adw.Clamp {
+    maximum-size: 560;
+    tightening-threshold: 560;
+
+    child: Box surface {
+      orientation: vertical;
+
+      styles [
+        "card",
+      ]
+
+      ScrolledWindow {
+        hscrollbar-policy: never;
+        vscrollbar-policy: automatic;
+        max-content-height: 360;
+        propagate-natural-height: true;
+        margin-start: 12;
+        margin-end: 12;
+        margin-top: 12;
+        margin-bottom: 12;
+
+        child: FlowBox grid {
+          homogeneous: true;
+          min-children-per-line: 1;
+          max-children-per-line: 3;
+          row-spacing: 8;
+          column-spacing: 8;
+          selection-mode: single;
+          activate-on-single-click: true;
+        };
+      }
+    };
+  };
+}

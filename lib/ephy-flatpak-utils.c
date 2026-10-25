@@ -95,6 +95,32 @@ ephy_open_uri_via_flatpak_portal (const char       *uri,
   ephy_open_uri (uri, FALSE, (flags & EPHY_OPEN_URI_FLAGS_REQUIRE_USER_INTERACTION));
 }
 
+void
+ephy_open_uri_via_portal (GtkWindow           *parent,
+                         const char          *uri,
+                         GCancellable        *cancellable,
+                         GAsyncReadyCallback  callback,
+                         gpointer             user_data)
+{
+  XdpParent *portal_parent;
+
+  g_return_if_fail (GTK_IS_WINDOW (parent));
+  g_return_if_fail (uri != NULL);
+  g_return_if_fail (!cancellable || G_IS_CANCELLABLE (cancellable));
+
+  portal_parent = xdp_parent_new_gtk (parent);
+  xdp_portal_open_uri (ephy_get_portal (), portal_parent, uri,
+                       XDP_OPEN_URI_FLAG_NONE, cancellable, callback, user_data);
+  xdp_parent_free (portal_parent);
+}
+
+gboolean
+ephy_open_uri_via_portal_finish (GAsyncResult  *result,
+                                GError       **error)
+{
+  return xdp_portal_open_uri_finish (ephy_get_portal (), result, error);
+}
+
 gboolean
 ephy_can_install_web_apps (void)
 {

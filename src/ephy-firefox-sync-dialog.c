@@ -797,42 +797,27 @@ sync_open_webmail_clicked_cb (WebKitUserContentManager *manager,
  * user doesn't get stuck in the Fastly error page.
  */
 static void
-fastly_challenge_resource_finished_cb (EphyEngineResource *resource,
-                                       gpointer           user_data)
+fastly_resource_response_cb (EphyEngineView     *web_view,
+                             const char         *uri,
+                             EphyEngineResponse *response,
+                             gpointer            user_data)
 {
   EphyFirefoxSyncDialog *sync_dialog = EPHY_FIREFOX_SYNC_DIALOG (user_data);
-  EphyEngineResponse *response = ephy_engine_web_resource_get_response (resource);
-  const char *uri = ephy_engine_web_resource_get_uri (resource);
+  g_autoptr (GUri) parsed = g_uri_parse (uri, G_URI_FLAGS_PARSE_RELAXED, NULL);
 
-  if (!response || !strstr (uri, "fst-post-back"))
+  if (!parsed || g_strcmp0 (g_uri_get_scheme (parsed), "https") ||
+      g_strcmp0 (g_uri_get_host (parsed), "accounts.firefox.com") ||
+      !g_uri_get_path (parsed) ||
+      !strstr (g_uri_get_path (parsed), "fst-post-back"))
     return;
 
-  if (ephy_engine_response_get_status_code (response) != 200) {
-    if (!sync_dialog->fastly_challenge_retried) {
-      LOG ("Fastly challenge failed (status %u), reloading once",
-           ephy_engine_response_get_status_code (response));
-      sync_dialog->fastly_challenge_retried = TRUE;
-      ephy_engine_web_view_reload (sync_dialog->fxa_web_view);
-    } else {
-      LOG ("Fastly challenge failed again, not retrying");
-    }
-  } else {
-    LOG ("Fastly challenge passed (status 200)");
+  if (ephy_engine_response_get_status_code (response) != 200 &&
+      !sync_dialog->fastly_challenge_retried) {
+    LOG ("Fastly challenge failed (status %u), reloading once",
+         ephy_engine_response_get_status_code (response));
+    sync_dialog->fastly_challenge_retried = TRUE;
+    ephy_engine_web_view_reload (web_view);
   }
-}
-
-static void
-fastly_resource_load_started_cb (EphyEngineView     *web_view,
-                                 EphyEngineResource *resource,
-                                 WebKitURIRequest  *request,
-                                 gpointer           user_data)
-{
-  const char *uri = webkit_uri_request_get_uri (request);
-
-  if (strstr (uri, "accounts.firefox.com"))
-    g_signal_connect (resource, "finished",
-                      G_CALLBACK (fastly_challenge_resource_finished_cb),
-                      user_data);
 }
 
 static void
@@ -886,10 +871,7 @@ static void
  */
 sync_setup_firefox_iframe (EphyFirefoxSyncDialog *sync_dialog)
 {
-  EphyEmbedShell *shell;
   g_autoptr (EphyEngineSession) network_session = NULL;
-  WebKitWebContext *embed_context;
-  WebKitWebContext *sync_context;
   const char *client_id;
   const char *script;
   g_autofree char *fxa_url = NULL;
@@ -937,16 +919,12 @@ sync_setup_firefox_iframe (EphyFirefoxSyncDialog *sync_dialog)
                                                                  "openWebmailClickHandler",
                                                                  NULL);
 
-    shell = ephy_embed_shell_get_default ();
-    embed_context = ephy_embed_shell_get_web_context (shell);
     network_session = ephy_engine_session_new (TRUE);
-    sync_context = webkit_web_context_new ();
 
 
     sync_dialog->fxa_web_view = EPHY_ENGINE_VIEW (g_object_new (EPHY_TYPE_ENGINE_VIEW,
                                                                "user-content-manager", sync_dialog->fxa_manager,
                                                                "settings", ephy_embed_prefs_get_settings (),
-                                                               "web-context", sync_context,
                                                                "network-session", network_session,
                                                                NULL));
     gtk_widget_set_overflow (GTK_WIDGET (sync_dialog->fxa_web_view), GTK_OVERFLOW_HIDDEN);
@@ -956,8 +934,8 @@ sync_setup_firefox_iframe (EphyFirefoxSyncDialog *sync_dialog)
     gtk_box_append (GTK_BOX (sync_dialog->sync_firefox_iframe_box),
                     GTK_WIDGET (sync_dialog->fxa_web_view));
 
-    g_signal_connect (sync_dialog->fxa_web_view, "resource-load-started",
-                      G_CALLBACK (fastly_resource_load_started_cb),
+    g_signal_connect (sync_dialog->fxa_web_view, "resource-response",
+                      G_CALLBACK (fastly_resource_response_cb),
                       sync_dialog);
     g_signal_connect (sync_dialog->fxa_web_view, "load-changed",
                       G_CALLBACK (fxa_web_view_load_changed_cb),
@@ -966,7 +944,6 @@ sync_setup_firefox_iframe (EphyFirefoxSyncDialog *sync_dialog)
                       G_CALLBACK (fxa_web_view_load_failed_cb),
                       sync_dialog);
 
-    g_object_unref (sync_context);
   }
 
   sync_dialog->fastly_challenge_retried = FALSE;

@@ -88,6 +88,7 @@ struct _PrefsGeneralPage {
   GtkWidget *browsing_box;
   GtkWidget *enable_mouse_gesture_row;
   GtkWidget *enable_switch_to_new_tab;
+  GtkWidget *tab_switcher_mru;
   GtkWidget *enable_navigation_gestures_row;
 
   /* Languages */
@@ -989,6 +990,7 @@ prefs_general_page_class_init (PrefsGeneralPageClass *klass)
   gtk_widget_class_bind_template_child (widget_class, PrefsGeneralPage, browsing_box);
   gtk_widget_class_bind_template_child (widget_class, PrefsGeneralPage, enable_mouse_gesture_row);
   gtk_widget_class_bind_template_child (widget_class, PrefsGeneralPage, enable_switch_to_new_tab);
+  gtk_widget_class_bind_template_child (widget_class, PrefsGeneralPage, tab_switcher_mru);
   gtk_widget_class_bind_template_child (widget_class, PrefsGeneralPage, enable_navigation_gestures_row);
 
   /* Languages */
@@ -1296,6 +1298,12 @@ setup_general_page (PrefsGeneralPage *general_page)
   g_settings_bind (web_settings,
                    EPHY_PREFS_WEB_SWITCH_TO_NEW_TAB,
                    general_page->enable_switch_to_new_tab,
+                   "active",
+                   G_SETTINGS_BIND_DEFAULT);
+
+  g_settings_bind (EPHY_SETTINGS_MAIN,
+                   EPHY_PREFS_TAB_SWITCHER_MRU,
+                   general_page->tab_switcher_mru,
                    "active",
                    G_SETTINGS_BIND_DEFAULT);
 

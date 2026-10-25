@@ -1,7 +1,10 @@
-{ pkgs }:
+{ pkgs, brave ? pkgs.brave }:
 let
   lib = pkgs.lib;
   system = "x86_64-linux";
+  jupiterGtk = pkgs.gtk4.overrideAttrs (old: {
+    patches = (old.patches or []) ++ [ ./patches/gtk4-x11-ignore-stale-selection-clear.patch ];
+  });
   uiLibraries = with pkgs; [ gtk4 libadwaita json-glib libepoxy fontconfig freetype libsodium libsecret libsoup_3 ];
   chromiumLibraries = with pkgs; [
     stdenv.cc.cc.lib glib nss nspr dbus at-spi2-core systemd
@@ -54,15 +57,30 @@ let
     version = "0.1.0";
     src = lib.cleanSourceWith {
       src = lib.cleanSource ./.;
-      filter = path: type: baseNameOf path != "JUPITER-TODO.md";
+      filter = path: type: !(builtins.elem (baseNameOf path) [ "JUPITER-TODO.md" "BRAVE-MIGRATION.md" ]);
     };
     patches = [];
-    nativeBuildInputs = old.nativeBuildInputs ++ [ pkgs.cmake ];
-    buildInputs = old.buildInputs ++ [ pkgs.libpwquality pkgs.libepoxy ] ++ chromiumLibraries;
-    mesonFlags = [ "-Dgranite=disabled" "-Dunit_tests=enabled" "-Dman-pages=disabled" "-Dcef_root=${cefSdk}" "-Dublock_dir=${ublock}" ];
-    passthru = (old.passthru or {}) // { inherit cefSdk ublock; };
+    nativeBuildInputs = old.nativeBuildInputs ++ [ pkgs.cmake pkgs.wayland-scanner ];
+    buildInputs = map (input:
+      if input == pkgs.gtk4.dev then jupiterGtk.dev
+      else if input == pkgs.gtk4 then jupiterGtk
+      else input
+    ) old.buildInputs ++ [ pkgs.libpwquality pkgs.libepoxy pkgs.wlroots_0_19 pkgs.wayland pkgs.wayland-protocols pkgs.libxkbcommon pkgs.libdrm pkgs.libglvnd pkgs.pixman ] ++ chromiumLibraries;
+    preConfigure = (old.preConfigure or "") + ''
+      export PKG_CONFIG_PATH="${jupiterGtk.dev}/lib/pkgconfig:''${PKG_CONFIG_PATH-}"
+      test "$(pkg-config --variable=libdir gtk4)" = "${lib.getLib jupiterGtk}/lib"
+      export NIX_LDFLAGS="-rpath ${lib.getLib jupiterGtk}/lib ''${NIX_LDFLAGS-}"
+    '';
+    mesonFlags = [ "-Dgranite=disabled" "-Dunit_tests=disabled" "-Dman-pages=disabled" "-Dcef_root=${cefSdk}" "-Dublock_dir=${ublock}" ];
+    preFixup = (old.preFixup or "") + ''
+      gappsWrapperArgs+=(--set JUPITER_ENGINE brave)
+      gappsWrapperArgs+=(--set-default JUPITER_SURFACE wayland)
+      gappsWrapperArgs+=(--set-default JUPITER_BRAVE_EXECUTABLE ${brave}/bin/brave)
+      gappsWrapperArgs+=(--set-default JUPITER_BRAVE_VERSION ${brave.version})
+    '';
+    passthru = (old.passthru or {}) // { inherit cefSdk ublock jupiterGtk; };
     meta = old.meta // {
-      description = "GNOME Web shell being ported to Chromium Embedded Framework";
+      description = "GNOME Web shell with a composited Brave web-content backend";
       homepage = "https://github.com/doromiert/jupiter-browser";
       mainProgram = "jupiter";
     };

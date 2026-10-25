@@ -6,24 +6,31 @@
 #include "include/cef_api_hash.h"
 #include "include/cef_app.h"
 #include <filesystem>
+#include <cstring>
 #include <functional>
+#include <map>
+#include <vector>
+#include <source_location>
 #include <string>
 
-static void wait_for(const std::function<bool()>& predicate) {
+static void wait_for(const std::function<bool()>& predicate,
+                     const std::source_location location = std::source_location::current()) {
   auto deadline = g_get_monotonic_time() + 15 * G_TIME_SPAN_SECOND;
   while (!predicate() && g_get_monotonic_time() < deadline) {
     g_main_context_iteration(nullptr, false);
     g_usleep(1000);
   }
-  g_assert_true(predicate());
+  if (!predicate())
+    g_error("Timed out at %s:%u (%s)", location.file_name(), location.line(), location.function_name());
 }
-static void navigate(EphyEngineView *view, const std::string& uri) {
+static void navigate(EphyEngineView *view, const std::string& uri,
+                     const std::source_location location = std::source_location::current()) {
   bool loaded = false;
   auto handler = g_signal_connect(view, "load-changed", G_CALLBACK(+[](EphyEngineView*, WebKitLoadEvent event, bool *loaded) {
     if (event == WEBKIT_LOAD_FINISHED) *loaded = true;
   }), &loaded);
   ephy_engine_web_view_load_uri(view, uri.c_str());
-  wait_for([&]{ return loaded; });
+  wait_for([&]{ return loaded; }, location);
   g_signal_handler_disconnect(view, handler);
 }
 static void loaded_after(EphyEngineView *view, const std::function<void()>& action) {
@@ -49,6 +56,109 @@ static std::string evaluate(EphyEngineView *view, const char *script) {
   std::string output(text);
   g_free(text); json_object_unref(value); g_object_unref(result);
   return output;
+}
+// These gates hold actual HTTP responses in the fixture server. Keepalive lets
+// the old request finish after navigation, rather than "passing" by never
+// starting a request or cancelling it before the response hook can run.
+struct ResponseCompletions {
+  std::map<std::string, std::vector<std::string>> uris;
+  unsigned count(const std::string& key) { return uris[key].size(); }
+  static void received(EphyEngineView *, const char *uri, EphyEngineResponse *response,
+                       ResponseCompletions *self) {
+    if (!strstr(uri, "/response-hold")) return;
+    const char *query = strstr(uri, "?case=");
+    g_assert_nonnull(query);
+    std::string key(query + 6);
+    if (auto end = key.find('&'); end != std::string::npos) key.resize(end);
+    g_assert_cmpstr(ephy_engine_response_get_uri(response), ==, uri);
+    g_assert_cmpuint(ephy_engine_response_get_status_code(response), ==, 200);
+    self->uris[key].push_back(uri);
+  }
+};
+struct HeldResponse {
+  std::filesystem::path marker;
+  std::string key, uri;
+  HeldResponse(const std::string& base, const char *name, bool redirect = false) : key(name) {
+    const char *directory = g_getenv("JUPITER_RESPONSE_FIXTURE_DIR");
+    g_assert_nonnull(directory);
+    marker = std::filesystem::path(directory) / key;
+    uri = base + "response-hold?case=" + key + (redirect ? "&redirect=1" : "");
+  }
+  std::filesystem::path file(const char *suffix) const { return marker.string() + suffix; }
+  void wait_started() { wait_for([&] { return std::filesystem::exists(file(".started")); }); }
+  void fetch(EphyEngineView *view, bool child = false) {
+    const auto script = std::string(child ? "document.querySelector('iframe').contentWindow." : "") +
+      "fetch('" + uri + "',{keepalive:true}).catch(()=>{});'started'";
+    evaluate(view, script.c_str());
+    wait_started();
+  }
+  void release() { g_assert_true(g_file_set_contents(file(".release").c_str(), "release", -1, nullptr)); }
+  void finished(bool must_send = true) {
+    wait_for([&] { return std::filesystem::exists(file(".finished")); });
+    g_autofree char *contents = nullptr;
+    g_assert_true(g_file_get_contents(file(".finished").c_str(), &contents, nullptr, nullptr));
+    if (must_send) g_assert_cmpstr(contents, ==, "sent");
+  }
+};
+static void settle_responses() {
+  const auto deadline = g_get_monotonic_time() + 500 * G_TIME_SPAN_MILLISECOND;
+  while (g_get_monotonic_time() < deadline) {
+    g_main_context_iteration(nullptr, false); g_usleep(1000);
+  }
+}
+static void assert_resource_lifetimes(EphyEngineView *view, const std::string& base,
+                                     ResponseCompletions& completions) {
+  navigate(view, base + "response-document");
+  HeldResponse positive(base, "current-document");
+  positive.fetch(view); positive.release(); positive.finished();
+  wait_for([&] { return completions.count(positive.key) == 1; });
+
+  HeldResponse redirect(base, "current-redirect", true);
+  ephy_engine_web_view_load_uri(view, redirect.uri.c_str());
+  redirect.wait_started(); redirect.release(); redirect.finished();
+  wait_for([&] { return completions.count(redirect.key) == 1; });
+  g_assert_true(completions.uris[redirect.key].front().find("/response-hold-final?") != std::string::npos);
+  g_print("Native resource completion accepts real released responses and same-chain main-frame redirects: PASS\n");
+
+  navigate(view, base + "response-document");
+  HeldResponse old_main(base, "old-main");
+  old_main.fetch(view);
+  navigate(view, base + "response-missing");
+  old_main.release(); old_main.finished(); settle_responses();
+  g_assert_cmpuint(completions.count(old_main.key), ==, 0);
+
+  navigate(view, base + "response-document");
+  HeldResponse old_redirect(base, "old-redirect", true);
+  old_redirect.fetch(view);
+  navigate(view, base + "response-missing");
+  old_redirect.release(); old_redirect.finished(); settle_responses();
+  g_assert_cmpuint(completions.count(old_redirect.key), ==, 0);
+  g_print("Old-document keepalive completions and late redirects cannot reach the replacement page: PASS\n");
+
+  navigate(view, base + "response-document");
+  HeldResponse old_child(base, "old-subframe");
+  old_child.fetch(view, true);
+  evaluate(view, "document.querySelector('iframe').src='/response-child?replacement=1';'navigating'");
+  wait_for([&] { return evaluate(view, "document.querySelector('iframe').contentWindow.location.search") == "?replacement=1"; });
+  old_child.release(); old_child.finished(); settle_responses();
+  g_assert_cmpuint(completions.count(old_child.key), ==, 0);
+  HeldResponse current_child(base, "current-subframe");
+  current_child.fetch(view, true); current_child.release(); current_child.finished();
+  wait_for([&] { return completions.count(current_child.key) == 1; });
+  g_print("Subframe navigation rejects the previous document while accepting its replacement's real response: PASS\n");
+
+  HeldResponse hidden(base, "hidden-view");
+  hidden.fetch(view);
+  gtk_widget_set_visible(GTK_WIDGET(view), false);
+  wait_for([&] { return !gtk_widget_get_mapped(GTK_WIDGET(view)); });
+  hidden.release(); hidden.finished(); settle_responses();
+  g_assert_cmpuint(completions.count(hidden.key), ==, 0);
+  gtk_widget_set_visible(GTK_WIDGET(view), true);
+  wait_for([&] { return gtk_widget_get_mapped(GTK_WIDGET(view)); });
+  HeldResponse shown(base, "shown-view");
+  shown.fetch(view); shown.release(); shown.finished();
+  wait_for([&] { return completions.count(shown.key) == 1; });
+  g_print("Hidden-view resource completion is invalidated; new requests after showing remain functional: PASS\n");
 }
 static void assert_closed(EphyEngineResource *resource) {
   GAsyncResult *result = nullptr;
@@ -92,7 +202,19 @@ int main(int argc, char **argv) {
   const std::string base = g_getenv("JUPITER_TEST_URL");
   const auto document_uri = base + "response-document";
   const auto missing_uri = base + "response-missing";
+  unsigned child_responses = 0;
+  auto resource_response_handler = g_signal_connect(view, "resource-response",
+    G_CALLBACK(+[](EphyEngineView *, const char *uri, EphyEngineResponse *response, unsigned *count) {
+      if (!g_str_has_suffix(uri, "/response-child")) return;
+      g_assert_cmpstr(ephy_engine_response_get_uri(response), ==, uri);
+      g_assert_cmpuint(ephy_engine_response_get_status_code(response), ==, 200);
+      g_assert_cmpstr(ephy_engine_response_get_mime_type(response), ==, "text/html");
+      ++*count;
+    }), &child_responses);
   navigate(view, base + "response-redirect");
+  wait_for([&] { return child_responses > 0; });
+  g_print("Native subresource response signal reports the actual completed iframe response: PASS\n");
+  g_signal_handler_disconnect(view, resource_response_handler);
   auto *resource = ephy_engine_web_view_get_main_resource(view);
   g_object_ref(resource);
   auto *response = ephy_engine_web_resource_get_response(resource);
@@ -168,10 +290,17 @@ int main(int argc, char **argv) {
   navigate(view, user_data);
   g_assert_cmpstr(ephy_engine_web_view_get_uri(view), ==, user_data);
   g_print("Alternate pages keep opaque origins and logical addresses; saved placeholders restore and reload real destinations; user data URLs remain visible: PASS\n");
+  ResponseCompletions completions;
+  g_signal_connect(view, "resource-response", G_CALLBACK(ResponseCompletions::received), &completions);
+  assert_resource_lifetimes(view, base, completions);
   navigate(view, "about:blank");
+  g_assert_cmpstr(ephy_engine_web_view_get_uri(view), ==, "about:blank");
   auto *blank = ephy_engine_web_view_get_main_resource(view);
   g_assert_null(ephy_engine_web_resource_get_response(blank));
   g_assert_cmpstr(ephy_engine_web_resource_get_uri(blank), ==, "about:blank");
+  navigate(view, base + "response-document");
+  HeldResponse closing(base, "closed-view");
+  closing.fetch(view);
   unsigned callbacks = 0;
   for (int i = 0; i < 8; ++i)
     ephy_engine_web_view_evaluate_javascript(view, "Promise.resolve('closing')", -1, nullptr, nullptr, nullptr,
@@ -188,7 +317,11 @@ int main(int argc, char **argv) {
   g_object_run_dispose(G_OBJECT(view));
   gtk_window_destroy(GTK_WINDOW(window));
   g_object_unref(view);
+  closing.release(); closing.finished(false);
   wait_for([&]{ return Browser::active_count == 0 && callbacks == 8; });
+  settle_responses();
+  g_assert_cmpuint(completions.count(closing.key), ==, 0);
+  g_print("Closing the owning view rejects a pending real HTTP resource completion: PASS\n");
   g_print("Queued JavaScript replies complete once when a view closes before GTK delivery: PASS\n");
   assert_closed(missing);
   g_assert_cmpuint(ephy_engine_response_get_status_code(ephy_engine_web_resource_get_response(missing)), ==, 404);

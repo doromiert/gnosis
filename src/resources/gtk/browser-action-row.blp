@@ -1,10 +1,20 @@
 using Gtk 4.0;
 
 template $EphyBrowserActionRow: ListBoxRow {
+  focus-on-click: false;
+
   child: Box {
+    spacing: 10;
+    margin-top: 6;
+    margin-bottom: 6;
+    margin-start: 12;
+    margin-end: 6;
+
     $EphyIndicatorBin badge {
+      valign: center;
+
       Image browser_action_image {
-        pixel-size: 16;
+        pixel-size: 20;
       }
     }
 
@@ -12,6 +22,27 @@ template $EphyBrowserActionRow: ListBoxRow {
       hexpand: true;
       ellipsize: end;
       xalign: 0;
+    }
+
+    Spinner status_spinner {
+      visible: false;
+      spinning: false;
+      valign: center;
+      tooltip-text: _("Updating Extension");
+    }
+
+    Button settings_button {
+      visible: false;
+      valign: center;
+      focus-on-click: false;
+      icon-name: "emblem-system-symbolic";
+      tooltip-text: _("Extension Settings");
+      clicked => $on_settings_button_clicked();
+
+      styles [
+        "flat",
+        "image-button",
+      ]
     }
   };
 }

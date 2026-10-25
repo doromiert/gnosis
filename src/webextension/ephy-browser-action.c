@@ -72,15 +72,7 @@ ephy_browser_action_get_web_extension (EphyBrowserAction *self)
 gboolean
 ephy_browser_action_activate (EphyBrowserAction *self)
 {
-  EphyWebExtensionManager *manager = ephy_web_extension_manager_get_default ();
-
-  /* If it has no popup clicking just emits this event and is handled already. */
-  if (!ephy_web_extension_get_browser_popup (self->web_extension)) {
-    ephy_web_extension_manager_emit_in_background_view (manager, self->web_extension, "browserAction.onClicked", "");
-    return TRUE;
-  }
-
-  return FALSE;
+  return ephy_web_extension_get_browser_popup (self->web_extension) == NULL;
 }
 
 static void
@@ -88,8 +80,8 @@ ephy_browser_action_finalize (GObject *object)
 {
   EphyBrowserAction *self = (EphyBrowserAction *)object;
 
-  g_clear_object (&self->badge_text);
-  g_clear_object (&self->badge_color);
+  g_clear_pointer (&self->badge_text, g_free);
+  g_clear_pointer (&self->badge_color, gdk_rgba_free);
   g_clear_object (&self->web_extension);
 
   G_OBJECT_CLASS (ephy_browser_action_parent_class)->finalize (object);
@@ -126,13 +118,14 @@ ephy_browser_action_set_property (GObject      *object,
 
   switch ((EphyBrowserActionProps)prop_id) {
     case PROP_WEB_EXTENSION:
-      g_set_object (&self->web_extension, g_value_dup_object (value));
+      g_set_object (&self->web_extension, g_value_get_object (value));
       break;
     case PROP_BADGE_TEXT:
       g_set_str (&self->badge_text, g_value_get_string (value));
       break;
     case PROP_BADGE_COLOR:
-      self->badge_color = g_value_get_boxed (value);
+      g_clear_pointer (&self->badge_color, gdk_rgba_free);
+      self->badge_color = g_value_dup_boxed (value);
       break;
   }
 }

@@ -1,0 +1,16 @@
+--- a/gdk/x11/gdkclipboard-x11.c
++++ b/gdk/x11/gdkclipboard-x11.c
+@@ -408,6 +408,13 @@
+                                 guint32          timestamp)
+ {
+   GdkContentFormats *empty;
++  GdkDisplay *display = gdk_clipboard_get_display (GDK_CLIPBOARD (cb));
++
++  /* Queued ownership events may predate a local selection's reclaim. */
++  if (gdk_clipboard_is_local (GDK_CLIPBOARD (cb)) &&
++      XGetSelectionOwner (GDK_DISPLAY_XDISPLAY (display), cb->xselection) ==
++      GDK_X11_DISPLAY (display)->leader_window)
++    return;
+ 
+   empty = gdk_content_formats_new (NULL, 0);
+   gdk_clipboard_claim_remote (GDK_CLIPBOARD (cb), empty);

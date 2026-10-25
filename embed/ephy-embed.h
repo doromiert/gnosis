@@ -47,8 +47,8 @@ void             ephy_embed_remove_top_widget             (EphyEmbed  *embed,
                                                            GtkWidget  *widget);
 void             ephy_embed_entering_fullscreen           (EphyEmbed *embed);
 void             ephy_embed_leaving_fullscreen            (EphyEmbed *embed);
-void             ephy_embed_set_delayed_load_request      (EphyEmbed *embed,
-                                                           WebKitURIRequest          *request,
+void             ephy_embed_set_delayed_load_uri          (EphyEmbed *embed,
+                                                           const char *uri,
                                                            EphyEngineSessionState *state);
 gboolean         ephy_embed_has_load_pending              (EphyEmbed *embed);
 gboolean         ephy_embed_inspector_is_loaded           (EphyEmbed *embed);

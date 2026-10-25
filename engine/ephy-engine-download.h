@@ -23,6 +23,12 @@ void ephy_engine_download_cancel(EphyEngineDownload *);
 G_END_DECLS
 
 #ifdef __cplusplus
+#include <functional>
+#include <string>
+EphyEngineDownload *ephy_engine_download_native_begin(EphyEngineSession *, const std::string&,
+  const std::string&, const std::string&, std::function<void()>);
+void ephy_engine_download_native_update(EphyEngineDownload *, guint64, guint64, const std::string&);
+void ephy_engine_download_native_fail(EphyEngineDownload *, const std::string&);
 #include "include/cef_download_handler.h"
 void ephy_engine_download_before(EphyEngineSession *, CefRefPtr<CefBrowser>, CefRefPtr<CefDownloadItem>,
                                 const CefString&, CefRefPtr<CefBeforeDownloadCallback>, EphyEngineDownload *existing = nullptr);

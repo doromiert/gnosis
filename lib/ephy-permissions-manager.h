@@ -22,7 +22,6 @@
 #pragma once
 
 #include <glib-object.h>
-#include <jsc/jsc.h>
 #include "ephy-engine-session.h"
 
 G_BEGIN_DECLS
@@ -63,9 +62,7 @@ void                    ephy_permissions_manager_set_permission (EphyPermissions
                                                                  const char             *origin,
                                                                  EphyPermission          permission);
 
-void                    ephy_permissions_manager_export_to_js_context  (EphyPermissionsManager *manager,
-                                                                        JSCContext             *js_context,
-                                                                        JSCValue               *js_namespace);
+
 
 gboolean                ephy_permission_is_stored_by_permissions_manager (EphyPermissionType type);
 

@@ -362,24 +362,6 @@ launch_app (GSimpleAction *action,
 }
 
 static void
-webextension_action (GSimpleAction *action,
-                     GVariant      *parameter,
-                     gpointer       user_data)
-{
-  EphyWebExtensionManager *manager = ephy_web_extension_manager_get_default ();
-  ephy_web_extension_manager_handle_notifications_action (manager, parameter);
-}
-
-static void
-webextension_context_menu_action (GSimpleAction *action,
-                                  GVariant      *parameter,
-                                  gpointer       user_data)
-{
-  EphyWebExtensionManager *manager = ephy_web_extension_manager_get_default ();
-  ephy_web_extension_manager_handle_context_menu_action (manager, parameter);
-}
-
-static void
 close_all_tabs (GSimpleAction *action,
                 GVariant      *parameter,
                 gpointer       user_data)
@@ -442,8 +424,6 @@ static GActionEntry app_entries[] = {
   { "quit", quit_application, NULL, NULL, NULL },
   { "show-downloads", show_downloads, NULL, NULL, NULL },
   { "launch-app", launch_app, "s", NULL, NULL },
-  { "webextension-notification", webextension_action, "(ssi)", NULL, NULL },
-  { "webextension-context-menu", webextension_context_menu_action, "(sss)", NULL, NULL },
   { "close-all-tabs", close_all_tabs, NULL, NULL, NULL },
 };
 
@@ -674,46 +654,6 @@ ephy_shell_startup (GApplication *application)
   set_accel_for_action (shell, "app.quit", "<Primary>q");
 }
 
-static GtkWidget *
-create_web_view_for_automation_cb (WebKitAutomationSession *session,
-                                   EphyShell               *shell)
-{
-  EphyEmbed *embed;
-  EphyWindow *window;
-  EphyWebView *web_view;
-  guint n_embeds;
-
-  window = EPHY_WINDOW (gtk_application_get_active_window (GTK_APPLICATION (shell)));
-  embed = ephy_embed_container_get_active_child (EPHY_EMBED_CONTAINER (window));
-  if (embed) {
-    n_embeds = ephy_embed_container_get_n_children (EPHY_EMBED_CONTAINER (window));
-    web_view = ephy_embed_get_web_view (embed);
-    if (n_embeds == 1 && ephy_web_view_get_visit_type (web_view) == EPHY_PAGE_VISIT_HOMEPAGE) {
-      gtk_widget_grab_focus (GTK_WIDGET (embed));
-      return GTK_WIDGET (web_view);
-    }
-  }
-
-  embed = ephy_shell_new_tab (shell, window, NULL, EPHY_NEW_TAB_JUMP);
-  gtk_widget_grab_focus (GTK_WIDGET (embed));
-  return GTK_WIDGET (ephy_embed_get_web_view (embed));
-}
-
-static void
-automation_started_cb (WebKitWebContext        *web_context,
-                       WebKitAutomationSession *session,
-                       EphyShell               *shell)
-{
-  WebKitApplicationInfo *info = webkit_application_info_new ();
-  webkit_application_info_set_name (info, "Epiphany");
-  webkit_application_info_set_version (info, EPHY_MAJOR_VERSION, EPHY_MINOR_VERSION, EPHY_MICRO_VERSION);
-  webkit_automation_session_set_application_info (session, info);
-  webkit_application_info_unref (info);
-
-  g_signal_connect (session, "create-web-view", G_CALLBACK (create_web_view_for_automation_cb), shell);
-}
-
-
 static void
 session_load_cb (GObject      *object,
                  GAsyncResult *result,
@@ -748,17 +688,13 @@ static void
 ephy_shell_activate (GApplication *application)
 {
   EphyShell *shell = EPHY_SHELL (application);
-  EphyEmbedShell *embed_shell = EPHY_EMBED_SHELL (shell);
 
   if (!is_desktop_gnome () && !is_desktop_pantheon ()) {
     g_signal_connect (ephy_shell_get_net_monitor (shell), "notify::connectivity", G_CALLBACK (connectivity_changed), shell);
     portal_check (shell);
   }
 
-  if (ephy_embed_shell_get_mode (embed_shell) == EPHY_EMBED_SHELL_MODE_AUTOMATION) {
-    WebKitWebContext *web_context = ephy_embed_shell_get_web_context (embed_shell);
-    g_signal_connect (web_context, "automation-started", G_CALLBACK (automation_started_cb), shell);
-  }
+
 
   if (shell->open_notification_id) {
     g_application_withdraw_notification (G_APPLICATION (shell), shell->open_notification_id);
@@ -1091,53 +1027,7 @@ ephy_shell_get_default (void)
   return ephy_shell;
 }
 
-static void
-webkit_notification_clicked_cb (WebKitNotification *notification,
-                                gpointer            user_data)
-{
-  EphyEngineView *notification_webview = EPHY_ENGINE_VIEW (user_data);
-  EphyShell *shell;
-  GApplication *application;
-  GList *windows;
 
-  shell = ephy_shell_get_default ();
-  application = G_APPLICATION (shell);
-  windows = gtk_application_get_windows (GTK_APPLICATION (application));
-
-  for (guint win_idx = 0; win_idx < g_list_length (windows); win_idx++) {
-    EphyWindow *window;
-    EphyTabView *tab_view;
-    int n_pages;
-
-    window = EPHY_WINDOW (g_list_nth_data (windows, win_idx));
-    tab_view = ephy_window_get_tab_view (window);
-    n_pages = ephy_tab_view_get_n_pages (tab_view);
-
-    for (int i = 0; i < n_pages; i++) {
-      EphyEmbed *embed;
-      EphyEngineView *webview;
-
-      embed = EPHY_EMBED (ephy_tab_view_get_nth_page (tab_view, i));
-      webview = EPHY_ENGINE_VIEW (ephy_embed_get_web_view (embed));
-
-      if (webview == notification_webview) {
-        ephy_tab_view_select_page (tab_view, GTK_WIDGET (embed));
-        gtk_window_present (GTK_WINDOW (window));
-        return;
-      }
-    }
-  }
-}
-
-static gboolean
-show_notification_cb (EphyEngineView      *web_view,
-                      WebKitNotification *notification,
-                      gpointer            user_data)
-{
-  g_signal_connect_object (notification, "clicked", G_CALLBACK (webkit_notification_clicked_cb), web_view, G_CONNECT_DEFAULT);
-
-  return FALSE;
-}
 
 /**
  * ephy_shell_new_tab_full:
@@ -1195,7 +1085,6 @@ ephy_shell_new_tab_full (EphyShell       *shell,
   else
     web_view = ephy_web_view_new ();
 
-  g_signal_connect (web_view, "show-notification", G_CALLBACK (show_notification_cb), NULL);
 
   embed = EPHY_EMBED (g_object_new (EPHY_TYPE_EMBED,
                                     "web-view", web_view,
@@ -1680,7 +1569,6 @@ ephy_shell_open_uris_idle (OpenURIsData *data)
   EphyNewTabFlags page_flags = 0;
   gboolean reusing_empty_tab = FALSE;
   const char *url;
-  gboolean url_is_xpi;
 
   mode = ephy_embed_shell_get_mode (EPHY_EMBED_SHELL (data->shell));
 
@@ -1703,9 +1591,8 @@ ephy_shell_open_uris_idle (OpenURIsData *data)
   }
 
   url = data->uris ? data->uris[data->current_uri] : NULL;
-  url_is_xpi = url && g_str_has_prefix (url, "file:") && g_str_has_suffix (url, ".xpi");
 
-  if (!reusing_empty_tab && !url_is_xpi) {
+  if (!reusing_empty_tab) {
     embed = ephy_shell_new_tab_full (data->shell,
                                      NULL, NULL,
                                      data->window,
@@ -1713,10 +1600,7 @@ ephy_shell_open_uris_idle (OpenURIsData *data)
                                      data->flags | page_flags);
   }
 
-  if (url_is_xpi) {
-    g_autoptr (GFile) xpi_file = g_file_new_for_uri (url);
-    ephy_web_extension_manager_install (ephy_web_extension_manager_get_default (), xpi_file);
-  } else if (url && url[0] != '\0' && ephy_embed_utils_address_is_valid (url)) {
+  if (url && url[0] != '\0' && ephy_embed_utils_address_is_valid (url)) {
     ephy_web_view_load_url (ephy_embed_get_web_view (embed), url);
 
     /* When reusing an empty tab, the focus is in the location entry */
@@ -1731,12 +1615,10 @@ ephy_shell_open_uris_idle (OpenURIsData *data)
       ephy_window_focus_location_entry (data->window);
   }
 
-  if (!url_is_xpi) {
-    /* Set address from the very beginning. Looks odd in app mode if it appears later on. */
-    header_bar = EPHY_HEADER_BAR (ephy_window_get_header_bar (data->window));
-    title_widget = ephy_header_bar_get_title_widget (header_bar);
-    ephy_title_widget_set_address (title_widget, url);
-  }
+  /* Set address from the very beginning. Looks odd in app mode if it appears later on. */
+  header_bar = EPHY_HEADER_BAR (ephy_window_get_header_bar (data->window));
+  title_widget = ephy_header_bar_get_title_widget (header_bar);
+  ephy_title_widget_set_address (title_widget, url);
 
   data->current_uri++;
   data->previous_embed = embed;

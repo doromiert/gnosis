@@ -42,7 +42,6 @@
 #include "ephy-prefs.h"
 #include "ephy-settings.h"
 #include "ephy-smaps.h"
-#include "ephy-snapshot-service.h"
 #include "ephy-web-app-utils.h"
 
 struct _EphyAboutHandler {
@@ -110,6 +109,41 @@ application_icon_uri (GHashTable *icons,
   token = g_uuid_string_random ();
   g_hash_table_insert (icons, g_strdup (token), g_bytes_ref (bytes));
   return g_strconcat ("ephy-resource://", EPHY_APPLICATION_ICON_PREFIX, token, NULL);
+}
+
+static char *
+overview_empty_icon_uri (void)
+{
+  GtkIconTheme *icon_theme;
+  g_autoptr (GtkIconPaintable) paintable = NULL;
+  g_autoptr (GBytes) bytes = NULL;
+  g_autofree char *icon = g_strconcat (APPLICATION_ID, "-symbolic", NULL);
+  g_autofree char *path = NULL;
+  g_autofree char *base64 = NULL;
+  gconstpointer data;
+  gsize size;
+
+  icon_theme = gtk_icon_theme_get_for_display (gdk_display_get_default ());
+  paintable = gtk_icon_theme_lookup_icon (icon_theme,
+                                          icon,
+                                          NULL,
+                                          128,
+                                          1,
+                                          GTK_TEXT_DIR_LTR,
+                                          GTK_ICON_LOOKUP_NONE);
+  if (paintable) {
+    g_autoptr (GFile) file = gtk_icon_paintable_get_file (paintable);
+
+    path = g_file_get_path (file);
+  }
+
+  bytes = load_application_icon (path);
+  if (!bytes)
+    return g_strdup ("ephy-resource:///org/gnome/epiphany/page-icons/web-watermark.svg");
+
+  data = g_bytes_get_data (bytes, &size);
+  base64 = g_base64_encode (data, size);
+  return g_strconcat ("data:image/png;base64,", base64, NULL);
 }
 
 gboolean
@@ -253,27 +287,29 @@ ephy_about_handler_handle_about (EphyAboutHandler       *handler,
                                  EphyEngineSchemeRequest *request)
 {
   char *data;
-  char *version;
-  g_autofree char *path = NULL;
-  GtkIconTheme *icon_theme;
-  g_autoptr (GtkIconPaintable) paintable = NULL;
+  const char *application_name;
+  const char *about_title;
+  g_autofree char *version = NULL;
+  g_autofree char *engine_version = NULL;
+  g_autofree char *engine_version_html = NULL;
+
+  if (g_str_equal (PROFILE, "Canary")) {
+    application_name = _("Jupiter Canary");
+    about_title = _("About Jupiter Canary");
+#if TECH_PREVIEW
+  } else {
+    application_name = _("Jupiter Technology Preview");
+    about_title = _("About Jupiter Technology Preview");
+#else
+  } else {
+    application_name = _("Jupiter");
+    about_title = _("About Jupiter");
+#endif
+  }
 
   version = g_strdup_printf (_("Version %s"), VERSION);
-
-  icon_theme = gtk_icon_theme_get_for_display (gdk_display_get_default ());
-  paintable = gtk_icon_theme_lookup_icon (icon_theme,
-                                          APPLICATION_ID,
-                                          NULL,
-                                          256,
-                                          1,
-                                          GTK_TEXT_DIR_LTR,
-                                          GTK_ICON_LOOKUP_FORCE_REGULAR);
-
-  if (paintable) {
-    g_autoptr (GFile) file = gtk_icon_paintable_get_file (paintable);
-
-    path = g_file_get_path (file);
-  }
+  engine_version = ephy_engine_dup_version_info ();
+  engine_version_html = g_markup_escape_text (engine_version, -1);
 
   data = g_strdup_printf ("<html><head><title>%s</title>"
                           "<meta http-equiv=\"Content-Type\" content=\"text/html; charset=utf-8\" />"
@@ -281,25 +317,19 @@ ephy_about_handler_handle_about (EphyAboutHandler       *handler,
                           "</head><body>"
                           "<div id=\"about-app\">"
                           "<div class=\"dialog\">"
-                          "<img id=\"about-icon\" src=\"file://%s\"/>"
+                          "<img id=\"about-icon\" src=\"ephy-resource:///org/gnome/epiphany/page-icons/application.svg\"/>"
                           "<h1 id=\"about-title\">%s</h1>"
                           "<h2 id=\"about-subtitle\">%s</h2>"
                           "<p id=\"about-tagline\">%s</p>"
                           "<table class=\"properties\">"
-                          "<tr><td class=\"prop-label\">%s</td><td class=\"prop-value\">%d.%d.%d</td></tr>"
+                          "<tr><td class=\"prop-label\">%s</td><td class=\"prop-value\">%s</td></tr>"
                           "</table>"
                           "</div></div></body></html>",
-                          _("About Web"),
-                          path ? path : "",
-#if !TECH_PREVIEW
-                          _("Web"),
-#else
-                          _("Epiphany Technology Preview"),
-#endif
+                          about_title,
+                          application_name,
                           version,
                           _("A simple, clean, beautiful view of the web"),
-                          "WebKitGTK", webkit_get_major_version (), webkit_get_minor_version (), webkit_get_micro_version ());
-  g_free (version);
+                          _("Engine"), engine_version_html);
 
   ephy_about_handler_finish_request (request, data, -1);
 
@@ -440,7 +470,7 @@ handle_applications_finished_cb (EphyAboutHandler       *handler,
     icon_uri = application_icon_uri (icons, icon_bytes);
     g_string_append_printf (data_str,
                             "  <div id=\"overview\" class=\"overview-empty\">\n"
-                            "    <img src=\"%s\"/>\n"
+                            "    <img src=\"%s\" alt=\"\"/>\n"
                             "    <div><h1>%s</h1></div>\n"
                             "    <div><p>%s</p></div>\n"
                             "  </div>\n"
@@ -499,17 +529,29 @@ ephy_about_handler_handle_applications (EphyAboutHandler       *handler,
   return TRUE;
 }
 
+static gboolean
+ephy_about_handler_handle_newtab (EphyAboutHandler       *handler,
+                                  EphyEngineSchemeRequest *request);
+
 static void
 history_service_query_urls_cb (EphyHistoryService     *history,
                                GAsyncResult           *result,
                                EphyEngineSchemeRequest *request_param)
 {
   g_autoptr (EphyEngineSchemeRequest) request = request_param;
-  EphySnapshotService *snapshot_service;
   EphyEmbedShell *shell;
   GString *data_str;
   gsize data_length;
-  char *lang;
+  g_autofree char *lang = NULL;
+  g_autofree char *empty_icon_uri = NULL;
+  g_autofree char *empty_icon_attribute = NULL;
+  g_autofree char *empty_title_attribute = NULL;
+  g_autofree char *empty_title_entity = NULL;
+  g_autofree char *empty_subtitle_attribute = NULL;
+  g_autofree char *empty_subtitle_entity = NULL;
+  g_autofree char *remove_attribute = NULL;
+  g_autofree char *pin_attribute = NULL;
+  g_autofree char *unpin_attribute = NULL;
   GList *l;
   g_autolist (EphyHistoryURL) urls = NULL;
   g_autoptr (GError) error = NULL;
@@ -522,13 +564,22 @@ history_service_query_urls_cb (EphyHistoryService     *history,
     return;
   }
 
-  snapshot_service = ephy_snapshot_service_get_default ();
   shell = ephy_embed_shell_get_default ();
 
   data_str = g_string_new (NULL);
 
   lang = g_strdup (pango_language_to_string (gtk_get_default_language ()));
   g_strdelimit (lang, "_-@", '\0');
+
+  empty_icon_uri = overview_empty_icon_uri ();
+  empty_icon_attribute = ephy_encode_for_html_attribute (empty_icon_uri);
+  empty_title_attribute = ephy_encode_for_html_attribute (_("Welcome to Web"));
+  empty_title_entity = ephy_encode_for_html (_("Welcome to Web"));
+  empty_subtitle_attribute = ephy_encode_for_html_attribute (_("Start browsing and your most-visited sites will appear here."));
+  empty_subtitle_entity = ephy_encode_for_html (_("Start browsing and your most-visited sites will appear here."));
+  remove_attribute = ephy_encode_for_html_attribute (_("Remove from overview"));
+  pin_attribute = ephy_encode_for_html_attribute (_("Pin to overview"));
+  unpin_attribute = ephy_encode_for_html_attribute (_("Unpin from overview"));
 
   g_string_append_printf (data_str,
                           "<html xml:lang=\"%s\" lang=\"%s\" dir=\"%s\">\n"
@@ -537,69 +588,56 @@ history_service_query_urls_cb (EphyHistoryService     *history,
                           "  <meta http-equiv=\"content-type\" content=\"text/html; charset=utf-8\" />\n"
                           "  <meta name=\"viewport\" content=\"width=device-width\">"
                           "  <link href=\""EPHY_PAGE_TEMPLATE_ABOUT_CSS "\" rel=\"stylesheet\" type=\"text/css\">\n"
-                          "  <script> </script>\n"
+                          "  <script defer src=\"ephy-resource:///org/gnome/epiphany/overview.js\"></script>\n"
                           "</head>\n"
                           "<body>\n",
                           lang, lang,
                           ((gtk_widget_get_default_direction () == GTK_TEXT_DIR_RTL) ? "rtl" : "ltr"),
                           _(NEW_TAB_PAGE_TITLE));
-  g_free (lang);
 
   list_length = g_list_length (urls);
 
+  g_string_append_printf (data_str,
+                          "  <div id=\"overview\"%s data-empty-icon=\"%s\" data-empty-title=\"%s\""
+                          " data-empty-subtitle=\"%s\" data-remove-label=\"%s\""
+                          " data-pin-label=\"%s\" data-unpin-label=\"%s\">\n",
+                          list_length == 0 ? " class=\"overview-empty\"" : "",
+                          empty_icon_attribute, empty_title_attribute, empty_subtitle_attribute,
+                          remove_attribute, pin_attribute, unpin_attribute);
+
   if (list_length == 0) {
-    GtkIconTheme *icon_theme;
-    g_autoptr (GtkIconPaintable) paintable = NULL;
-    g_autofree char *path = NULL;
-    g_autofree char *icon = g_strconcat (APPLICATION_ID, "-symbolic", NULL);
-
-    icon_theme = gtk_icon_theme_get_for_display (gdk_display_get_default ());
-    paintable = gtk_icon_theme_lookup_icon (icon_theme,
-                                            icon,
-                                            NULL,
-                                            128,
-                                            1,
-                                            GTK_TEXT_DIR_LTR,
-                                            GTK_ICON_LOOKUP_NONE);
-
-    if (paintable) {
-      g_autoptr (GFile) file = gtk_icon_paintable_get_file (paintable);
-
-      path = g_file_get_path (file);
-    }
-
     g_string_append_printf (data_str,
-                            "  <div id=\"overview\" class=\"overview-empty\">\n"
-                            "    <img src=\"file://%s\"/>\n"
+                            "    <img src=\"%s\"/>\n"
                             "    <div><h1>%s</h1></div>\n"
                             "    <div><p>%s</p></div>\n"
                             "  </div>\n"
                             "</body></html>\n",
-                            path ? path : "",
+                            empty_icon_attribute,
                             /* Displayed when opening the browser for the first time. */
-                            _("Welcome to Web"), _("Start browsing and your most-visited sites will appear here."));
+                            empty_title_entity, empty_subtitle_entity);
     goto out;
   }
-
-  g_string_append (data_str,
-                   "<div id=\"overview\">\n");
 
   g_string_append (data_str,
                    "<div id=\"most-visited-grid\">\n");
 
   for (l = urls; l; l = g_list_next (l)) {
     EphyHistoryURL *url = (EphyHistoryURL *)l->data;
-    const char *snapshot;
+    g_autofree char *thumbnail_uri = NULL;
+    g_autofree char *thumbnail_attribute = NULL;
     g_autofree char *thumbnail_style = NULL;
     g_autofree char *entity_encoded_title = NULL;
     g_autofree char *attribute_encoded_title = NULL;
     g_autofree char *encoded_url = NULL;
 
-    snapshot = ephy_snapshot_service_lookup_cached_snapshot_path (snapshot_service, url->url);
-    if (snapshot)
-      thumbnail_style = g_strdup_printf (" style=\"background: url(file://%s) no-repeat; background-size: 100%%;\"", snapshot);
-    else
+    thumbnail_uri = ephy_embed_shell_get_overview_thumbnail_uri (shell, url->url);
+    if (thumbnail_uri) {
+      thumbnail_attribute = ephy_encode_for_html_attribute (thumbnail_uri);
+      thumbnail_style = g_strdup_printf (" style=\"background-image: url(&quot;%s&quot;); background-size: 100%%; background-position: top;\"",
+                                         thumbnail_attribute);
+    } else {
       ephy_embed_shell_schedule_thumbnail_update (shell, url);
+    }
 
     /* Title and URL are controlled by web content and could be malicious. */
     entity_encoded_title = ephy_encode_for_html (url->title);
@@ -613,8 +651,8 @@ history_service_query_urls_cb (EphyHistoryService     *history,
                             "  <span class=\"overview-title\">%s</span>"
                             "</a>",
                             url->pinned ? "overview-item overview-item-pinned" : "overview-item",
-                            attribute_encoded_title, encoded_url, _("Remove from overview"),
-                            url->pinned ? _("Unpin from overview") : _("Pin to overview"),
+                            attribute_encoded_title, encoded_url, remove_attribute,
+                            url->pinned ? unpin_attribute : pin_attribute,
                             thumbnail_style ? thumbnail_style : "",
                             entity_encoded_title);
   }
@@ -663,10 +701,19 @@ static gboolean
 ephy_about_handler_handle_html_overview (EphyAboutHandler       *handler,
                                          EphyEngineSchemeRequest *request)
 {
+  EphyEngineView *view = ephy_engine_uri_scheme_request_get_web_view (request);
+  EphyEmbedShell *shell = ephy_embed_shell_get_default ();
   EphyHistoryService *history;
   EphyHistoryQuery *query;
 
-  history = ephy_embed_shell_get_global_history_service (ephy_embed_shell_get_default ());
+  if (!ephy_engine_uri_scheme_request_is_main_resource (request) ||
+      !ephy_embed_shell_can_show_overview (shell, view))
+    return ephy_about_handler_handle_newtab (handler, request);
+
+  ephy_web_view_register_message_handler (EPHY_WEB_VIEW (view),
+                                          EPHY_WEB_VIEW_OVERVIEW_MESSAGE_HANDLER,
+                                          EPHY_WEB_VIEW_REGISTER_MESSAGE_HANDLER_FOR_CURRENT_PAGE);
+  history = ephy_embed_shell_get_global_history_service (shell);
   query = ephy_history_query_new_for_overview ();
   ephy_history_service_query_urls (history, query, NULL,
                                    (GAsyncReadyCallback)history_service_query_urls_cb,

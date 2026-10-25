@@ -77,8 +77,6 @@ EphyWindowChrome  ephy_window_get_chrome          (EphyWindow *window);
 
 EphyLocationController  *ephy_window_get_location_controller (EphyWindow *window);
 
-WebKitHitTestResult *ephy_window_get_context_event     (EphyWindow *window);
-
 GtkWidget        *ephy_window_get_current_find_toolbar (EphyWindow *window);
 
 void              ephy_window_set_location             (EphyWindow *window,

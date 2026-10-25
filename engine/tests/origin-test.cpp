@@ -33,7 +33,7 @@ static void origins() {
   g_free(text);
   ephy_engine_origin_unref(origin);
 }
-int main(int argc, char **argv) {
+NO_STACK_PROTECTOR int main(int argc, char **argv) {
   disable_diagnostic_core_dumps();
   if (!cef_api_hash(CEF_API_VERSION, 0)) return 1;
   int sub = CefExecuteProcess(CefMainArgs(argc, argv), nullptr, nullptr);

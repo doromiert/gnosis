@@ -148,6 +148,7 @@ ephy_embed_utils_address_has_web_scheme (const char *address)
                      g_ascii_strncasecmp (address, "about", colonpos) &&
                      g_ascii_strncasecmp (address, "ephy-about", colonpos) &&
                      g_ascii_strncasecmp (address, "ephy-resource", colonpos) &&
+                     g_ascii_strncasecmp (address, "chrome-extension", colonpos) &&
                      g_ascii_strncasecmp (address, EPHY_VIEW_SOURCE_SCHEME, colonpos) &&
                      g_ascii_strncasecmp (address, "ephy-reader", colonpos) &&
                      g_ascii_strncasecmp (address, "gopher", colonpos) &&

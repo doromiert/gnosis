@@ -32,7 +32,7 @@ template $EphyActionBarEnd: Box {
     ]
 
     popover: Popover browser_actions_popover {
-      width-request: 250;
+      width-request: 320;
 
       styles [
         "menu",
@@ -46,12 +46,26 @@ template $EphyActionBarEnd: Box {
 
         ScrolledWindow browser_actions_scrolled_window {
           hscrollbar-policy: never;
-          max-content-height: 360;
+          max-content-height: 420;
           propagate-natural-height: true;
 
-          child: ListBox browser_actions_listbox {
-            selection-mode: none;
-            row-activated => $browser_actions_row_activated_cb();
+          child: Box {
+            orientation: vertical;
+            margin-top: 6;
+            margin-bottom: 6;
+            margin-start: 6;
+            margin-end: 6;
+
+            ListBox browser_actions_listbox {
+              selection-mode: none;
+              row-activated => $browser_actions_row_activated_cb();
+            }
+
+            ListBox page_actions_listbox {
+              selection-mode: none;
+              visible: false;
+              row-activated => $page_actions_row_activated_cb();
+            }
           };
         }
 
@@ -61,11 +75,15 @@ template $EphyActionBarEnd: Box {
 
           CenterBox {
             orientation: horizontal;
+            margin-top: 6;
+            margin-start: 6;
+            margin-end: 6;
 
             [start]
             Button {
               icon-name: "go-previous-symbolic";
-              margin-end: 6;
+              tooltip-text: _("Back to Extensions");
+              focus-on-click: false;
               clicked => $browser_actions_popup_view_back_clicked_cb();
 
               styles [

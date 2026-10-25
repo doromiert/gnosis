@@ -1,0 +1,17 @@
+{
+  "schema": 1,
+  "brave_version": "1.97.56",
+  "chromium_version": "155.0.8059.40",
+  "switch": "jupiter-native-ui",
+  "patches": [
+    {
+      "file": "0001-native-zoom-feedback.patch",
+      "sha256": "57fe87b43c4e679a1835458c20b3ae72b11ce7622dea661ec626780755de20f3",
+      "intent": "Disable native zoom feedback only when the GTK embedding shell opts in."
+    }
+  ],
+  "sources": {
+    "components/zoom/zoom_controller.cc": "66f0b4c762d9473bf0fe2061960274e07178d1db40eb8a54bb4c2548081c99ac"
+  },
+  "metadata_sha256": "4e500e60a4b7fbd0c18abe4574edb6f5aaf7c27abc7bc9349b16309036618e19"
+}

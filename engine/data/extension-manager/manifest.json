@@ -1,0 +1,9 @@
+{
+  "manifest_version": 3,
+  "name": "Jupiter extension management",
+  "version": "0.1.0",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAqTtOU5p5+BT/o/J3YKiJvYVZ6LJm4cAXDF443v+OUs0sIllBqh2Py7x1cCEYKzQ4KLPvOg3axqKDacpcVLRAI8J1hFUO9FgIk9gmipvCuzPK5zMkuGxOwkOsxUtAsBb297hxgUyn75+mUjp7loOsXqQvN2OaJpxMhf208vMrC8Yst1uJq/2lb7YvKJSYS82jpdwCx8HKmoLDd5pkPuPIVX6sZJIRBeW3mxj6P5wDjwdzijGviYeg1x1mw9+vrMoxz2PPfU3mVJJLQwgagJ13TgFLsaDs+fSKdmY4X2VtrO7IqlVl5F0HFLC1B9+tFoeWUnEh0tWqMUlxvjwrapgF/QIDAQAB",
+  "permissions": [
+    "management"
+  ]
+}

@@ -5,12 +5,15 @@ G_BEGIN_DECLS
 #define EPHY_TYPE_ENGINE_SCHEME_REQUEST (ephy_engine_scheme_request_get_type())
 G_DECLARE_FINAL_TYPE(EphyEngineSchemeRequest,ephy_engine_scheme_request,EPHY,ENGINE_SCHEME_REQUEST,GObject)
 typedef void (*EphyEngineSchemeRequestCallback)(EphyEngineSchemeRequest*, gpointer);
-void ephy_engine_context_register_uri_scheme(WebKitWebContext*,const char*,EphyEngineSchemeRequestCallback,gpointer,GDestroyNotify);
+void ephy_engine_register_uri_scheme(const char*,EphyEngineSchemeRequestCallback,gpointer,GDestroyNotify);
 const char* ephy_engine_uri_scheme_request_get_uri(EphyEngineSchemeRequest*);
 const char* ephy_engine_uri_scheme_request_get_path(EphyEngineSchemeRequest*);
 EphyEngineView* ephy_engine_uri_scheme_request_get_web_view(EphyEngineSchemeRequest*);
+gboolean ephy_engine_uri_scheme_request_is_main_resource(EphyEngineSchemeRequest*);
 void ephy_engine_uri_scheme_request_finish(EphyEngineSchemeRequest*,GInputStream*,gint64,const char*);
 void ephy_engine_uri_scheme_request_finish_error(EphyEngineSchemeRequest*,GError*);
+void ephy_engine_uri_scheme_fetch_async(EphyEngineView*,const char*,gboolean,GCancellable*,GAsyncReadyCallback,gpointer);
+GBytes *ephy_engine_uri_scheme_fetch_finish(GAsyncResult*,char**,GError**);
 G_END_DECLS
 #ifdef __cplusplus
 #include "include/cef_scheme.h"

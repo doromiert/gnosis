@@ -1,18 +1,240 @@
 # Jupiter progress
 
-Updated: 2026-10-16. This checklist tracks the CEF port on `main` and the
-features requested for Jupiter. Checked items describe verified behavior,
+Updated: 2026-10-25. The active migration embeds Brave in Epiphany's GTK shell;
+current implementation details and remaining gaps are in `BRAVE-MIGRATION.md`.
+The CEF entries below preserve earlier work and do not establish Brave coverage.
+Checked items describe verified behavior,
 not complete coverage of the surrounding feature. Development checkpoints live
 on `main`; nothing here implies a published release.
 
 Status: `[ ]` planned, `[o]` in progress, `[x]` verified complete.
 
+Current focus: reliable restored-tab allocation, then native GTK context menus,
+permission prompts and the remaining browser dialogs. WebKit and CEF removal
+continues as their services move to Brave. Prepared patches are source artifacts,
+not fixes present in the running browser.
+
 Build preference: use all available CPU cores (currently 24 logical CPUs),
-including `nix build --cores 0` and native builds with `-j$(nproc)`.
+using `nix run` for build-and-launch and native builds with `-j$(nproc)`.
 Keep Chromium memory core dumps disabled.
 
 ## Current work
 
+- [x] Add a maintainable native Brave patch series and upgrade gate: one stable
+  component file, opt-in switch, pinned release/source/patch hashes, zero-fuzz
+  application and exact reversal. Source checks pass for Brave 1.97.56 /
+  Chromium 155.0.8059.40 and candidate Brave 1.100.31 / Chromium 156.0.8078.48.
+  Run `nix run .#check-brave-patches`; compilation/runtime are separate gates.
+- [o] Suppress Brave's native zoom bubble. GTK controls perform real zoom and
+  user confirmed they work, but extension allowlisting did not hide automatic
+  feedback. The native opt-in source patch is prepared and source-checked;
+  stock Brave ignores the switch. User prefers a version/hash-checked binary
+  patch or native shim rather than a full Chromium build. Investigation has
+  identified a candidate native popup function; no binary patch has been applied
+  or runtime-verified yet. Resume there; avoid a full source build.
+- [ ] Port find-in-page to the Brave backend, including native match counts
+  and frame handling; the existing controller still calls CEF.
+
+- [ ] Match sliders to libadwaita styling and behavior instead of Chromium's
+  defaults, including webpage range inputs. Cover track/thumb appearance,
+  hover/focus/pressed/disabled states, dragging, keyboard steps and RTL/orientation
+  while preserving web form values and accessibility semantics.
+
+- [o] Fix restored Brave tabs retaining their startup viewport: configure on map
+  and preserve positive dimensions while hidden. User confirmed the original
+  attempt fixed sizing, but reported freezes beginning with that change.
+  Frame caching, screenshot serialization/resize holds and forced maximization
+  have been reverted to the exact preceding build. Retest this smaller fix.
+  User subsequently reported substantially improved stability; longer-running
+  resize/session validation remains open.
+- [o] Replace Brave right-click menus with native GTK context menus: page,
+  link, image-address, selection and editing actions implemented. User confirmed
+  menus open. Firefox-style flat navigation icon row and overflow placement
+  added; remaining media/download/source/inspector actions are not ported.
+- [o] Stabilize resize/menu/shutdown: remove compositor listeners before destroying
+  their wlroots owners. Exact teardown assertion identified in real crash logs;
+  patched isolated processes exit without that assertion. Resize reliability
+  still needs verification in the full shell.
+- [o] Fix selection after native context menus: release held Wayland buttons
+  before a GTK popup grabs input, ignore duplicate releases, and clean up on
+  gesture cancellation/tab hiding. Content now claims its drag sequence.
+  Wider equal-width flat navigation buttons are included. Runtime confirmation
+  of selection and frequent tab-load failures remains pending.
+- [o] Diagnose tab-load crashes with a preserved main Brave log, separate launch
+  helper logs, actual subprocess exit reporting and renderer crash events.
+  Guard the remaining CEF-only extension-load callback against a missing CEF
+  browser when the view belongs to Brave.
+  User clarified these are frozen views, not disappearing tabs or Aw, Snap pages.
+  Queue restored-tab launchers until the initial browser handshake completes.
+- [ ] Connect permission requests and browser dialogs to the GTK shell.
+
+## Earlier CEF work
+
+- [x] Serve the About page's GNOME icon through native resources instead of a
+  blocked local-file URL. Developer/Nix builds and actual packaged rendering pass.
+  Latest package: `/nix/store/payp5a0dn8q96jfqcg3bnjlll2z8xyg6-jupiter-0.1.0`.
+  Evidence: `build-cef/verification/native-about-resources/`.
+
+- [x] Integrate cold-start extension popup readiness. Persistent MV2 backgrounds
+  now reach native document/runtime readiness before opening their action popup;
+  lazy backgrounds and MV3 workers keep their Chromium messaging behavior.
+  Actual two-window uBlock popup shows the correct owner site, options stay in
+  the owning window, strict native/private/close checks, full uBlock and MV2/MV3
+  gates pass. Packaged two-window popup/settings and normal quit also pass.
+  Package: `/nix/store/5gkwifnsgfzvh9hxw7ipf5bd1drsvf51-jupiter-0.1.0`. Evidence:
+  `build-cef/verification/extension-popup-readiness/`.
+- [o] Remove foreign WebKit hit-test commands and empty context_event storage.
+  Native CEF menu actions remain authoritative; integrated build passes.
+  Actual link/image/edit menu checks remain pending.
+- [ ] Port missing native context-menu actions: Set as Wallpaper, email sharing,
+  bookmark clicked link, and apply enterprise lockdown to actual CEF actions.
+  Removed legacy action bindings never controlled the native CEF menu.
+
+- [x] Remove twelve never-emitted WebKit compatibility signals and dormant
+  consumers, and reconnect OpenSearch discovery to native load completion.
+  Native/Nix builds pass; libraries no longer import legacy policy, script-dialog
+  or notification functions/types. Packaged OpenSearch menu shows only the valid
+  discovery entry and clears it after navigation. About reports Jupiter and real
+  CEF/Chromium versions. Rapid navigation/close OpenSearch cases remain a separate
+  follow-up; their replies already check native document identity and cancellation.
+
+- [o] Integrate native-only extension manager/model and stop compiling the twelve
+  retired WebKit/JSC API providers. Source cleanup and UI callback migration are
+  landed. Integrated build, full-uBlock network/cosmetic/scriptlet/frame, MV2
+  lifetime/host isolation and MV3 runtime/blocking/host-isolation checks pass.
+  Nix build and packaged native menu/popup/settings pass; remaining detail-toggle
+  and install-state workflows remain pending.
+- [o] Polish native extension menu sizing, rows/settings spacing, focus, loading
+  states and accessibility. Packaged menu, real uBlock popup and owning-window
+  settings pass. Pending/settings-only/multiple-row cases remain separate checks.
+- [o] Fix private/default window relaunches to use the current executable with
+  explicit arguments instead of a missing PATH lookup. Source landed; verify
+  absolute-path launches and private-window behavior. Developer and packaged
+  GUI pass actual Ctrl+Shift+N with jupiter absent from PATH, distinct private
+  process/window and clean quit. Private-link/argument-boundary cases remain pending.
+- [o] Implement native Chrome Web Store installation. The actual Add button crash
+  is reproduced in Chromium's install-dialog creation stack. A temporary guard
+  now shows an accurate native unavailable notice; actual Add, Close and normal
+  quit pass. This does not install extensions; complete native install-dialog
+  integration remains unimplemented. Evidence:
+  `build-cef/verification/webstore-crash/guard-validated/`.
+
+- [o] Disconnect retired WebKit extension-provider startup: remove its custom
+  resource handler, WebKit match-pattern scheme registration, and legacy download
+  event subscriptions. Chromium owns the native extension resources and APIs.
+
+- [x] Remove the legacy XPI/manifest installer UI, extraction backend and silent
+  local-XPI installation route. Native unpacked installation remains the supported
+  path into the CEF store; legacy files follow ordinary browser file navigation.
+  Native/Nix builds and full uBlock pass. Actual packaged GTK installations of
+  both MV2 and MV3 run real content scripts after restart; both launches quit
+  normally. Old provider API source cleanup remains separate. Evidence:
+  `build-cef/verification/native-only-installer/`.
+
+- [x] Stop importing the default profile’s legacy WebKit extension directory
+  into native CEF extension catalogs. Use the native owned store/inventory for
+  the running profile; retain existing files on disk untouched. Native/Nix builds
+  and full uBlock pass. Actual packaged preferences show native uBlock and exclude
+  a separate default-profile legacy sentinel, whose manifest remains untouched.
+  Normal quit passes. Old provider API source cleanup remains separate.
+  Evidence: `build-cef/verification/native-catalog-scope/`.
+
+- [x] Remove the dormant WebKit page-context-menu pipeline and allocated empty
+  WebKitEditorState. Actual GTK menus already use Chromium’s native menu model
+  and edit-state flags; keep that path authoritative. Native/Nix builds, actual
+  packaged selected-text Copy menu rendering, delayed restore and normal quit
+  pass. Editable/private/frame coverage remains tracked below.
+  Evidence: `build-cef/verification/native-menu-cleanup/`.
+
+- [x] Remove the shell’s unused WebKitWebContext, obsolete renderer password
+  broadcast and WebKit-only automation callbacks. Keep native CEF session
+  isolation and profile-directory creation; native WebDriver remains unported.
+  Native/Nix builds and actual packaged delayed session restore and normal quit
+  pass. Evidence: `build-cef/verification/drop-shell-webkit-context/`.
+
+- [x] Stop building/installing the unused WebKit renderer plugin. Remove its
+  shell initialization data and the unused JSC permission-export bindings; drop
+  the WebKit web-process-extension build dependency from autofill storage.
+  Native and Nix builds, full uBlock, MV2 lifecycle and MV3 checks pass.
+  The clean Nix output contains no WebKit renderer plugin. WebKitGTK/JSC
+  dependencies still remain for other unported services. Evidence in
+  `build-cef/verification/drop-webkit-renderer/`.
+
+- [o] Deliver native CEF subresource response completions to the shell and move
+  Firefox Sync challenge retry off the inert WebKit resource-start callback.
+  Old-navigation generations are checked before UI delivery, including redirects.
+  Native iframe metadata and existing response/history/close checks pass, as do
+  full-uBlock network/cosmetic/scriptlet/frame checks and the Nix build. Actual
+  Firefox Accounts challenge remains pending. Real held/delayed responses now
+  verify main/subframe navigation, redirect chains, hide/show, close and stale
+  reply rejection. Evidence: integrated-native-cleanup/jupiter-integrated-response-check.log.
+  Evidence: `build-cef/verification/native-resource-response/`.
+
+- [x] Remove WebKit request allocations from delayed session restore and the URI
+  loading wrapper. Real GTK restore verifies foreground loading, background-tab
+  delay, loading on activation, and normal quit in development and the Nix package.
+  Evidence: `build-cef/verification/native-delayed-uri/`.
+
+- [o] Restore last-upload-folder memory in the native CEF file picker, scoped to
+  the owning browsing session so private folders do not reach regular settings.
+  Removed the inert WebKit file-chooser class hook and implementation. Native
+  and prior Nix builds plus seven real file-portal operations pass. Current native
+  runtime verifies nine remembered-folder stages across two processes: regular
+  persistence, private reuse/isolation/reset, explicit path precedence and cancel
+  preservation. The old save regression runner lost Unicode during xdotool typing;
+  its independent portal response identified that harness issue. Corrected driver
+  now passes all seven file-portal operations, including UTF-8 save and exact bytes.
+  Final package verification remains pending. Evidence in
+  `build-cef/verification/native-upload-folder/`.
+
+- [o] Replace WebKit client-certificate authentication with CEF candidate selection
+  and a native GNOME chooser. Integrated into the main view/window and both build
+  definitions; removed the old WebKit handler and its unused GCK build dependency.
+  Native Jupiter build
+  and the shared HTTP-authentication lifecycle regression pass. Real client-TLS
+  successful client-certificate handshake remains pending. Actual packaged GTK
+  empty-candidate chooser and Close pass against a local TLS server; the server
+  confirms no client certificate was sent, and the browser exits normally.
+  Certificate import and token PIN handling remain separate work. Nix build passes; evidence in
+  `build-cef/verification/client-certificate/status.json`.
+
+- [x] Replace the inert WebKit HTTP password-authentication path with actual CEF
+  challenges and GNOME username/password dialogs. Six real native gates verify
+  Basic retry, Digest, proxy 407, independent regular/private credential caches,
+  once-only answers, navigation/hide/unroot/close and pending engine shutdown.
+  Remove the obsolete WebKit HTTP credential/default-dialog pipeline. Actual
+  regular/private GTK dialogs pass real typing, wrong-password retry, accepted
+  Basic/Digest exchanges, cancellation and normal quit in both development and
+  the Nix package with development paths removed. Protected URLs are opened
+  directly; URL-entry completion is now fixed below. The final Nix package also
+  passes the actual proxy-407 dialog, accepted credentials and normal quit after
+  reopening a profile configured through native SetPreference/GetPreference.
+  The dialog shows the actual proxy recipient. Persistent password saving and
+  client-certificate integration remain separate work.
+  Package: `/nix/store/3d7zjy8wcwyynqa0dmgkg6vnz0g39cd1-jupiter-0.1.0`.
+  Logs: `/tmp/jupiter-native-auth-complete.log`, `/tmp/jupiter-http-auth-ui-direct.log`,
+  `/tmp/jupiter-http-auth-final-packaged-ui.log`. Final MV2 lifecycle, MV3 host-isolation
+  and full-uBlock network/cosmetic/scriptlet/frame checks all pass. Persistent
+  evidence and the scoped acceptance record are in
+  `build-cef/verification/http-auth/status.json`.
+- [x] Fix URL-entry completion retaining a previous suffix during real GTK typing.
+  Exact entry text and committed-page URL checks reproduce it independently of
+  authentication. Native backtraces identify GTK X11 SelectionClear handling;
+  synchronous ownership plus XRes proves GTK already owns PRIMARY when its stale
+  clear event collapses the completion selection. Normal idle scheduling passed
+  with traces but failed again without them, so that change alone is not a fix.
+  Jupiter's private GTK build now checks actual current selection ownership
+  before accepting queued SelectionClear/XFixes ownership loss. Native tests
+  reproduce the failure with upstream GTK, preserve local ownership after reclaim,
+  and still accept genuine foreign takeover. CEF and the system GTK are unchanged.
+  Decode presentation markup before inline completion, preserving raw query `&`;
+  retain the original completion scheduling priority. Quiet packaged GUI checks
+  pass exact entry text and committed URLs at 1/5 ms typing, history/query length
+  changes, and paused inline completion. The actual process maps exactly one GTK,
+  the patched build, with development library paths removed. Rich clipboard,
+  ownership, permissions, focus, Cut/Paste and reload regressions also pass.
+  Package: `/nix/store/j5gxqp19rapx3b46kl30agi5wg5j580g-jupiter-0.1.0`.
+  Evidence: `build-cef/verification/location-entry/`.
 - [x] Fix About/app metadata: Jupiter 0.1.0, actual CEF/Chromium diagnostics,
   upstream credits preserved.
 - [x] Rebuild the Nix package and inspect the corrected About dialog; verified
@@ -111,7 +333,7 @@ Keep Chromium memory core dumps disabled.
   MV2/MV3, desktop clipboard/WebGPU, and six portal requests pass. The extension
   probe now waits for all result markers instead of closing before the delayed
   blocking check; the three-launch permission workflow has an explicit deadline.
-- [o] Investigate intermittent CEF integration timeouts. A parallel suite timed out
+- [ ] Investigate intermittent CEF integration timeouts. A parallel suite timed out
   in script/permission lifetimes and downloads; isolated checks and the same full
   suite run sequentially pass all eleven checks. Keep the native browser tests
   sequential for normal verification and preserve operation-specific diagnostics.
@@ -172,7 +394,7 @@ Keep Chromium memory core dumps disabled.
 
 ## Finish the engine swap
 
-- [o] Exclude Cast, Wear, Vision, Wallet, and Play Billing integrations from
+- [ ] Exclude Cast, Wear, Vision, Wallet, and Play Billing integrations from
   Jupiter and its custom CEF build, as requested. Distinguish actual compiled
   components from runtime feature switches; the current SDK is prebuilt.
   Disable Chromium's actual MediaRouter feature while the source-build
@@ -194,8 +416,19 @@ Keep Chromium memory core dumps disabled.
   Unicode filename. All six supported chooser cases and their D-Bus requests
   pass, including upload, cancellation, hiding and closing the pending window.
   Log: `build-cef/verification/rich-clipboard/png-final/portal-save-bytes.log`.
-- [ ] Finish portal coverage for printing, OpenURI and screen sharing/PipeWire.
-  Folder uploads remain tracked separately above.
+- [x] Verify real GTK printing portals with the existing CEF SDK: save a PDF
+  to a Unicode filename and independently extract the actual page text; cancel,
+  hide the tab and close its window while setup is pending. Cancel portal work
+  when the page unmaps. D-Bus verifies four PreparePrint requests, one Print and
+  two Close calls, with no surviving dialog. Log:
+  `/tmp/jupiter-print-portals-fixed.log`.
+- [x] Fix the application-side CEF child entry boundary so Chromium's fork-time
+  stack-canary reset does not unwind older protected embedder frames. Keep
+  stack protection in ordinary application code and leave the SDK and sandbox
+  unchanged. The real print compositor now produces the PDF and exits cleanly.
+- [ ] Finish portal coverage for OpenURI and screen sharing/PipeWire. The GTK
+  print portal's Escape path returns a generic failure rather than dismissal;
+  explicit Cancel passes. Folder uploads remain tracked separately above.
 - [x] Make the migrated browser preferences control Chromium's actual settings
   and behavior; replace the feature panel's WebKit catalog with Chromium switches.
 - [ ] Make clearing site data and cache operate on Chromium's stores, including
@@ -215,15 +448,35 @@ Keep Chromium memory core dumps disabled.
   a file chooser, WebAuthn still shows Chromium UI, and Bluetooth/location requests
   appear to do nothing. Trace these individually; camera remains unverified
   because the user has no webcam.
-- [o] Connect CEF certificate failures to Epiphany's existing TLS error page and
-  scoped exception flow (delegated in an isolated worktree; main stays on main).
-  Map actual certificate errors separately from informational status, retain the
-  issuer chain and verify host/certificate/session isolation and navigation cleanup.
+- [x] Connect CEF certificate failures to Epiphany's existing TLS error page and
+  scoped exception flow. Native checks now verify the real issuer chain, status
+  mapping, host/certificate/session isolation, private subresources and downloads,
+  navigation cleanup, and a single completion for replacement error documents.
+  Actual regular/private GUI checks pass Enter activation, exact acceptance,
+  replacement and other-host rejection, reload, and clean quit. Resource MIME
+  inference now uses Chromium's built-in types; actual regular/private captures
+  show the correct error icon, and SVG/CSS checks pass with no GLib MIME database.
+  Cached Back navigation and explicit about:blank keep their normal load events;
+  replacement error documents emit exactly one committed/finished pair. Strict
+  certificate enforcement remains tracked separately below.
+- [x] Fix Enter and Space activation in actual Chromium web controls. Forward
+  literal Space through the native CHAR event with its real keycode/modifiers,
+  while retaining the IM path for composed text. Real GTK/X11 checks verify
+  button activation on key release, checkboxes, one literal/Shift Space insertion,
+  native Ctrl/Alt/Meta behavior, non-BMP Unicode composition and composition
+  completed with Space, plus Enter activation. The application build passes.
+  The fixture uses GTK's simple IM; external asynchronous IBus/Fcitx behavior
+  and Wayland-specific keyboard coverage remain unverified. Log:
+  `/tmp/jupiter-keyboard-runtime-4.log`. The independent browser-info startup
+  timeout still appears and is not fixed by this input change.
 - [ ] Preserve Chromium's strict certificate enforcement (including HSTS) in the
   native exception UI. Pinned CEF `c1a097e` receives `strict_enforcement` in
   `certificate_query::AllowCertificateError` but neither enforces it nor exposes
   it to `OnCertificateError`; the SDK needs to retain that native policy before
-  the TLS migration can be considered complete.
+  the TLS migration can be considered complete. The SDK source patch now uses
+  Chromium's profile/origin policy and SSL helper, clamps native continuation,
+  and exposes immutable request metadata. Exact-pin and generated binding checks
+  pass; SDK compilation, runtime strict-policy checks and UI consumption remain.
 - [x] Synchronize notifications, location, microphone, and camera choices with
   Chromium content settings. Import existing policy-file choices once before
   navigation; persist a migration marker alongside native content settings.
@@ -304,7 +557,7 @@ Keep Chromium memory core dumps disabled.
   preferences Reset All, and the eight-launch permission workflow pass with
   development library paths unset. No compilation ran alongside this final suite;
   under-load stability remains unverified after the lifecycle changes.
-- [o] Port declarative user scripts and private-world page messages plus their
+- [ ] Port declarative user scripts and private-world page messages plus their
   remaining JavaScriptCore values. Preserve top/all-frame selection, timing,
   globals, CSP behavior, URL scopes, and isolated worlds. A native runtime probe
   showed root-only DevTools scripts miss cross-process frames and delayed main-
@@ -312,8 +565,18 @@ Keep Chromium memory core dumps disabled.
   Exact Chromium 150 source research rules out native chrome.userScripts as a
   complete substitute: per-extension consent, restricted internal/data schemes,
   a 100-world limit and shared incognito world configuration leave manager gaps.
-  Extend native per-view configuration and the existing DevTools observer with
-  named-world bootstraps and paused cross-process iframe session routing instead.
+  Direct native Eval survives strict CSP and reaches actual cross-process frames.
+  The reusable document-start regression caught a stock CEF timing gap: renderer
+  OnLoadStart can see the committed URL while JavaScript document.URL still points
+  to an old about:blank document. Blink updates that cached document accessor only
+  afterward. Keep the assertion; use Chromium's actual script-start hook before
+  activating scoped scripts. Context creation alone also misses reused contexts.
+  The CMake user-content-start diagnostic retains that document.URL assertion;
+  it stays outside the default suite until the native SDK hook replaces this path.
+  Named worlds and live per-browser bootstrap updates still need native SDK
+  support; the initial immutable CEF extra_info cannot update future renderers.
+  The native script-start/end SDK source patch is prepared in engine/patches, with
+  forward/reverse and generated ABI checks; its SDK build/runtime checks remain.
   Native extension USER-origin injection/removal now passes its real runtime
   check; per-manager stylesheets, internal schemes and early timing still need
   their complete native integration.
@@ -357,29 +620,237 @@ Keep Chromium memory core dumps disabled.
   under `application/web;type="custom/formatmap"`, mapping web MIME names to
   indexed `application/web;type="custom/format0"` payloads. Preserve the `web `
   namespace separately from native clipboard formats, bounded reads/writes,
-  format filtering, and exact binary bytes in cross-application checks.
+  format filtering, and exact binary bytes in cross-application checks. Preserve
+  the stricter native custom-format permission and final data-policy decision.
+  Source review found the current permission-proof bridge discards native read
+  results before rereading GTK, and native write promises can resolve before the
+  browser-side policy callback. Neither promise authorizes original bytes after
+  native denial/redaction/replacement. Add a GTK provider beneath ClipboardHost
+  (or an exact approved-data transaction) before expanding formats; preserve
+  native owner/sequence and source/destination identity. Runtime policy tests
+  remain required alongside the existing functional clipboard checks.
 - [ ] Port password/autofill integration and content script management.
 - [ ] Replace remaining WebKit request/resource model APIs and report subresource
   lifecycle events. Main-response metadata is native now; source reads still use
   Chromium's document source and need original response-body support.
-- [ ] Connect extension management, enable/disable, settings, and toolbar actions
-  to the native CEF extension runtime; test real extension workflows. Only considered done when both manifest v3 and v2 extensions work.
+- [o] Connect extension management, enable/disable, settings, and menu actions
+  to the native CEF extension runtime while preserving the existing GNOME UI.
+  Extension actions belong exclusively in the extensions menu. Do not add
+  per-extension buttons/icons to the top bar or provide toolbar pinning; keep
+  each extension's action popup and settings reachable from the menu.
+  The main window now exposes the configured CEF startup extension catalog in
+  the GNOME models and opens real chrome-extension popup/options pages. The
+  actual GTK window check confirms the embedded popup, a real dashboard settings
+  pane, opening settings in its owning window, and normal quit. uBlock uses its
+  supported portrait layout inside the constrained menu surface. Native catalog
+  enable/disable is connected to a private management-only CEF helper and the
+  existing GNOME list/detail switches. Native inventory is authoritative; pending
+  controls are disabled, failures reconcile actual state, and native-disabled
+  extensions retain their loader paths for restart. Install/delete remains
+  separate work. Menu actions reconcile live state without toolbar embedding.
+  The strict owning-site/cold-start native gate now passes after persistent MV2
+  background readiness, alongside real two-window popup/settings and private/close
+  rejection. Final packaged acceptance remains pending; see extension-popup-readiness.
+  The real MV2/MV3 runtime and full uBlock checks pass; manager wiring is separate.
+  Current page-level CEF DevTools sessions cannot call browser-only extension CRUD.
+  Prefer request-context-scoped native SDK operations over a remote debugging port
+  or hidden Chrome UI. A real management-only MV3 helper now verifies full MV2
+  uBlock enumeration, live disable/re-enable, unchanged identity, persisted filters,
+  ordinary HTTP API isolation and missing-ID rejection. Separate real HTTP tabs
+  plus server logs prove blocking stops and resumes. Production manager wiring
+  is now implemented. Actual GNOME list-disable/detail-re-enable stops and restarts
+  uBlock's real native background page, removes/restores the menu action, and
+  synchronizes both switches; normal quit passes. The first cold inventory query
+  exceeded 10 seconds, so startup now has a 30-second bound and opening the manager
+  retries unavailable state. The packaged app now passes actual list-disable,
+  detail-re-enable, synchronized switches and normal quit with development
+  library overrides removed.
+  Evidence: `build-cef/verification/native-extension-controls/`.
+  Native unpacked installation now stages an owned copy through the preferences
+  folder chooser and loads it after restart (see the installation item below).
+  Native uninstall remains outstanding. The public management-helper
+  uninstall experiment was withdrawn: Chromium mandates its own confirmation
+  when one extension removes another. Native Remove stays unavailable. The
+  inherited GNOME Remove row callback signature/lifetime bug found during this
+  work is fixed; it does not implement native uninstall.
+  Stock-SDK lifetime fixes address native tab-bridge requests stranded by a
+  destination tab closing, failed DevTools dispatch, or a detached target session.
+  Preserve unrelated surviving-tab work and propagate actual errors to extension
+  promises. Real MV2 background regression coverage verifies destination closure,
+  surviving-tab work, single completion, and explicit transport errors; MV3 and
+  full uBlock also pass. Recovery after losing the anchor/source session remains
+  a separate gap.
+- [x] Verify that genuinely native-disabled owned extensions can remain supplied
+  at restart without activating first. Two clean browser launches used the same
+  profile and exact loader paths. The first native inventory on restart reported
+  full uBlock and a background sentinel disabled before any mutation; independent
+  HTTP observations showed filtering off and no sentinel startup beacon until
+  explicit native re-enable. Re-enable restored the sentinel and persisted uBlock
+  filtering. This proves unchanged native identities, not legacy marker-only
+  entries or migration across changed path-derived IDs. Production management
+  wiring remains open. Evidence:
+  `build-cef/verification/native-extensions/disabled-restart/REPORT.md`.
+- [x] Verify native full-uBlock request blocking independently of popup counters.
+  A disposable profile runs 64 real GET/HEAD fetches with 50 workers across two
+  local origins. Server logs confirm all 32 allowed requests arrive and none of
+  the 32 blocked/redirected requests arrive. Hard blocks reject; empty redirects
+  fulfill locally. Log: `/tmp/jupiter-adblock-network-probes.log`.
+- [x] Diagnose the public adblock test's 2% result with unchanged uBlock defaults,
+  original fetch outcomes and native network events. Both the initial run and
+  actual Re-test reproduce 2/132. Of 128 HEAD fetches in each run, 88 fulfill from
+  local uBlock data replacements, 39 fulfill otherwise and one rejects. The site
+  counts all fulfilled fetches as unblocked, including the local replacements;
+  the score understates filtering. This is not proof of blocking every host.
+  Evidence: `/tmp/jupiter-extension-check-0rv1nhj4/public-adblock-results.json`
+  and `public-adblock-network.jsonl` in the same directory.
+- [o] Recover native extension pages invalidated during initial extension reload,
+  and verify the real uBlock settings pane and owning-tab popup in the main UI.
+  One bounded reload on the exact native invalid-context error restores native
+  getURL/getManifest and the actual settings pane; ordinary pages are excluded.
+  The remaining first-install race is distinct: uBlock caches native tabs.query
+  before the late CDP bridge, misses existing HTTP tabs when rebuilding its tab
+  contexts, and can display an extension address or an uninitialized popup after
+  reload. The regular `extension-popup-test` still fails; keep that regression
+  visible. Do not force-reload user pages or patch uBlock to hide it. Logs:
+  `/tmp/jupiter-extension-popup-status.log` and main-window screenshots in
+  `/tmp/jupiter-native-extensions-ui-1viaqsol/`.
+  Nix build passes at
+  `/nix/store/9kjlxnv5rp2w0vqadb56dlxqlyf58dkm-jupiter-0.1.0`, but the packaged
+  main-window run with development library paths removed reproduces a blank
+  popup on fresh startup. Packaged UI acceptance remains failing; evidence:
+  `/tmp/jupiter-packaged-native-extensions-ui.log` and
+  `/tmp/jupiter-native-extensions-ui-x4znh5yr/failure.png`.
+  A separate `--owner-reload-diagnostic` control waits for real uBlock startup
+  and reloads only disposable test pages: both popup hostnames then match their
+  owners and window queries exclude popups. It is a causal control, not the
+  normal acceptance gate or a production workaround. The separate native tab-ID
+  failure found by that control is fixed below; the control now reaches real
+  settings and completes normally. Evidence: `/tmp/jupiter-dashboard-native-id-fix.log`.
+  Persistent evidence copies are in `build-cef/verification/native-extensions/`.
+  Final engine-view, MV2 lifecycle, MV3 and full-uBlock regression checks pass.
+  All six real file-portal operations also pass with the installed GTK schema
+  supplied to the development test environment; the first broad run lacked that
+  schema. Packaged popup acceptance and the regular cold-start gate remain
+  failing independently of those checks.
+  A stock-SDK V8 initializer experiment reached its bounded deadlines without
+  execution snapshots, including a pure-V8 control. Registration success does
+  not prove ordering or that stock hooks are impossible. The experimental code
+  was removed; small evidence is in the `early-context/` subdirectory. Further
+  CEF investigation remains deferred under the current constraint.
+- [x] Preserve the native tab-ID reply across a dashboard's same-document hash
+  change. Validate its real document/navigation/browser identity rather than exact
+  URL text. The causal-control test now completes tabs.create with identical
+  returned, cached and genuine chrome.tabs.getCurrent IDs, reaches real settings
+  controls, and passes owning-window/private/closed-owner checks. The normal
+  cold-start popup inventory race above remains open. Log:
+  `/tmp/jupiter-dashboard-native-id-fix.log`.
+- [ ] Connect webpage external links to the actual OpenURI portal and GNOME's
+  existing consent prompt, with owning-window cancellation and private isolation.
+  CEF's OnBeforeBrowse exposes the destination frame but omits the navigation
+  initiator origin. Never use its top-level display context for persistent grants;
+  retain exact-initiator completion as an SDK prerequisite. OnOpenURLFromTab can
+  also substitute the main frame for an unresolved source, so it cannot reuse
+  grants either. OnBeforePopup exposes the actual opener. Do not infer it from
+  referrers.
+  Native request handling and the application build pass. Real GTK/X11 input
+  verifies exact URI/context metadata, no-gesture/iframe rejection, document and
+  tab lifetimes, cancellation once, and independent private/normal requests.
+  Launches now use libportal with the exact owning window and cancellation token;
+  GNOME's existing dialog uses asynchronous cancellation. Private and unattributed
+  requests neither read nor write persistent grants. The final native test passes
+  after making OnOpenURLFromTab unattributed too:
+  `/tmp/jupiter-external-uri-final-native.log`.
+  Real GUI integration independently verifies seven exact handler arguments,
+  owning-window OpenURI tokens, a successful response for each specific request,
+  saved consent/reuse, private isolation and stale-navigation cancellation.
+  The packaged suite remains incomplete. With the GTK URL fix, the fixture's
+  actual pageURL is now checked exactly and scheduled stale-navigation cancellation
+  passes. One run verified all seven launches, then failed in the X11 helper's
+  library lookup; that helper lookup is corrected. The next run verified five
+  launches and independent window focus, then normal quit timed out. No renderer
+  timer-pause fix is justified by these observations. Pending-modal desktop-close
+  acceptance is still unproven; native destruction checks pass. Latest package:
+  `/nix/store/j5gxqp19rapx3b46kl30agi5wg5j580g-jupiter-0.1.0`.
+  Log: `/tmp/jupiter-open-uri-patched-gtk.log`. Further broad reruns deferred per
+  user request to prioritize feature implementation. Persistent evidence:
+  `build-cef/verification/open-uri/`.
 - [ ] Update the pinned CEF/Chromium SDK from Chromium 150 while preserving
   full MV2/uBlock support and rerunning compatibility checks.
+- [x] Port overview pin/remove, live history/title/thumbnail updates and snapshot
+  resources to CEF internal-page transport, preserving GNOME UI.
+  Packaged real titles, live title updates, pin/remove/Undo, protected JPEG
+  delivery and normal quit pass. Interrupted startup no longer freezes the next
+  normal history visit. Saved snapshots now read the retained CEF frame directly,
+  avoiding a stale GTK thumbnail node; the final package captures real heading /
+  body text with correct colors and orientation. Cheap tab thumbnail caching stays
+  unchanged. Package: `/nix/store/5r7v8mg0cmywkqkv6ccwz8m3ga29qmb9-jupiter-0.1.0`.
+  Evidence: `build-cef/verification/native-overview/`.
+- [ ] Verify direct saved-frame snapshot readback on accelerated Wayland; the
+  packaged software-rendering path is verified, GPU readback is not yet exercised.
+- [x] Install unpacked MV2/MV3 extensions through the native preferences folder
+  chooser into the owned profile store, with honest restart-required state.
+  Actual GTK installs show disabled staged rows, then both native content scripts
+  execute after restarting the same isolated profile. Cancellation/rollback,
+  source independence, symlink/traversal and duplicate-ID rejection pass; full
+  uBlock still passes. The Nix package opens/cancels the chooser and quits normally.
+  Evidence: `build-cef/verification/native-extension-install/`.
+- [x] Preserve CEF native file-filter descriptions and expanded extensions in
+  actual GTK file portals, including case-insensitive filename suffixes.
+  Real native selection returns the uppercase fixture and exact bytes; seven
+  FileChooser calls, actual D-Bus filters, save, cancellation and close pass.
+  Directory mode loss remains a separate pinned-SDK gap.
+  Evidence: `build-cef/verification/native-file-filters/`.
+- [x] Remove inert WebKitWebContext storage/property from CEF views and callers;
+  retain native session isolation. Native message/clipboard/uBlock checks and
+  actual packaged browsing/overview/preferences pass. Shell password/automation
+  context work remains separate.
 - [ ] Remove WebKitGTK/JavaScriptCore dependencies entirely once their remaining
   callers are migrated.
+- [x] Replace inert WebKitWindowProperties and popup creation with actual CEF
+  window.open metadata, browser-ready lifecycle and content-bounds callbacks.
+  Preserve Epiphany window/tab policy and normal/private opener isolation.
+  Native regular/private opener, retained child DOM, resize, close and storage
+  isolation pass. The packaged shell passes both window policies and normal quit.
+  Actual page viewports stay420x300 and640x360 across responsive toolbar animation;
+  sizing includes GTK CSS/chrome and stops enforcing after a bounded settle period.
+  Absolute x/y placement remains compositor-controlled, as with the GTK shell.
+  Package: `/nix/store/k9hpxf40gcl5vzcmsw0bhhbz17vl1nmx-jupiter-0.1.0`.
+  Evidence: `build-cef/verification/native-popup/`.
+- [x] Remove stale WebKit security-manager setup and the ignored WebKit context
+  argument from native URI-handler registration. Native CEF scheme flags remain
+  authoritative. Actual native internal schemes, resources/MIME, history restore,
+  private/tab message isolation and close lifetime pass; the packaged shell quits
+  normally. This does not remove the remaining WebKit contexts/services.
+  Evidence: `build-cef/verification/native-scheme-registration/`.
+
+- [ ] Verify actual native context-menu editing across normal/private pages,
+  cross-origin frames, and readonly/disabled fields. Chromium already provides
+  the live edit flags through its native menu model; the separate unpopulated
+  WebKitEditorState and dormant WebKit menu path have been removed above.
 - [ ] Run a final packaged browser smoke check covering the migrated services;
   port affected upstream tests rather than treating compilation as completion.
 
 ## Requested Jupiter features
+
+- [ ] After feature work, profile Jupiter against Brave on the same machine.
+  User Speedometer 3.1 baselines: Jupiter 25.7 ± 1.1, Firefox 18.5 ± 2.9,
+  Brave 33.5 ± 2.2. Compare engine versions, release compiler/runtime settings,
+  workload/background state and GTK/CEF scheduling/render overhead before
+  assigning causes. User explicitly wants this after features.
+
+- [o] Add native WebXR/VR support and verify it with the installed SteamVR/OpenXR
+  runtime. Inspect stock CEF/platform support first; preserve the no-SDK-rebuild
+  constraint until the exact engine requirements are established.
 
 These are not implemented in the Epiphany-based fork yet. Shell work can start
 before every service migration is finished, with the engine work still tracked
 above.
 
 - [ ] Add tab groups using native Epiphany/libadwaita tab behavior and styling.
-- [ ] Add Ctrl+Tab with a thumbnail grid showing only tab names as text.
-- [ ] Offer tab order versus most recently viewed order for Ctrl+Tab, including
+- [o] Port Select Ctrl+Tab with a thumbnail grid showing only tab names as text.
+  Developer and packaged GUI verify grid, strip/MRU order, reverse, Escape and
+  Control-release commit. Remaining lifetime/pointer/private cases still pending.
+- [o] Offer tab order versus most recently viewed order for Ctrl+Tab, including
   Home where applicable.
 - [ ] Check tab insertion animation and overflow against vanilla libadwaita;
   keep single-tab visibility and group navigation consistent with the requested UI.

@@ -21,6 +21,7 @@
 #pragma once
 
 #include <gio/gio.h>
+#include <gtk/gtk.h>
 
 typedef enum {
   EPHY_OPEN_URI_FLAGS_NONE                     = 0,
@@ -31,5 +32,13 @@ void     ephy_open_uri_via_flatpak_portal                (const char       *uri,
                                                           EphyOpenUriFlags  flags);
 void     ephy_open_directory_via_flatpak_portal          (const char       *uri,
                                                           EphyOpenUriFlags  flags);
+
+void     ephy_open_uri_via_portal                       (GtkWindow           *parent,
+                                                        const char          *uri,
+                                                        GCancellable        *cancellable,
+                                                        GAsyncReadyCallback  callback,
+                                                        gpointer             user_data);
+gboolean ephy_open_uri_via_portal_finish                (GAsyncResult        *result,
+                                                        GError             **error);
 
 gboolean ephy_can_install_web_apps                       (void);

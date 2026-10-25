@@ -25,6 +25,7 @@
 #include "ephy-embed-shell.h"
 
 #include <stdlib.h>
+#include <string.h>
 
 #include <glib/gi18n.h>
 #include <gtk/gtk.h>
@@ -56,7 +57,6 @@
 #define PRINT_SETTINGS_FILENAME "print-settings.ini"
 
 typedef struct {
-  WebKitWebContext *web_context;
   EphyEngineSession *network_session;
   /* Removed when the website-data and download services finish migrating. */
   WebKitNetworkSession *legacy_network_session;
@@ -72,9 +72,11 @@ typedef struct {
   EphyViewSourceHandler *source_handler;
   EphyReaderHandler *reader_handler;
   char *guid;
-  GVariant *web_extension_initialization_data;
   EphySearchEngineManager *search_engine_manager;
   GCancellable *cancellable;
+  GCancellable *overview_cancellable;
+  guint64 overview_generation;
+  GHashTable *overview_urls;
 } EphyEmbedShellPrivate;
 
 enum {
@@ -190,6 +192,11 @@ ephy_embed_shell_dispose (GObject *object)
     g_clear_object (&priv->cancellable);
   }
 
+  if (priv->overview_cancellable)
+    g_cancellable_cancel (priv->overview_cancellable);
+  g_clear_object (&priv->overview_cancellable);
+  g_clear_pointer (&priv->overview_urls, g_hash_table_unref);
+
   g_clear_object (&priv->encodings);
   g_clear_object (&priv->page_setup);
   g_clear_object (&priv->print_settings);
@@ -200,12 +207,10 @@ ephy_embed_shell_dispose (GObject *object)
   g_clear_object (&priv->downloads_manager);
   g_clear_object (&priv->password_manager);
   g_clear_object (&priv->permissions_manager);
-  g_clear_object (&priv->web_context);
   g_clear_object (&priv->network_session);
   g_clear_object (&priv->legacy_network_session);
   g_clear_pointer (&priv->guid, g_free);
   g_clear_object (&priv->search_engine_manager);
-  g_clear_pointer (&priv->web_extension_initialization_data, g_variant_unref);
 
   G_OBJECT_CLASS (ephy_embed_shell_parent_class)->dispose (object);
 }
@@ -228,35 +233,175 @@ web_process_extension_password_form_focused_message_received_cb (WebKitUserConte
                  page_id, insecure_form_action);
 }
 
+static GtkWindow *
+overview_get_window (EphyEmbedShell *shell,
+                     EphyEngineView *view)
+{
+  GtkRoot *root = gtk_widget_get_root (GTK_WIDGET (view));
+  g_autoptr (GList) children = NULL;
+
+  if (!GTK_IS_APPLICATION_WINDOW (root) ||
+      gtk_window_get_application (GTK_WINDOW (root)) != GTK_APPLICATION (shell) ||
+      !EPHY_IS_EMBED_CONTAINER (root))
+    return NULL;
+
+  children = ephy_embed_container_get_children (EPHY_EMBED_CONTAINER (root));
+  for (GList *l = children; l; l = l->next) {
+    if (EPHY_ENGINE_VIEW (ephy_embed_get_web_view (l->data)) == view)
+      return GTK_WINDOW (root);
+  }
+
+  return NULL;
+}
+
+gboolean
+ephy_embed_shell_can_show_overview (EphyEmbedShell *shell,
+                                   EphyEngineView *view)
+{
+  EphyEmbedShellPrivate *priv = ephy_embed_shell_get_instance_private (shell);
+  g_autoptr (EphyEngineSession) session = NULL;
+
+  if (!EPHY_IS_ENGINE_VIEW (view) ||
+      priv->mode == EPHY_EMBED_SHELL_MODE_PRIVATE ||
+      priv->mode == EPHY_EMBED_SHELL_MODE_INCOGNITO ||
+      priv->mode == EPHY_EMBED_SHELL_MODE_AUTOMATION ||
+      priv->mode == EPHY_EMBED_SHELL_MODE_SEARCH_PROVIDER ||
+      !priv->network_session || ephy_engine_session_is_ephemeral (priv->network_session) ||
+      !ephy_engine_web_view_has_native_uri (view, "ephy-about:overview") ||
+      !overview_get_window (shell, view))
+    return FALSE;
+
+  g_object_get (view, "network-session", &session, NULL);
+  return session && session == priv->network_session && !ephy_engine_session_is_ephemeral (session);
+}
+
+static void
+overview_broadcast (EphyEmbedShell *shell,
+                    JsonNode       *message)
+{
+  GList *windows = gtk_application_get_windows (GTK_APPLICATION (shell));
+
+  for (GList *l = windows; l; l = l->next) {
+    g_autoptr (GList) children = NULL;
+
+    if (!EPHY_IS_EMBED_CONTAINER (l->data))
+      continue;
+    children = ephy_embed_container_get_children (EPHY_EMBED_CONTAINER (l->data));
+    for (GList *t = children; t; t = t->next) {
+      EphyEngineView *view = EPHY_ENGINE_VIEW (ephy_embed_get_web_view (t->data));
+
+      if (ephy_embed_shell_can_show_overview (shell, view) &&
+          ephy_engine_web_view_is_current_page (view, "ephy-about:overview"))
+        ephy_engine_web_view_send_page_message (view, "ephy-about:overview", "overview", message);
+    }
+  }
+}
+
+char *
+ephy_embed_shell_get_overview_thumbnail_uri (EphyEmbedShell *shell,
+                                            const char     *url)
+{
+  EphyEmbedShellPrivate *priv = ephy_embed_shell_get_instance_private (shell);
+  g_autofree char *escaped = NULL;
+  g_autoptr (GFile) file = NULL;
+  g_autoptr (GFileInfo) info = NULL;
+  const char *path;
+
+  if (!url || !priv->overview_urls || !g_hash_table_contains (priv->overview_urls, url))
+    return NULL;
+  path = ephy_snapshot_service_lookup_cached_snapshot_path (ephy_snapshot_service_get_default (), url);
+  if (!path)
+    return NULL;
+  file = g_file_new_for_path (path);
+  info = g_file_query_info (file,
+                            G_FILE_ATTRIBUTE_TIME_MODIFIED ","
+                            G_FILE_ATTRIBUTE_TIME_MODIFIED_USEC ","
+                            G_FILE_ATTRIBUTE_STANDARD_SIZE,
+                            G_FILE_QUERY_INFO_NONE, NULL, NULL);
+  if (!info)
+    return NULL;
+
+  escaped = g_uri_escape_string (url, NULL, FALSE);
+  /* Chromium embeds images through the resource scheme. The endpoint below
+   * still authorizes the owning overview and resolves only native cache URLs. */
+  return g_strdup_printf ("ephy-resource:///org/gnome/epiphany/overview-thumbnail?url=%s&v=%" G_GUINT64_FORMAT "-%u-%" G_GOFFSET_FORMAT,
+                           escaped,
+                           g_file_info_get_attribute_uint64 (info, G_FILE_ATTRIBUTE_TIME_MODIFIED),
+                           g_file_info_get_attribute_uint32 (info, G_FILE_ATTRIBUTE_TIME_MODIFIED_USEC),
+                           g_file_info_get_size (info));
+}
+
+typedef struct {
+  GWeakRef shell;
+  guint64 generation;
+} OverviewQuery;
+
 static void
 history_service_query_urls_cb (EphyHistoryService *service,
                                GAsyncResult       *result,
-                               EphyEmbedShell     *shell)
+                               OverviewQuery      *query)
 {
-  EphyEmbedShellPrivate *priv = ephy_embed_shell_get_instance_private (shell);
+  g_autoptr (EphyEmbedShell) shell = g_weak_ref_get (&query->shell);
   g_autolist (EphyHistoryURL) urls = NULL;
   g_autoptr (GError) error = NULL;
-  GList *l;
-  GVariantBuilder builder;
+  g_autoptr (JsonBuilder) builder = NULL;
+  g_autoptr (JsonNode) message = NULL;
+  EphyEmbedShellPrivate *priv;
+  guint64 generation = query->generation;
 
+  g_weak_ref_clear (&query->shell);
+  g_free (query);
   urls = ephy_history_service_query_urls_finish (service, result, &error);
+  if (!shell)
+    return;
+  priv = ephy_embed_shell_get_instance_private (shell);
+  if (generation != priv->overview_generation || !priv->overview_cancellable ||
+      g_cancellable_is_cancelled (priv->overview_cancellable))
+    return;
   if (error) {
     if (!g_error_matches (error, G_IO_ERROR, G_IO_ERROR_CANCELLED))
       g_warning ("Failed to query overview URLs: %s", error->message);
     return;
   }
 
-  g_variant_builder_init (&builder, G_VARIANT_TYPE ("a(ssb)"));
-  for (l = urls; l; l = g_list_next (l)) {
-    EphyHistoryURL *url = (EphyHistoryURL *)l->data;
+  g_hash_table_remove_all (priv->overview_urls);
+  for (GList *l = urls; l; l = l->next) {
+    EphyHistoryURL *url = l->data;
 
-    g_variant_builder_add (&builder, "(ssb)", url->url, url->title, url->pinned);
-    ephy_embed_shell_schedule_thumbnail_update (shell, (EphyHistoryURL *)l->data);
+    g_hash_table_add (priv->overview_urls, g_strdup (url->url));
   }
 
-  webkit_web_context_send_message_to_all_extensions (priv->web_context,
-                                                     webkit_user_message_new ("History.SetURLs",
-                                                                              g_variant_builder_end (&builder)));
+  builder = json_builder_new ();
+  json_builder_begin_object (builder);
+  json_builder_set_member_name (builder, "type");
+  json_builder_add_string_value (builder, "urls");
+  json_builder_set_member_name (builder, "urls");
+  json_builder_begin_array (builder);
+  for (GList *l = urls; l; l = l->next) {
+    EphyHistoryURL *url = l->data;
+    g_autofree char *thumbnail = ephy_embed_shell_get_overview_thumbnail_uri (shell, url->url);
+
+    json_builder_begin_object (builder);
+    json_builder_set_member_name (builder, "url");
+    json_builder_add_string_value (builder, url->url);
+    json_builder_set_member_name (builder, "title");
+    json_builder_add_string_value (builder, url->title ? url->title : "");
+    json_builder_set_member_name (builder, "pinned");
+    json_builder_add_boolean_value (builder, url->pinned);
+    json_builder_set_member_name (builder, "thumbnail");
+    if (thumbnail)
+      json_builder_add_string_value (builder, thumbnail);
+    else
+      json_builder_add_null_value (builder);
+    json_builder_end_object (builder);
+  }
+  json_builder_end_array (builder);
+  json_builder_end_object (builder);
+  message = json_builder_get_root (builder);
+  overview_broadcast (shell, message);
+
+  for (GList *l = urls; l; l = l->next)
+    ephy_embed_shell_schedule_thumbnail_update (shell, l->data);
 }
 
 void
@@ -264,11 +409,29 @@ ephy_embed_shell_update_overview_urls (EphyEmbedShell *shell)
 {
   EphyEmbedShellPrivate *priv = ephy_embed_shell_get_instance_private (shell);
   g_autoptr (EphyHistoryQuery) query = NULL;
+  OverviewQuery *request;
 
+  if (!priv->network_session || ephy_engine_session_is_ephemeral (priv->network_session) ||
+      priv->mode == EPHY_EMBED_SHELL_MODE_PRIVATE ||
+      priv->mode == EPHY_EMBED_SHELL_MODE_INCOGNITO ||
+      priv->mode == EPHY_EMBED_SHELL_MODE_AUTOMATION ||
+      priv->mode == EPHY_EMBED_SHELL_MODE_SEARCH_PROVIDER)
+    return;
+
+  if (priv->overview_cancellable)
+    g_cancellable_cancel (priv->overview_cancellable);
+  g_clear_object (&priv->overview_cancellable);
+  priv->overview_cancellable = g_cancellable_new ();
+  if (!priv->overview_urls)
+    priv->overview_urls = g_hash_table_new_full (g_str_hash, g_str_equal, g_free, NULL);
+
+  request = g_new0 (OverviewQuery, 1);
+  g_weak_ref_init (&request->shell, shell);
+  request->generation = ++priv->overview_generation;
   query = ephy_history_query_new_for_overview ();
-  ephy_history_service_query_urls (priv->global_history_service, query, priv->cancellable,
-                                   (GAsyncReadyCallback)history_service_query_urls_cb,
-                                   shell);
+  ephy_history_service_query_urls (ephy_embed_shell_get_global_history_service (shell), query,
+                                   priv->overview_cancellable,
+                                   (GAsyncReadyCallback)history_service_query_urls_cb, request);
 }
 
 static void
@@ -278,44 +441,112 @@ history_service_urls_visited_cb (EphyHistoryService *history,
   ephy_embed_shell_update_overview_urls (shell);
 }
 
+typedef struct {
+  GWeakRef shell;
+  GWeakRef view;
+  char *url;
+  gboolean pin;
+  gboolean show_toast;
+  gulong load_changed_handler;
+} OverviewMutation;
+
 static void
-history_set_url_hidden_cb (EphyHistoryService *service,
-                           GAsyncResult       *result,
-                           EphyEmbedShell     *shell)
+overview_mutation_load_changed_cb (EphyEngineView  *view,
+                                   WebKitLoadEvent  event,
+                                   OverviewMutation *mutation)
 {
-  g_autoptr (GError) error = NULL;
-
-  if (!ephy_history_service_set_url_hidden_finish (service, result, &error)) {
-    if (!g_error_matches (error, G_IO_ERROR, G_IO_ERROR_CANCELLED))
-      g_warning ("Failed to hide URL: %s", error->message);
-    return;
-  }
-
-  ephy_embed_shell_update_overview_urls (shell);
+  if (event == WEBKIT_LOAD_STARTED)
+    mutation->show_toast = FALSE;
 }
 
 static void
-web_process_extension_overview_message_received_cb (WebKitUserContentManager *manager,
-                                                    JSCValue                 *message,
-                                                    EphyEmbedShell           *shell)
+history_overview_mutation_cb (EphyHistoryService *service,
+                              GAsyncResult       *result,
+                              OverviewMutation   *mutation)
+{
+  g_autoptr (EphyEmbedShell) shell = g_weak_ref_get (&mutation->shell);
+  g_autoptr (EphyEngineView) view = g_weak_ref_get (&mutation->view);
+  g_autoptr (GError) error = NULL;
+  gboolean success;
+
+  if (view)
+    g_signal_handler_disconnect (view, mutation->load_changed_handler);
+
+  success = mutation->pin ? ephy_history_service_set_url_pinned_finish (service, result, &error)
+                         : ephy_history_service_set_url_hidden_finish (service, result, &error);
+  if (!success) {
+    if (!g_error_matches (error, G_IO_ERROR, G_IO_ERROR_CANCELLED))
+      g_warning ("Failed to update overview URL: %s", error ? error->message : "history entry no longer exists");
+  } else if (shell) {
+    ephy_embed_shell_update_overview_urls (shell);
+    if (!mutation->pin && mutation->show_toast && view &&
+        ephy_embed_shell_can_show_overview (shell, view) &&
+        ephy_engine_web_view_is_current_page (view, "ephy-about:overview"))
+      gtk_widget_activate_action (GTK_WIDGET (overview_get_window (shell, view)),
+                                  "win.show-overview-undo-toast", "s", mutation->url);
+  }
+
+  g_weak_ref_clear (&mutation->shell);
+  g_weak_ref_clear (&mutation->view);
+  g_free (mutation->url);
+  g_free (mutation);
+}
+
+void
+ephy_embed_shell_handle_overview_message (EphyEmbedShell *shell,
+                                          EphyEngineView *view,
+                                          JsonNode       *message)
 {
   EphyEmbedShellPrivate *priv = ephy_embed_shell_get_instance_private (shell);
-  g_autofree char *url_to_remove = NULL;
-  GtkWindow *window;
+  JsonObject *object;
+  JsonNode *action_node, *url_node, *pinned_node;
+  const char *action, *url;
+  OverviewMutation *mutation;
+  gboolean pin;
 
-  url_to_remove = jsc_value_to_string (message);
-
-  ephy_history_service_set_url_hidden (priv->global_history_service,
-                                       url_to_remove, TRUE, priv->cancellable,
-                                       (GAsyncReadyCallback)history_set_url_hidden_cb,
-                                       shell);
-
-  window = gtk_application_get_active_window (GTK_APPLICATION (shell));
-  if (window) {
-    gtk_widget_activate_action (GTK_WIDGET (window),
-                                "win.show-overview-undo-toast",
-                                "s", url_to_remove);
+  if (!ephy_embed_shell_can_show_overview (shell, view) ||
+      !ephy_engine_web_view_is_current_page (view, "ephy-about:overview") || !message ||
+      !JSON_NODE_HOLDS_OBJECT (message))
+    return;
+  object = json_node_get_object (message);
+  action_node = json_object_get_member (object, "action");
+  if (!action_node || json_node_get_value_type (action_node) != G_TYPE_STRING)
+    return;
+  action = json_node_get_string (action_node);
+  if (g_str_equal (action, "ready")) {
+    if (json_object_get_size (object) == 1)
+      ephy_embed_shell_update_overview_urls (shell);
+    return;
   }
+  pin = g_str_equal (action, "pin");
+  if (!pin && !g_str_equal (action, "remove"))
+    return;
+  url_node = json_object_get_member (object, "url");
+  if (!url_node || json_node_get_value_type (url_node) != G_TYPE_STRING)
+    return;
+  url = json_node_get_string (url_node);
+  if (!url || !*url || !priv->overview_urls || !g_hash_table_contains (priv->overview_urls, url))
+    return;
+  pinned_node = json_object_get_member (object, "pinned");
+  if (json_object_get_size (object) != (pin ? 3 : 2) ||
+      (pin && (!pinned_node || json_node_get_value_type (pinned_node) != G_TYPE_BOOLEAN)))
+    return;
+
+  mutation = g_new0 (OverviewMutation, 1);
+  g_weak_ref_init (&mutation->shell, shell);
+  g_weak_ref_init (&mutation->view, view);
+  mutation->url = g_strdup (url);
+  mutation->pin = pin;
+  mutation->show_toast = TRUE;
+  mutation->load_changed_handler = g_signal_connect (view, "load-changed",
+                                                     G_CALLBACK (overview_mutation_load_changed_cb), mutation);
+  if (pin)
+    ephy_history_service_set_url_pinned (priv->global_history_service, url,
+                                         json_node_get_boolean (pinned_node), priv->cancellable,
+                                         (GAsyncReadyCallback)history_overview_mutation_cb, mutation);
+  else
+    ephy_history_service_set_url_hidden (priv->global_history_service, url, TRUE, priv->cancellable,
+                                         (GAsyncReadyCallback)history_overview_mutation_cb, mutation);
 }
 
 static char *
@@ -362,39 +593,6 @@ web_process_extension_autofill_askuser_received_cb (WebKitUserContentManager *ma
 
   g_signal_emit (shell, signals[AUTOFILL_SIGNAL], 0,
                  page_id, frame_id, selector, is_fillable_element, has_personal_fields, has_card_fields, x, y, element_width, element_height);
-}
-
-static void
-history_set_url_pinned_cb (EphyHistoryService *service,
-                           GAsyncResult       *result,
-                           EphyEmbedShell     *shell)
-{
-  g_autoptr (GError) error = NULL;
-
-  if (!ephy_history_service_set_url_pinned_finish (service, result, &error)) {
-    if (!g_error_matches (error, G_IO_ERROR, G_IO_ERROR_CANCELLED))
-      g_warning ("Failed to pin/unpin URL: %s", error->message);
-    return;
-  }
-
-  ephy_embed_shell_update_overview_urls (shell);
-}
-
-static void
-web_process_extension_overview_pin_message_received_cb (WebKitUserContentManager *manager,
-                                                        JSCValue                 *message,
-                                                        EphyEmbedShell           *shell)
-{
-  EphyEmbedShellPrivate *priv = ephy_embed_shell_get_instance_private (shell);
-  g_autofree char *url = property_to_string_or_null (message, "url");
-  gboolean pinned = property_to_boolean (message, "pinned");
-
-  if (url) {
-    ephy_history_service_set_url_pinned (priv->global_history_service,
-                                         url, pinned, priv->cancellable,
-                                         (GAsyncReadyCallback)history_set_url_pinned_cb,
-                                         shell);
-  }
 }
 
 static void
@@ -486,11 +684,15 @@ history_service_url_title_changed_cb (EphyHistoryService *service,
                                       const char         *title,
                                       EphyEmbedShell     *shell)
 {
-  EphyEmbedShellPrivate *priv = ephy_embed_shell_get_instance_private (shell);
+  g_autoptr (JsonObject) object = json_object_new ();
+  g_autoptr (JsonNode) message = json_node_new (JSON_NODE_OBJECT);
 
-  webkit_web_context_send_message_to_all_extensions (priv->web_context,
-                                                     webkit_user_message_new ("History.SetURLTitle",
-                                                                              g_variant_new ("(ss)", url, title)));
+  json_object_set_string_member (object, "type", "title");
+  json_object_set_string_member (object, "url", url);
+  json_object_set_string_member (object, "title", title ? title : "");
+  json_node_set_object (message, object);
+  overview_broadcast (shell, message);
+  ephy_embed_shell_update_overview_urls (shell);
 }
 
 static void
@@ -500,9 +702,9 @@ history_service_url_deleted_cb (EphyHistoryService *service,
 {
   EphyEmbedShellPrivate *priv = ephy_embed_shell_get_instance_private (shell);
 
-  webkit_web_context_send_message_to_all_extensions (priv->web_context,
-                                                     webkit_user_message_new ("History.DeleteURL",
-                                                                              g_variant_new_string (url->url)));
+  if (priv->overview_urls)
+    g_hash_table_remove (priv->overview_urls, url->url);
+  ephy_embed_shell_update_overview_urls (shell);
 }
 
 static void
@@ -511,12 +713,10 @@ history_service_host_deleted_cb (EphyHistoryService *service,
                                  EphyEmbedShell     *shell)
 {
   EphyEmbedShellPrivate *priv = ephy_embed_shell_get_instance_private (shell);
-  g_autoptr (GUri) deleted_uri = NULL;
 
-  deleted_uri = g_uri_parse (deleted_url, G_URI_FLAGS_PARSE_RELAXED, NULL);
-  webkit_web_context_send_message_to_all_extensions (priv->web_context,
-                                                     webkit_user_message_new ("History.DeleteHost",
-                                                                              g_variant_new_string (g_uri_get_host (deleted_uri))));
+  if (priv->overview_urls)
+    g_hash_table_remove_all (priv->overview_urls);
+  ephy_embed_shell_update_overview_urls (shell);
 }
 
 static void
@@ -525,9 +725,9 @@ history_service_cleared_cb (EphyHistoryService *service,
 {
   EphyEmbedShellPrivate *priv = ephy_embed_shell_get_instance_private (shell);
 
-  webkit_web_context_send_message_to_all_extensions (priv->web_context,
-                                                     webkit_user_message_new ("History.Clear",
-                                                                              NULL));
+  if (priv->overview_urls)
+    g_hash_table_remove_all (priv->overview_urls);
+  ephy_embed_shell_update_overview_urls (shell);
 }
 
 void
@@ -535,30 +735,48 @@ ephy_embed_shell_set_thumbnail_path (EphyEmbedShell *shell,
                                      const char     *url,
                                      const char     *path)
 {
-  EphyEmbedShellPrivate *priv = ephy_embed_shell_get_instance_private (shell);
+  g_autoptr (JsonObject) object = json_object_new ();
+  g_autoptr (JsonNode) message = json_node_new (JSON_NODE_OBJECT);
+  g_autofree char *thumbnail = NULL;
 
-  webkit_web_context_send_message_to_all_extensions (priv->web_context,
-                                                     webkit_user_message_new ("History.SetURLThumbnail",
-                                                                              g_variant_new ("(ss)", url, path)));
+  /* Paths remain native: only the snapshot service's URL mapping is exposed. */
+  if (g_strcmp0 (path, ephy_snapshot_service_lookup_cached_snapshot_path (
+                     ephy_snapshot_service_get_default (), url)) != 0)
+    return;
+  thumbnail = ephy_embed_shell_get_overview_thumbnail_uri (shell, url);
+  json_object_set_string_member (object, "type", "thumbnail");
+  json_object_set_string_member (object, "url", url);
+  if (thumbnail)
+    json_object_set_string_member (object, "thumbnail", thumbnail);
+  else
+    json_object_set_null_member (object, "thumbnail");
+  json_node_set_object (message, object);
+  overview_broadcast (shell, message);
 }
+
+typedef struct {
+  GWeakRef shell;
+  char *url;
+} OverviewSnapshot;
 
 static void
 got_snapshot_path_for_url_cb (EphySnapshotService *service,
                               GAsyncResult        *result,
-                              char                *url)
+                              OverviewSnapshot    *data)
 {
+  g_autoptr (EphyEmbedShell) shell = g_weak_ref_get (&data->shell);
   g_autofree char *snapshot = NULL;
   g_autoptr (GError) error = NULL;
 
   snapshot = ephy_snapshot_service_get_snapshot_path_for_url_finish (service, result, &error);
-  if (snapshot) {
-    ephy_embed_shell_set_thumbnail_path (ephy_embed_shell_get_default (), url, snapshot);
-  } else if (!g_error_matches (error, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
-    /* Bad luck, not something to warn about. */
-    g_info ("Failed to get snapshot for URL %s: %s", url, error->message);
-  }
+  if (snapshot && shell)
+    ephy_embed_shell_set_thumbnail_path (shell, data->url, snapshot);
+  else if (error && !g_error_matches (error, G_IO_ERROR, G_IO_ERROR_CANCELLED))
+    g_info ("Failed to get snapshot for URL %s: %s", data->url, error->message);
 
-  g_free (url);
+  g_weak_ref_clear (&data->shell);
+  g_free (data->url);
+  g_free (data);
 }
 
 void
@@ -566,21 +784,145 @@ ephy_embed_shell_schedule_thumbnail_update (EphyEmbedShell *shell,
                                             EphyHistoryURL *url)
 {
   EphyEmbedShellPrivate *priv = ephy_embed_shell_get_instance_private (shell);
-  EphySnapshotService *service;
+  EphySnapshotService *service = ephy_snapshot_service_get_default ();
   const char *snapshot;
 
-  service = ephy_snapshot_service_get_default ();
-  snapshot = ephy_snapshot_service_lookup_cached_snapshot_path (service, url->url);
+  if (!priv->network_session || ephy_engine_session_is_ephemeral (priv->network_session) ||
+      priv->mode == EPHY_EMBED_SHELL_MODE_PRIVATE ||
+      priv->mode == EPHY_EMBED_SHELL_MODE_INCOGNITO ||
+      priv->mode == EPHY_EMBED_SHELL_MODE_AUTOMATION)
+    return;
 
+  snapshot = ephy_snapshot_service_lookup_cached_snapshot_path (service, url->url);
   if (snapshot) {
     ephy_embed_shell_set_thumbnail_path (shell, url->url, snapshot);
   } else {
-    ephy_snapshot_service_get_snapshot_path_for_url_async (service,
-                                                           url->url,
+    OverviewSnapshot *data = g_new0 (OverviewSnapshot, 1);
+
+    g_weak_ref_init (&data->shell, shell);
+    data->url = g_strdup (url->url);
+    ephy_snapshot_service_get_snapshot_path_for_url_async (service, url->url,
                                                            priv->cancellable,
-                                                           (GAsyncReadyCallback)got_snapshot_path_for_url_cb,
-                                                           g_strdup (url->url));
+                                                           (GAsyncReadyCallback)got_snapshot_path_for_url_cb, data);
   }
+}
+
+typedef struct {
+  GWeakRef shell;
+  EphyEngineSchemeRequest *request;
+  char *url;
+} OverviewThumbnailRequest;
+
+static void
+overview_thumbnail_open_cb (GFile                    *file,
+                            GAsyncResult             *result,
+                            OverviewThumbnailRequest *data)
+{
+  g_autoptr (EphyEmbedShell) shell = g_weak_ref_get (&data->shell);
+  g_autoptr (GFileInputStream) stream = NULL;
+  g_autoptr (GError) error = NULL;
+  g_autofree char *thumbnail = NULL;
+  EphyEngineView *view = ephy_engine_uri_scheme_request_get_web_view (data->request);
+
+  stream = g_file_read_finish (file, result, &error);
+  if (shell)
+    thumbnail = ephy_embed_shell_get_overview_thumbnail_uri (shell, data->url);
+  if (!shell || !thumbnail || !ephy_embed_shell_can_show_overview (shell, view) ||
+      !ephy_engine_web_view_is_current_page (view, "ephy-about:overview")) {
+    g_clear_error (&error);
+    error = g_error_new_literal (G_IO_ERROR, G_IO_ERROR_PERMISSION_DENIED, "Overview thumbnail request is no longer authorized");
+  }
+  if (error) {
+    g_debug ("Overview thumbnail read failed: %s", error->message);
+    ephy_engine_uri_scheme_request_finish_error (data->request, error);
+  } else {
+    g_debug ("Overview thumbnail read completed");
+    ephy_engine_uri_scheme_request_finish (data->request, G_INPUT_STREAM (stream), -1, "image/jpeg");
+  }
+
+  g_weak_ref_clear (&data->shell);
+  g_object_unref (data->request);
+  g_free (data->url);
+  g_free (data);
+}
+
+static gboolean
+overview_thumbnail_revision_is_valid (const char *revision)
+{
+  g_auto (GStrv) parts = NULL;
+  guint64 value;
+
+  if (strlen (revision) > 48)
+    return FALSE;
+  parts = g_strsplit (revision, "-", -1);
+  return g_strv_length (parts) == 3 &&
+         g_ascii_string_to_unsigned (parts[0], 10, 0, G_MAXUINT64, &value, NULL) &&
+         g_ascii_string_to_unsigned (parts[1], 10, 0, 999999, &value, NULL) &&
+         g_ascii_string_to_unsigned (parts[2], 10, 0, G_MAXINT64, &value, NULL);
+}
+
+void
+ephy_embed_shell_handle_overview_thumbnail_request (EphyEmbedShell          *shell,
+                                                    EphyEngineSchemeRequest *request)
+{
+  EphyEmbedShellPrivate *priv = ephy_embed_shell_get_instance_private (shell);
+  EphyEngineView *view = ephy_engine_uri_scheme_request_get_web_view (request);
+  g_autoptr (GUri) uri = NULL;
+  g_autoptr (GHashTable) params = NULL;
+  g_autoptr (GError) error = NULL;
+  g_autoptr (GFile) file = NULL;
+  g_autofree char *thumbnail = NULL;
+  const char *url = NULL;
+  const char *revision;
+  const char *path;
+  OverviewThumbnailRequest *data;
+
+  g_debug ("Overview thumbnail request received (main resource: %d)",
+           ephy_engine_uri_scheme_request_is_main_resource (request));
+  if (!ephy_embed_shell_can_show_overview (shell, view) ||
+      !ephy_engine_web_view_is_current_page (view, "ephy-about:overview")) {
+    error = g_error_new_literal (G_IO_ERROR, G_IO_ERROR_PERMISSION_DENIED, "Overview thumbnail request is not authorized");
+    goto fail;
+  }
+  uri = g_uri_parse (ephy_engine_uri_scheme_request_get_uri (request), G_URI_FLAGS_ENCODED, &error);
+  if (!uri)
+    goto fail;
+  if (g_strcmp0 (g_uri_get_scheme (uri), "ephy-resource") != 0 ||
+      g_strcmp0 (g_uri_get_path (uri), "/org/gnome/epiphany/overview-thumbnail") != 0 ||
+      (g_uri_get_host (uri) && *g_uri_get_host (uri)) ||
+      g_uri_get_userinfo (uri) || g_uri_get_port (uri) != -1 ||
+      g_uri_get_fragment (uri) || !g_uri_get_query (uri)) {
+    error = g_error_new_literal (G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT, "Invalid overview thumbnail URI");
+    goto fail;
+  }
+  params = g_uri_parse_params (g_uri_get_query (uri), -1, "&", G_URI_PARAMS_NONE, &error);
+  if (!params)
+    goto fail;
+  revision = g_hash_table_lookup (params, "v");
+  if (g_hash_table_size (params) != (revision ? 2 : 1) ||
+      (revision && !overview_thumbnail_revision_is_valid (revision))) {
+    error = g_error_new_literal (G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT, "Invalid overview thumbnail parameters");
+    goto fail;
+  }
+  url = g_hash_table_lookup (params, "url");
+  thumbnail = ephy_embed_shell_get_overview_thumbnail_uri (shell, url);
+  if (!thumbnail) {
+    error = g_error_new_literal (G_IO_ERROR, G_IO_ERROR_NOT_FOUND, "Overview thumbnail is not in the history snapshot cache");
+    goto fail;
+  }
+  path = ephy_snapshot_service_lookup_cached_snapshot_path (ephy_snapshot_service_get_default (), url);
+  file = g_file_new_for_path (path);
+  data = g_new0 (OverviewThumbnailRequest, 1);
+  g_weak_ref_init (&data->shell, shell);
+  data->request = g_object_ref (request);
+  data->url = g_strdup (url);
+  g_file_read_async (file, G_PRIORITY_DEFAULT, priv->cancellable,
+                     (GAsyncReadyCallback)overview_thumbnail_open_cb, data);
+  return;
+
+fail:
+  g_debug ("Overview thumbnail request rejected: %s", error->message);
+  ephy_engine_uri_scheme_request_finish_error (request, error);
 }
 
 /**
@@ -693,6 +1035,10 @@ ephy_resource_request_cb (EphyEngineSchemeRequest *request)
   g_autoptr (GError) error = NULL;
 
   path = ephy_engine_uri_scheme_request_get_path (request);
+  if (g_strcmp0 (path, "/org/gnome/epiphany/overview-thumbnail") == 0) {
+    ephy_embed_shell_handle_overview_thumbnail_request (ephy_embed_shell_get_default (), request);
+    return;
+  }
   if (ephy_about_handler_handle_application_icon (request))
     return;
   if (!g_resources_get_info (path, 0, &size, NULL, &error)) {
@@ -702,6 +1048,23 @@ ephy_resource_request_cb (EphyEngineSchemeRequest *request)
 
   request_view = ephy_engine_uri_scheme_request_get_web_view (request);
   uri = ephy_engine_web_view_get_uri (request_view);
+  if (!uri)
+    uri = "";
+
+  if (g_strcmp0 (path, "/org/gnome/epiphany/overview.js") == 0) {
+    if (ephy_embed_shell_can_show_overview (ephy_embed_shell_get_default (), request_view) &&
+        ephy_engine_web_view_is_current_page (request_view, "ephy-about:overview")) {
+      stream = g_resources_open_stream (path, 0, &error);
+      if (stream)
+        ephy_engine_uri_scheme_request_finish (request, stream, size, "text/javascript");
+      else
+        ephy_engine_uri_scheme_request_finish_error (request, error);
+    } else {
+      error = g_error_new_literal (G_IO_ERROR, G_IO_ERROR_PERMISSION_DENIED, "Overview script request is not authorized");
+      ephy_engine_uri_scheme_request_finish_error (request, error);
+    }
+    return;
+  }
 
   /* ephy-resource:// requests bypass CORS in order to allow custom schemes to
    * access ephy-resource://. Accordingly, we need some custom security to
@@ -746,27 +1109,6 @@ ephy_embed_shell_should_remember_passwords (EphyEmbedShell *shell)
 }
 
 static void
-initialize_web_process_extensions (WebKitWebContext *web_context,
-                                   EphyEmbedShell   *shell)
-{
-  EphyEmbedShellPrivate *priv = ephy_embed_shell_get_instance_private (shell);
-  g_autoptr (GVariant) user_data = NULL;
-
-#if DEVELOPER_MODE
-  webkit_web_context_set_web_process_extensions_directory (web_context, BUILD_ROOT "/embed/web-process-extension");
-#else
-  webkit_web_context_set_web_process_extensions_directory (web_context, EPHY_WEB_PROCESS_EXTENSIONS_DIR);
-#endif
-
-  user_data = g_variant_new ("(smsbv)",
-                             priv->guid,
-                             ephy_profile_dir_is_default () ? NULL : ephy_profile_dir (),
-                             ephy_embed_shell_should_remember_passwords (shell),
-                             priv->web_extension_initialization_data);
-  webkit_web_context_set_web_process_extensions_initialization_user_data (web_context, g_steal_pointer (&user_data));
-}
-
-static void
 ephy_embed_shell_create_network_session_if_needed (EphyEmbedShell *shell)
 {
   EphyEmbedShellPrivate *priv = ephy_embed_shell_get_instance_private (shell);
@@ -784,21 +1126,9 @@ ephy_embed_shell_create_network_session_if_needed (EphyEmbedShell *shell)
 }
 
 static void
-ephy_embed_shell_create_web_context (EphyEmbedShell *shell)
-{
-  EphyEmbedShellPrivate *priv = ephy_embed_shell_get_instance_private (shell);
-
-  priv->web_context = webkit_web_context_new ();
-
-  if (priv->mode == EPHY_EMBED_SHELL_MODE_AUTOMATION)
-    webkit_web_context_set_automation_allowed (priv->web_context, TRUE);
-}
-
-static void
 download_started_cb (EphyEmbedShell *shell,
                      EphyEngineDownload *download)
 {
-  EphyEmbedShellPrivate *priv = ephy_embed_shell_get_instance_private (shell);
   g_autoptr (EphyDownload) ephy_download = NULL;
   gboolean ephy_download_set;
 
@@ -810,7 +1140,7 @@ download_started_cb (EphyEmbedShell *shell,
   }
 
   /* Only create an EphyDownload for the EphyEngineDownload if it doesn't exist yet.
-   * This can happen when the download has been started automatically by WebKit,
+   * This can happen when the download has been started automatically by CEF,
    * due to a context menu action or policy checker decision. Downloads started
    * explicitly by Epiphany are marked with ephy-download-set GObject data.
    */
@@ -819,19 +1149,7 @@ download_started_cb (EphyEmbedShell *shell,
     return;
 
   ephy_download = ephy_download_new (download);
-  ephy_downloads_manager_add_download (priv->downloads_manager, ephy_download);
-}
-
-static void
-remember_passwords_setting_changed_cb (GSettings      *settings,
-                                       char           *key,
-                                       EphyEmbedShell *shell)
-{
-  EphyEmbedShellPrivate *priv = ephy_embed_shell_get_instance_private (shell);
-
-  webkit_web_context_send_message_to_all_extensions (priv->web_context,
-                                                     webkit_user_message_new ("PasswordManager.SetShouldRememberPasswords",
-                                                                              g_variant_new_boolean (ephy_embed_shell_should_remember_passwords (shell))));
+  ephy_downloads_manager_add_download (ephy_embed_shell_get_downloads_manager (shell), ephy_download);
 }
 
 static void
@@ -847,16 +1165,13 @@ enable_itp_setting_changed_cb (GSettings      *settings,
 }
 
 static void
-add_path_to_sandbox_or_die (const char       *path,
-                            WebKitWebContext *context)
+ensure_profile_directory (const char *path)
 {
   g_autoptr (GError) error = NULL;
 
   ephy_ensure_dir_exists (path, &error);
   if (error)
     g_error ("Failed to create directory %s: %s", path, error->message);
-
-  webkit_web_context_add_path_to_sandbox (context, path, TRUE);
 }
 
 static void
@@ -864,21 +1179,12 @@ ephy_embed_shell_startup (GApplication *application)
 {
   EphyEmbedShell *shell = EPHY_EMBED_SHELL (application);
   EphyEmbedShellPrivate *priv = ephy_embed_shell_get_instance_private (shell);
-  WebKitSecurityManager *security_manager;
 
   G_APPLICATION_CLASS (ephy_embed_shell_parent_class)->startup (application);
 
-  add_path_to_sandbox_or_die (ephy_profile_dir (), priv->web_context);
-  add_path_to_sandbox_or_die (ephy_cache_dir (), priv->web_context);
-  add_path_to_sandbox_or_die (ephy_config_dir (), priv->web_context);
-
-#if DEVELOPER_MODE
-  add_path_to_sandbox_or_die (BUILD_ROOT, priv->web_context);
-#endif
-
-  g_signal_connect_object (priv->web_context, "initialize-web-process-extensions",
-                           G_CALLBACK (initialize_web_process_extensions),
-                           shell, G_CONNECT_DEFAULT);
+  ensure_profile_directory (ephy_profile_dir ());
+  ensure_profile_directory (ephy_cache_dir ());
+  ensure_profile_directory (ephy_config_dir ());
 
   priv->password_manager = ephy_password_manager_new ();
 
@@ -887,38 +1193,28 @@ ephy_embed_shell_startup (GApplication *application)
     ephy_engine_favicon_database_set_directory (ephy_engine_favicon_database_get_default (), favicon_dir);
   }
 
-  security_manager = webkit_web_context_get_security_manager (priv->web_context);
-
   /* about: URIs handler */
   priv->about_handler = ephy_about_handler_new ();
-  ephy_engine_context_register_uri_scheme (priv->web_context,
-                                          EPHY_ABOUT_SCHEME,
-                                          (EphyEngineSchemeRequestCallback)about_request_cb,
-                                          shell, NULL);
-  webkit_security_manager_register_uri_scheme_as_display_isolated (security_manager, EPHY_ABOUT_SCHEME);
-  /* Register about scheme as local so that it can contain file resources */
-  webkit_security_manager_register_uri_scheme_as_local (security_manager, EPHY_ABOUT_SCHEME);
+  ephy_engine_register_uri_scheme (EPHY_ABOUT_SCHEME,
+                                   (EphyEngineSchemeRequestCallback)about_request_cb,
+                                   shell, NULL);
 
   /* view source handler */
   priv->source_handler = ephy_view_source_handler_new ();
-  ephy_engine_context_register_uri_scheme (priv->web_context, EPHY_VIEW_SOURCE_SCHEME,
-                                          (EphyEngineSchemeRequestCallback)source_request_cb,
-                                          shell, NULL);
-  webkit_security_manager_register_uri_scheme_as_display_isolated (security_manager, EPHY_VIEW_SOURCE_SCHEME);
+  ephy_engine_register_uri_scheme (EPHY_VIEW_SOURCE_SCHEME,
+                                   (EphyEngineSchemeRequestCallback)source_request_cb,
+                                   shell, NULL);
 
   /* reader mode handler */
   priv->reader_handler = ephy_reader_handler_new ();
-  ephy_engine_context_register_uri_scheme (priv->web_context, EPHY_READER_SCHEME,
-                                          (EphyEngineSchemeRequestCallback)reader_request_cb,
-                                          shell, NULL);
-  webkit_security_manager_register_uri_scheme_as_display_isolated (security_manager, EPHY_READER_SCHEME);
+  ephy_engine_register_uri_scheme (EPHY_READER_SCHEME,
+                                   (EphyEngineSchemeRequestCallback)reader_request_cb,
+                                   shell, NULL);
 
   /* ephy-resource handler */
-  ephy_engine_context_register_uri_scheme (priv->web_context, "ephy-resource",
-                                          (EphyEngineSchemeRequestCallback)ephy_resource_request_cb,
-                                          NULL, NULL);
-  webkit_security_manager_register_uri_scheme_as_secure (webkit_web_context_get_security_manager (priv->web_context),
-                                                         "ephy-resource");
+  ephy_engine_register_uri_scheme ("ephy-resource",
+                                   (EphyEngineSchemeRequestCallback)ephy_resource_request_cb,
+                                   NULL, NULL);
 
   g_signal_connect_object (priv->network_session, "download-started",
                            G_CALLBACK (download_started_cb), shell, G_CONNECT_SWAPPED);
@@ -926,10 +1222,6 @@ ephy_embed_shell_startup (GApplication *application)
   g_signal_connect_object (EPHY_SETTINGS_WEB, "changed::enable-itp",
                            G_CALLBACK (enable_itp_setting_changed_cb), shell, G_CONNECT_DEFAULT);
 
-  if (!is_private_profile_mode (shell)) {
-    g_signal_connect_object (EPHY_SETTINGS_WEB, "changed::remember-passwords",
-                             G_CALLBACK (remember_passwords_setting_changed_cb), shell, G_CONNECT_DEFAULT);
-  }
 }
 
 static void
@@ -984,14 +1276,12 @@ ephy_embed_shell_constructed (GObject *object)
 
   priv->cancellable = g_cancellable_new ();
 
-  ephy_embed_shell_create_web_context (shell);
   ephy_embed_shell_create_network_session_if_needed (shell);
 
   if (priv->mode != EPHY_EMBED_SHELL_MODE_SEARCH_PROVIDER) {
     priv->permissions_manager = ephy_permissions_manager_new (priv->network_session);
   }
 
-  ephy_embed_shell_set_web_extension_initialization_data (shell, g_variant_new ("a{sv}", NULL));
 }
 
 static void
@@ -1275,14 +1565,6 @@ ephy_embed_shell_get_guid (EphyEmbedShell *shell)
   return priv->guid;
 }
 
-WebKitWebContext *
-ephy_embed_shell_get_web_context (EphyEmbedShell *shell)
-{
-  EphyEmbedShellPrivate *priv = ephy_embed_shell_get_instance_private (shell);
-
-  return priv->web_context;
-}
-
 EphyEngineSession *
 ephy_embed_shell_get_network_session (EphyEmbedShell *shell)
 {
@@ -1348,20 +1630,6 @@ ephy_embed_shell_register_ucm (EphyEmbedShell           *shell,
    */
 
   webkit_user_content_manager_register_script_message_handler (ucm,
-                                                               "overview",
-                                                               priv->guid);
-  g_signal_connect_object (ucm, "script-message-received::overview",
-                           G_CALLBACK (web_process_extension_overview_message_received_cb),
-                           shell, G_CONNECT_DEFAULT);
-
-  webkit_user_content_manager_register_script_message_handler (ucm,
-                                                               "overviewPin",
-                                                               priv->guid);
-  g_signal_connect_object (ucm, "script-message-received::overviewPin",
-                           G_CALLBACK (web_process_extension_overview_pin_message_received_cb),
-                           shell, G_CONNECT_DEFAULT);
-
-  webkit_user_content_manager_register_script_message_handler (ucm,
                                                                "passwordFormFocused",
                                                                priv->guid);
   g_signal_connect_object (ucm, "script-message-received::passwordFormFocused",
@@ -1401,12 +1669,6 @@ ephy_embed_shell_unregister_ucm (EphyEmbedShell           *shell,
   EphyEmbedShellPrivate *priv = ephy_embed_shell_get_instance_private (shell);
 
   webkit_user_content_manager_unregister_script_message_handler (ucm,
-                                                                 "overview",
-                                                                 priv->guid);
-  webkit_user_content_manager_unregister_script_message_handler (ucm,
-                                                                 "overviewPin",
-                                                                 priv->guid);
-  webkit_user_content_manager_unregister_script_message_handler (ucm,
                                                                  "passwordFormFocused",
                                                                  priv->guid);
   webkit_user_content_manager_unregister_script_message_handler (ucm,
@@ -1418,16 +1680,6 @@ ephy_embed_shell_unregister_ucm (EphyEmbedShell           *shell,
   webkit_user_content_manager_unregister_script_message_handler (ucm,
                                                                  "autofillAskUser",
                                                                  priv->guid);
-}
-
-void
-ephy_embed_shell_set_web_extension_initialization_data (EphyEmbedShell *shell,
-                                                        GVariant       *data)
-{
-  EphyEmbedShellPrivate *priv = ephy_embed_shell_get_instance_private (shell);
-
-  g_clear_pointer (&priv->web_extension_initialization_data, g_variant_unref);
-  priv->web_extension_initialization_data = g_variant_ref_sink (data);
 }
 
 /* Website-data management is the remaining legacy network-session service. */

@@ -9,4 +9,9 @@ console.log('UBO_COSMETIC:'+(getComputedStyle(document.querySelector('.jupiter-a
 console.log('UBO_SCRIPTLET:'+(window.jupiterSentinel===true?'PASS':'FAIL'));
 },4000);
 addEventListener('message',e=>{if(e.source===document.querySelector('iframe').contentWindow)console.log(e.data);});
+if(new URL(location).searchParams.has('networkOrigin')) {
+  const probe = document.createElement('script');
+  probe.src = 'ublock-network.js';
+  document.head.append(probe);
+}
 </script>

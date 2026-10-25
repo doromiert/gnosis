@@ -29,5 +29,6 @@ G_END_DECLS
 void ephy_engine_settings_apply_context(CefRefPtr<CefRequestContext>);
 void ephy_engine_settings_configure_command_line(CefRefPtr<CefCommandLine>);
 void ephy_engine_settings_apply_request(CefRefPtr<CefRequest>, const std::string *user_agent_override = nullptr);
-CefRefPtr<CefResourceRequestHandler> ephy_engine_settings_request_handler(CefRefPtr<CefCookieAccessFilter>);
+CefRefPtr<CefResourceRequestHandler> ephy_engine_settings_request_handler(CefRefPtr<CefCookieAccessFilter>,
+  CefRefPtr<CefResourceRequestHandler> next = nullptr);
 #endif

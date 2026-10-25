@@ -9,8 +9,7 @@ libephyautofill_deps = [
   glib_dep,
   gtk_dep,
   libsecret_dep,
-  libsoup_dep,
-  webkitgtk_web_extension_dep
+  libsoup_dep
 ]
 
 libephyautofill_includes = include_directories(

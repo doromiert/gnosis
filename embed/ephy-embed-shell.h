@@ -22,6 +22,7 @@
 #pragma once
 #include "ephy-engine-favicon.h"
 #include "ephy-engine-session.h"
+#include "ephy-engine-scheme.h"
 
 #include <adwaita.h>
 #include <webkit/webkit.h>
@@ -60,13 +61,21 @@ struct _EphyEmbedShellClass
 
 EphyEmbedShell    *ephy_embed_shell_get_default                (void);
 const char        *ephy_embed_shell_get_guid                   (EphyEmbedShell   *shell);
-WebKitWebContext  *ephy_embed_shell_get_web_context            (EphyEmbedShell   *shell);
 EphyEngineSession *ephy_embed_shell_get_network_session     (EphyEmbedShell   *shell);
 EphyHistoryService
                   *ephy_embed_shell_get_global_history_service (EphyEmbedShell   *shell);
 EphyEncodings     *ephy_embed_shell_get_encodings              (EphyEmbedShell   *shell);
 void               ephy_embed_shell_restored_window            (EphyEmbedShell   *shell);
 void               ephy_embed_shell_update_overview_urls       (EphyEmbedShell   *shell);
+gboolean           ephy_embed_shell_can_show_overview          (EphyEmbedShell   *shell,
+                                                                EphyEngineView   *view);
+void               ephy_embed_shell_handle_overview_message    (EphyEmbedShell   *shell,
+                                                                EphyEngineView   *view,
+                                                                JsonNode         *message);
+char              *ephy_embed_shell_get_overview_thumbnail_uri (EphyEmbedShell   *shell,
+                                                                const char       *url);
+void               ephy_embed_shell_handle_overview_thumbnail_request (EphyEmbedShell          *shell,
+                                                                       EphyEngineSchemeRequest *request);
 void               ephy_embed_shell_set_page_setup             (EphyEmbedShell   *shell,
                                                                 GtkPageSetup     *page_setup);
 GtkPageSetup      *ephy_embed_shell_get_page_setup             (EphyEmbedShell   *shell);
@@ -92,8 +101,7 @@ void                     ephy_embed_shell_unregister_ucm (EphyEmbedShell        
 
 gboolean                 ephy_embed_shell_should_remember_passwords (EphyEmbedShell *shell);
 
-void                     ephy_embed_shell_set_web_extension_initialization_data (EphyEmbedShell *shell,
-                                                                                 GVariant       *data);
+
 
 WebKitWebsiteDataManager *ephy_embed_shell_get_website_data_manager (EphyEmbedShell *shell);
 EphyEngineDownload *ephy_embed_shell_download_uri (EphyEmbedShell *shell, const char *uri);

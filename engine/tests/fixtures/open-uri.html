@@ -1,0 +1,30 @@
+<!doctype html><meta charset="utf-8"><title>Jupiter OpenURI</title>
+<style>a{position:fixed;inset:0;display:grid;place-items:center;font:24px sans-serif}iframe{position:fixed;inset:0;width:100%;height:100%;border:0}</style>
+<a id="link">Open disposable test handler</a>
+<script>
+const params = new URL(location).searchParams, test = params.get('case'), mode = params.get('mode');
+document.title = 'Jupiter OpenURI ' + test;
+link.href = 'jupiter-test:δ/żółć?escaped=%252F&space=%20&quote=%22&case=' + encodeURIComponent(test) + '#fragment';
+if (params.get('target') !== 'direct') link.target = '_blank';
+const report = (event, details={}) => fetch('/settings-report', {method:'POST',body:JSON.stringify({openURI:test,event,expected:link.href,pageURL:location.href,...details})});
+link.onclick = () => {
+  report('clicked');
+  if (mode === 'navigate') setTimeout(() => {
+    const next = new URL(location);next.searchParams.set('mode','inert');next.searchParams.set('case',test+'-after');location.href=next.href;
+  },1200);
+};
+report('ready');
+{
+  if (mode === 'auto' || mode === 'child') setTimeout(() => {
+    let navigationError = null;
+    navigator.sendBeacon('/settings-report',JSON.stringify({openURI:test,event:'automatic-attempt',expected:link.href}));
+    try { location.href=link.href; }
+    catch (error) { navigationError = {name:error.name,message:error.message}; }
+    finally { navigator.sendBeacon('/settings-report',JSON.stringify({openURI:test,event:'automatic-result',expected:link.href,navigationError})); }
+  },400);
+  if (mode === 'iframe') {
+    const child=new URL(location);child.searchParams.set('mode','child');child.searchParams.set('case',test+'-child');
+    const frame=document.createElement('iframe');frame.src=child.href;document.body.append(frame);
+  }
+}
+</script>

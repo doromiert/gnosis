@@ -7,7 +7,14 @@
 #include "ephy-engine-response.h"
 #include "ephy-engine-settings.h"
 #include "ephy-engine-permission.h"
+#include "ephy-engine-authentication.h"
+#include "ephy-engine-client-certificate.h"
 G_BEGIN_DECLS
+
+/* open-external-uri carries (uri, committed_context_uri, initiator_known,
+ * GCancellable). The token is cancelled when its document, mapped tab or owning
+ * window goes away. Context is not a permission origin unless initiator_known.
+ */
 #define EPHY_TYPE_ENGINE_VIEW (ephy_engine_web_view_get_type())
 G_DECLARE_DERIVABLE_TYPE(EphyEngineView, ephy_engine_web_view, EPHY, ENGINE_VIEW, GtkWidget)
 typedef struct _EphyEngineHistory EphyEngineHistory;
@@ -16,6 +23,14 @@ typedef struct _EphyEngineFind EphyEngineFind;
 typedef struct _EphyEngineInspector EphyEngineInspector;
 typedef struct _EphyEngineResource EphyEngineResource;
 typedef struct _EphyEngineSessionState EphyEngineSessionState;
+/* Requested CEF window.open geometry. Presence flags distinguish omitted values;
+ * GTK/Wayland do not promise absolute placement. */
+typedef struct {
+  GdkRectangle geometry;
+  gboolean x_set, y_set, width_set, height_set;
+  gboolean is_popup;
+} EphyEnginePopupProperties;
+
 GType ephy_engine_history_item_get_type(void);
 #define EPHY_ENGINE_HISTORY_ITEM(obj) (G_TYPE_CHECK_INSTANCE_CAST((obj),ephy_engine_history_item_get_type(),EphyEngineHistoryItem))
 struct _EphyEngineViewClass {
@@ -29,67 +44,23 @@ struct _EphyEngineViewClass {
                                                 const gchar                 *failing_uri,
                                                 GError                      *error);
 
-    GtkWidget *(* create)                      (EphyEngineView               *web_view,
-                                                WebKitNavigationAction      *navigation_action);
+    GtkWidget *(* create_popup)                (EphyEngineView               *web_view,
+                                                const EphyEnginePopupProperties *properties);
 
     void       (* ready_to_show)               (EphyEngineView               *web_view);
     void       (* run_as_modal)                (EphyEngineView               *web_view);
     void       (* close)                       (EphyEngineView               *web_view);
 
-    gboolean   (* script_dialog)               (EphyEngineView               *web_view,
-                                                WebKitScriptDialog          *dialog)  ;
-
-    gboolean   (* decide_policy)               (EphyEngineView               *web_view,
-                                                WebKitPolicyDecision        *decision,
-                                                WebKitPolicyDecisionType     type);
     gboolean   (* permission_request)          (EphyEngineView               *web_view,
                                                 EphyEnginePermission        *permission_request);
-    void       (* mouse_target_changed)        (EphyEngineView               *web_view,
-                                                WebKitHitTestResult         *hit_test_result,
-                                                guint                        modifiers);
 
-    gboolean   (* print)                       (EphyEngineView               *web_view,
-                                                WebKitPrintOperation        *print_operation);
-
-    void       (* resource_load_started)       (EphyEngineView               *web_view,
-                                                EphyEngineResource           *resource,
-                                                WebKitURIRequest            *request);
     gboolean   (* enter_fullscreen)            (EphyEngineView               *web_view);
     gboolean   (* leave_fullscreen)            (EphyEngineView               *web_view);
-    gboolean   (* run_file_chooser)            (EphyEngineView               *web_view,
-                                                WebKitFileChooserRequest    *request);
 
-    gboolean   (* context_menu)                (EphyEngineView               *web_view,
-                                                WebKitContextMenu           *context_menu,
-                                                WebKitHitTestResult         *hit_test_result);
-
-    void       (* context_menu_dismissed)      (EphyEngineView               *web_view);
-    void       (* submit_form)                 (EphyEngineView               *web_view,
-                                                WebKitFormSubmissionRequest *request);
-    void       (* insecure_content_detected)   (EphyEngineView               *web_view,
-                                                WebKitInsecureContentEvent   event);
-    gboolean   (* web_process_crashed)         (EphyEngineView               *web_view);
-
-    gboolean   (* authenticate)                (EphyEngineView               *web_view,
-                                                WebKitAuthenticationRequest *request);
     gboolean   (* load_failed_with_tls_errors) (EphyEngineView               *web_view,
                                                 const gchar                 *failing_uri,
                                                 GTlsCertificate             *certificate,
                                                 GTlsCertificateFlags         errors);
-    gboolean   (* show_notification)           (EphyEngineView               *web_view,
-                                                WebKitNotification          *notification);
-
-    gboolean   (* run_color_chooser)           (EphyEngineView               *web_view,
-                                                WebKitColorChooserRequest   *request);
-    gboolean   (* show_option_menu)            (EphyEngineView               *web_view,
-                                                WebKitOptionMenu            *menu,
-                                                GdkRectangle                *rectangle);
-
-    void       (* web_process_terminated)      (EphyEngineView               *web_view,
-                                                WebKitWebProcessTerminationReason reason);
-    gboolean   (* user_message_received)       (EphyEngineView               *web_view,
-                                                WebKitUserMessage           *message);
-
 
 };
 EphyEngineHistoryItem *
@@ -169,9 +140,6 @@ ephy_engine_web_resource_get_data_finish (EphyEngineResource  *resource,
 gboolean
 ephy_engine_web_view_is_controlled_by_automation          (EphyEngineView             *web_view);
 
-WebKitWebContext *
-ephy_engine_web_view_get_context                          (EphyEngineView             *web_view);
-
 void
 ephy_engine_web_view_try_close                            (EphyEngineView             *web_view);
 
@@ -183,6 +151,14 @@ ephy_engine_web_view_load_uri                             (EphyEngineView       
  * a borrowed JsonNode; websites and subframes cannot send these messages. */
 void ephy_engine_web_view_register_page_message_handler (EphyEngineView *view, const char *name);
 void ephy_engine_web_view_unregister_page_message_handler (EphyEngineView *view, const char *name);
+/* Native URI, not an alternate document's presentation alias. The first check
+ * permits the current requested main navigation; the second requires its frame. */
+gboolean ephy_engine_web_view_has_native_uri (EphyEngineView *view, const char *uri);
+gboolean ephy_engine_web_view_is_current_page (EphyEngineView *view, const char *uri);
+/* TRUE means queued to the captured document; stale contexts drop delivery. */
+gboolean ephy_engine_web_view_send_page_message (EphyEngineView *view, const char *expected_uri,
+                                                const char *name, JsonNode *message);
+
 
 void
 ephy_engine_web_view_load_alternate_html                  (EphyEngineView             *web_view,
@@ -190,9 +166,7 @@ ephy_engine_web_view_load_alternate_html                  (EphyEngineView       
                                                       const gchar               *content_uri,
                                                       const gchar               *base_uri);
 
-void
-ephy_engine_web_view_load_request                         (EphyEngineView             *web_view,
-                                                      WebKitURIRequest          *request);
+
 
 void
 ephy_engine_web_view_stop_loading                         (EphyEngineView             *web_view);
@@ -257,8 +231,8 @@ void
 ephy_engine_web_view_set_custom_charset                   (EphyEngineView             *web_view,
                                                       const gchar               *charset);
 
-WebKitWindowProperties *
-ephy_engine_web_view_get_window_properties                (EphyEngineView             *web_view);
+const EphyEnginePopupProperties *
+ephy_engine_web_view_get_popup_properties                (EphyEngineView             *web_view);
 
 void
 ephy_engine_web_view_set_zoom_level                       (EphyEngineView             *web_view,
@@ -311,6 +285,7 @@ gboolean
 ephy_engine_web_view_get_tls_info                         (EphyEngineView             *web_view,
                                                       GTlsCertificate          **certificate,
                                                       GTlsCertificateFlags      *errors);
+gboolean ephy_engine_web_view_tls_is_secure (EphyEngineView *web_view);
 
 void
 ephy_engine_web_view_get_snapshot                         (EphyEngineView             *web_view,
@@ -328,8 +303,7 @@ ephy_engine_web_view_get_snapshot_finish                  (EphyEngineView       
 WebKitUserContentManager *
 ephy_engine_web_view_get_user_content_manager             (EphyEngineView             *web_view);
 
-WebKitEditorState *
-ephy_engine_web_view_get_editor_state                     (EphyEngineView             *web_view);
+
 
 EphyEngineSessionState *
 ephy_engine_web_view_get_session_state                    (EphyEngineView             *web_view);
@@ -371,8 +345,14 @@ ephy_engine_web_view_session_state_unref     (EphyEngineSessionState *state);
 
 GBytes *
 ephy_engine_web_view_session_state_serialize (EphyEngineSessionState *state);
+/* Startup configuration inventory, not a query of Chromium's live extension state. */
+JsonArray *ephy_engine_extensions_dup_installed(void);
+gint ephy_engine_web_view_get_extension_tab_id(EphyEngineView *view);
+gboolean ephy_engine_web_view_set_extension_popup(EphyEngineView *popup, EphyEngineView *owner);
 char *ephy_engine_dup_version_info(void);
 void ephy_engine_web_view_set_user_agent_override(EphyEngineView *, const char *);
+/* Recognized CEF subprocesses exit here without unwinding the caller's stack.
+ * Browser execution returns -1; preparation failure returns an exit status. */
 int ephy_engine_execute_process(int argc, char** argv);
 gboolean ephy_engine_initialize(int argc, char** argv, const char* profile, gboolean self_test);
 gboolean ephy_engine_prepare_shutdown(void);

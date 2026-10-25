@@ -648,6 +648,7 @@ compute_prefix (EphyLocationEntry *self,
 
   for (int idx = 0; idx < n_items; idx++) {
     g_autoptr (EphySuggestion) suggestion = NULL;
+    g_autofree char *plain_subtitle = NULL;
     g_autofree char *text = NULL;
     const char *subtitle;
 
@@ -656,11 +657,14 @@ compute_prefix (EphyLocationEntry *self,
     if (!subtitle)
       continue;
 
-    if (g_str_has_prefix (subtitle, key)) {
-      text = g_strdup (subtitle);
+    if (!pango_parse_markup (subtitle, -1, 0, NULL, &plain_subtitle, NULL, NULL))
+      continue;
+
+    if (g_str_has_prefix (plain_subtitle, key)) {
+      text = g_strdup (plain_subtitle);
     } else {
       g_autoptr (GError) error = NULL;
-      g_autoptr (GUri) uri = g_uri_parse (subtitle, G_URI_FLAGS_PARSE_RELAXED, &error);
+      g_autoptr (GUri) uri = g_uri_parse (plain_subtitle, G_URI_FLAGS_PARSE_RELAXED, &error);
       g_autofree char *base = NULL;
 
       if (error) {
@@ -719,7 +723,7 @@ static int
 calc_and_set_prefix (gpointer user_data)
 {
   EphyLocationEntry *self = EPHY_LOCATION_ENTRY (user_data);
-  char *prefix;
+  g_autofree char *prefix = NULL;
 
   prefix = compute_prefix (self, gtk_editable_get_text (GTK_EDITABLE (self->text)));
   if (prefix) {
@@ -735,10 +739,10 @@ calc_and_set_prefix (gpointer user_data)
     if (prefix_len > key_len) {
       int pos = prefix_len;
 
-      g_signal_handlers_block_by_func (self, G_CALLBACK (on_editable_changed), self);
+      g_signal_handlers_block_by_func (self->text, G_CALLBACK (on_editable_changed), self);
       gtk_editable_insert_text (GTK_EDITABLE (self), prefix + strlen (key), -1, &pos);
       gtk_editable_select_region (GTK_EDITABLE (self), key_len, prefix_len);
-      g_signal_handlers_unblock_by_func (self, G_CALLBACK (on_editable_changed), self);
+      g_signal_handlers_unblock_by_func (self->text, G_CALLBACK (on_editable_changed), self);
     }
   }
 

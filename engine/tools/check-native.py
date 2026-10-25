@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 """Run the actual GTK/CEF view against a local page and favicon, with an isolated display/profile."""
 import argparse
+import base64
+import hashlib
+import re
+import urllib.parse
 import resource
 import signal
 import struct
@@ -21,7 +25,9 @@ resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("binary", type=Path)
 parser.add_argument("--desktop", action="store_true", help="Use the current desktop display and GPU")
-parser.add_argument("--portals", action="store_true", help="Test real file portals using the GTK portal backend")
+portal_mode = parser.add_mutually_exclusive_group()
+portal_mode.add_argument("--portals", action="store_true", help="Test real file portals using the GTK portal backend")
+portal_mode.add_argument("--open-uri", action="store_true", help="Test the actual browser's external-link dialog and real OpenURI portal")
 parser.add_argument("--timeout", type=int, help="Deadline for workflows that reopen the browser several times")
 parser.add_argument("browser_args", nargs=argparse.REMAINDER)
 args = parser.parse_args()
@@ -41,6 +47,51 @@ class Fixture(http.server.BaseHTTPRequestHandler):
         self.end_headers()
 
     def do_GET(self):
+        auth_url = urllib.parse.urlsplit(self.path)
+        if auth_url.path in ('/auth/basic', '/auth/digest', '/auth/proxy'):
+            proxy = auth_url.path == '/auth/proxy'
+            digest = auth_url.path == '/auth/digest'
+            realm = urllib.parse.parse_qs(auth_url.query).get('realm', ['Jupiter authentication'])[0]
+            # Fixed fixture credentials; observations deliberately omit credential values.
+            username, password, nonce = 'jupiter-user', 'fixture-password', 'jupiter-native-auth-nonce'
+            authorization = self.headers.get('Proxy-Authorization' if proxy else 'Authorization', '')
+            valid = authorization == 'Basic ' + base64.b64encode(f'{username}:{password}'.encode()).decode()
+            if digest:
+                fields = {}
+                for match in re.finditer(r'(\w+)=(?:"([^"]*)"|([^,\s]+))', authorization[7:]):
+                    fields[match[1]] = match[2] if match[2] is not None else match[3]
+                md5 = lambda text: hashlib.md5(text.encode()).hexdigest()
+                ha1 = md5(f'{username}:{realm}:{password}')
+                ha2 = md5(f'GET:{fields.get("uri", "")}')
+                expected = md5(f'{ha1}:{nonce}:{fields.get("nc", "")}:{fields.get("cnonce", "")}:{fields.get("qop", "")}:{ha2}')
+                valid = (authorization.startswith('Digest ') and fields.get('username') == username and
+                         fields.get('realm') == realm and fields.get('nonce') == nonce and
+                         fields.get('qop') == 'auth' and fields.get('uri') == self.path and
+                         fields.get('response') == expected)
+            with self.server.settings_lock:
+                self.server.settings_reports.append({'httpAuth': auth_url.path, 'realm': realm,
+                    'authorized': valid, 'authorizationScheme': authorization.split(' ', 1)[0]})
+            body = (f'<!doctype html><title>Authenticated {realm}</title><h1 id="authenticated">'
+                    f'Authenticated {html.escape(realm)}</h1>').encode() if valid else b'Authentication required'
+            self.send_response(200 if valid else 407 if proxy else 401)
+            if not valid:
+                challenge = f'Digest realm="{realm}", nonce="{nonce}", algorithm=MD5, qop="auth"' if digest else f'Basic realm="{realm}"'
+                self.send_header('Proxy-Authenticate' if proxy else 'WWW-Authenticate', challenge)
+            self.send_header('Content-Type', 'text/html; charset=utf-8')
+            self.send_header('Cache-Control', 'no-store')
+            self.send_header('Content-Length', str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
+        if self.path.startswith('/open-uri-fixture?'):
+            body = Path(__file__).resolve().parents[1].joinpath('tests/fixtures/open-uri.html').read_bytes()
+            self.send_response(200)
+            self.send_header('Content-Type', 'text/html; charset=utf-8')
+            self.send_header('Cache-Control', 'no-store')
+            self.send_header('Content-Length', str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
         if self.path.startswith('/clipboard-read-resource'):
             with self.server.settings_lock:
                 self.server.settings_reports.append({'clipboardReadFetch': self.path})
@@ -256,6 +307,45 @@ class Fixture(http.server.BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(body)
             return
+        if self.path.startswith(('/response-hold?', '/response-hold-final?')):
+            query = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
+            key = query.get('case', [''])[0]
+            if not re.fullmatch(r'[a-z0-9-]{1,80}', key):
+                self.send_error(400)
+                return
+            marker = self.server.response_lifetimes / key
+            if self.path.startswith('/response-hold?'):
+                marker.with_suffix('.started').write_text(self.path)
+                deadline = time.monotonic() + 15
+                while not marker.with_suffix('.release').exists() and time.monotonic() < deadline:
+                    time.sleep(.01)
+                if not marker.with_suffix('.release').exists():
+                    marker.with_suffix('.finished').write_text('unreleased')
+                    self.send_error(504)
+                    return
+                if query.get('redirect') == ['1']:
+                    self.send_response(302)
+                    self.send_header('Location', '/response-hold-final?case=' + key)
+                    self.send_header('Content-Length', '0')
+                    self.end_headers()
+                    marker.with_suffix('.redirected').write_text('302')
+                    return
+            body = b'<!doctype html><title>Released resource response</title><p>Actual delayed HTTP body</p>'
+            sent = False
+            try:
+                self.send_response(200)
+                self.send_header('Content-Type', 'text/html; charset=utf-8')
+                self.send_header('Content-Length', str(len(body)))
+                self.send_header('Cache-Control', 'no-store')
+                self.end_headers()
+                self.wfile.write(body)
+                self.wfile.flush()
+                sent = True
+            except (BrokenPipeError, ConnectionResetError, OSError):
+                pass
+            finally:
+                marker.with_suffix('.finished').write_text('sent' if sent else 'cancelled')
+            return
         if self.path.startswith('/response-'):
             if self.path == '/response-redirect':
                 self.send_response(302)
@@ -330,6 +420,8 @@ with tempfile.TemporaryDirectory(prefix="jupiter-native-check-") as scratch:
     with display_file.open("w") as display_out:
         display = subprocess.Popen(["Xvfb", "-displayfd", str(display_out.fileno()), "-screen", "0", "1000x750x24", "-nolisten", "tcp", "-ac"], pass_fds=(display_out.fileno(),))
     server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Fixture)
+    server.response_lifetimes = root / 'response-lifetimes'
+    server.response_lifetimes.mkdir()
     server.settings_reports = []
     server.cache_requests = 0
     server.settings_lock = threading.Lock()
@@ -350,15 +442,17 @@ with tempfile.TemporaryDirectory(prefix="jupiter-native-check-") as scratch:
                     env[key] = os.environ[key]
         else:
             env.pop("WAYLAND_DISPLAY", None)
+        env['JUPITER_RESPONSE_FIXTURE_DIR'] = str(server.response_lifetimes)
         command = [str(args.binary.resolve()), *args.browser_args]
-        if args.portals:
+        if args.portals or args.open_uri:
             env.update(GTK_USE_PORTAL="1", GDK_DEBUG="portals", JUPITER_TEST_SCRATCH=str(root),
                        XDG_CONFIG_HOME=str(root / "config"), XDG_CACHE_HOME=str(root / "cache"),
                        XDG_DATA_HOME=str(root / "data"))
-            command = ["python3", str(Path(__file__).with_name("check-portals.py").resolve()), *command]
+            wrapper = "check-open-uri.py" if args.open_uri else "check-portals.py"
+            command = ["python3", str(Path(__file__).with_name(wrapper).resolve()), *command]
         process = subprocess.Popen(["dbus-run-session", "--config-file=" + str(bus), "--", *command], env=env, start_new_session=True)
         try:
-            status = process.wait(timeout=args.timeout if args.timeout else (90 if args.portals else 45))
+            status = process.wait(timeout=args.timeout if args.timeout else (240 if args.open_uri else 90 if args.portals else 45))
             if status:
                 raise subprocess.CalledProcessError(status, process.args)
         finally:

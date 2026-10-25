@@ -13,7 +13,6 @@ public:
   CefRefPtr<ExtensionHost> extension_host;
   std::string download_folder;
   bool render_test = false;
-  void external(const std::string&);
   void export_completed(const std::string&, const std::string&, const std::string&);
 };
 class Window {

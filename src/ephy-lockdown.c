@@ -107,11 +107,7 @@ static const BindAction window_actions[] = {
 };
 
 static const BindAction popup_actions[] = {
-  { EPHY_PREFS_LOCKDOWN_SAVE_TO_DISK, "download-link-as", "enabled" },
-  { EPHY_PREFS_LOCKDOWN_SAVE_TO_DISK, "save-image-as", "enabled" },
-  { EPHY_PREFS_LOCKDOWN_BOOKMARK_EDITING, "context-bookmark-page", "enabled" },
-
-  { EPHY_PREFS_LOCKDOWN_FULLSCREEN, "open-link-in-new-window", "enabled" }
+  { EPHY_PREFS_LOCKDOWN_BOOKMARK_EDITING, "context-bookmark-page", "enabled" }
 };
 
 static const BindAction toolbar_actions[] = {
@@ -186,8 +182,6 @@ window_added_cb (GtkApplication *application,
 {
   GActionGroup *action_group;
   EphyEmbedShellMode mode;
-  GAction *action;
-  GSettings *settings;
   EphyLocationController *location_controller;
 
   if (!EPHY_IS_WINDOW (window))
@@ -234,12 +228,6 @@ window_added_cb (GtkApplication *application,
   bind_settings_and_actions (EPHY_SETTINGS_LOCKDOWN,
                              action_group, popup_actions,
                              G_N_ELEMENTS (popup_actions));
-
-  action = g_action_map_lookup_action (G_ACTION_MAP (action_group),
-                                       "set-image-as-background");
-  settings = ephy_settings_get ("org.gnome.desktop.background");
-  g_settings_bind_writable (settings, "picture-filename",
-                            action, "enabled", FALSE);
 
   if (mode != EPHY_EMBED_SHELL_MODE_APPLICATION &&
       mode != EPHY_EMBED_SHELL_MODE_AUTOMATION) {

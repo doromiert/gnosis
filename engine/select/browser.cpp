@@ -6,6 +6,7 @@
 #include "extension-tab-id.hpp"
 #include "policy.hpp"
 #include "ephy-engine-settings.h"
+#include "ephy-engine-certificate.hpp"
 
 #include "include/cef_parser.h"
 #include "include/cef_task.h"
@@ -15,13 +16,20 @@
 #include <cstring>
 #include <epoxy/egl.h>
 #include <map>
+#include <utility>
 
 unsigned Browser::active_count = 0;
-bool Browser::OnCertificateError(CefRefPtr<CefBrowser> source, cef_errorcode_t, const CefString& uri,
+bool Browser::OnCertificateError(CefRefPtr<CefBrowser> source, cef_errorcode_t error, const CefString& uri,
                                  CefRefPtr<CefSSLInfo> info, CefRefPtr<CefCallback> callback) {
-  if (!owns(source) || !host || !ephy_engine_session_certificate_allowed(host->session, uri, info->GetX509Certificate()))
-    return false;
-  callback->Continue();
+  if (owns(source) && !closing && host && info && uri == main_navigation_uri_) {
+    if (ephy_engine_session_certificate_allowed(host->session, uri, info->GetX509Certificate())) {
+      callback->Continue();
+      return true;
+    }
+    certificate_failure_ = CertificateFailure{uri.ToString(), error, info, main_navigation_epoch_};
+  }
+  // Returning false delegates to Chromium's interstitial instead of Epiphany's page.
+  callback->Cancel();
   return true;
 }
 namespace {
@@ -145,6 +153,17 @@ int windows_key(guint key) {
     return gdk_keyval_to_unicode(key);
   }
 }
+CefKeyEvent key_event(guint keyval, guint keycode, GdkModifierType state, cef_key_event_type_t type) {
+  CefKeyEvent event;
+  event.type = type;
+  event.windows_key_code = windows_key(keyval);
+  event.native_key_code = keycode;
+  event.modifiers = modifiers(state);
+  event.is_system_key = (state & GDK_ALT_MASK) != 0;
+  event.character = gdk_keyval_to_unicode(keyval);
+  event.unmodified_character = gdk_keyval_to_unicode(gdk_keyval_to_lower(keyval));
+  return event;
+}
 GLuint shader(GLenum type, const char* source) {
   GLuint id = glCreateShader(type);
   glShaderSource(id, 1, &source, nullptr);
@@ -181,6 +200,21 @@ Browser::Browser(std::string address, bool software) : url(std::move(address)), 
                            +[](gpointer p) { delete static_cast<CefRefPtr<Browser>*>(p); });
                      }),
                      this);
+  if (JupiterBrave::enabled()) {
+    area_ = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+    gtk_widget_set_focusable(area_, true); gtk_widget_set_hexpand(area_, true); gtk_widget_set_vexpand(area_, true);
+    gtk_overlay_set_child(GTK_OVERLAY(overlay_), area_);
+    im_ = gtk_im_multicontext_new();
+    thumbnail_source_ = gtk_widget_paintable_new(overlay_);
+    error_page_ = adw_status_page_new();
+    auto* retry = gtk_button_new_with_label("Try Again");
+    adw_status_page_set_child(ADW_STATUS_PAGE(error_page_), retry);
+    g_signal_connect_swapped(retry, "clicked", G_CALLBACK(+[](Browser* self) { self->reload(); }), this);
+    gtk_overlay_add_overlay(GTK_OVERLAY(overlay_), error_page_); gtk_widget_set_visible(error_page_, false);
+    g_signal_connect(area_, "map", G_CALLBACK(+[](GtkWidget*, Browser* self) { if (!self->defer_start) self->start(); self->set_visible(true); }), this);
+    g_signal_connect(area_, "unmap", G_CALLBACK(+[](GtkWidget*, Browser* self) { self->set_visible(false); }), this);
+    return;
+  }
   area_ = gtk_gl_area_new();
   gtk_gl_area_set_allowed_apis(GTK_GL_AREA(area_), GDK_GL_API_GLES);
   gtk_gl_area_set_required_version(GTK_GL_AREA(area_), 3, 0);
@@ -260,6 +294,7 @@ Browser::Browser(std::string address, bool software) : url(std::move(address)), 
   setup_input();
 }
 Browser::~Browser() {
+  if (brave_) { brave_->close(); brave_.reset(); }
   g_signal_handlers_disconnect_by_data(adw_style_manager_get_default(), this);
   g_clear_pointer(&account_pixels_, g_bytes_unref);
   if (thumbnail_idle_)
@@ -300,8 +335,57 @@ void Browser::changed() {
 }
 
 void Browser::start() {
-  if (loaded || creating_ || waiting_context_ || browser_ || closing || (owner() && (owner()->closing || owner()->destroyed)))
+  if (JupiterBrave::enabled()) {
+    if (closing) return;
+    if (!brave_) {
+      brave_ = JupiterBrave::Page::create(area_, host && host->private_mode);
+      brave_->changed = [this] { url = brave_->uri; name = brave_->title; loading = brave_->loading; progress = brave_->progress; changed(); };
+      brave_->navigation_started = [this](const std::string& value) { main_navigation_uri_ = value; if (on_load_start) on_load_start(value); };
+      brave_->load_finished = [this](int status) {
+        if (on_load_end) on_load_end(status);
+        CefRefPtr<Browser> owner = this;
+        brave_->snapshot([owner](GdkTexture* image, const std::string&) { if (!owner->closing && image) g_set_object(&owner->thumbnail_, GDK_PAINTABLE(image)); });
+      };
+      brave_->closed = [this] { if (on_closed) on_closed(); };
+      brave_->tls_changed = [this] { if (on_security_changed) on_security_changed(); };
+      brave_->fullscreen_changed = [this](bool value) { if (on_fullscreen_changed) on_fullscreen_changed(value); };
+      brave_->open_uri = [this](const std::string& uri) {
+        if (closing || !on_create_popup) return false;
+        CefPopupFeatures features;
+        auto child = on_create_popup(uri, features);
+        if (!child || child->closing) return false;
+        child->defer_start = false;
+        child->navigate(uri);
+        if (child->on_ready) child->on_ready();
+        return true;
+      };
+      brave_->failed = [this](const std::string& error) {
+        loaded = false; loading = false; progress = 0;
+        show_error("Browser Process Stopped", error); changed();
+      };
+      changed();
+    }
+    brave_->navigate(url); loaded = true;
     return;
+  }
+  if (loaded || creating_ || waiting_context_ || waiting_extension_background_ || browser_ || closing || (owner() && (owner()->closing || owner()->destroyed)))
+    return;
+  if (is_extension_popup && !extension_background_ready_ && host && !host->private_mode &&
+      url.starts_with("chrome-extension://")) {
+    waiting_extension_background_ = true;
+    CefRefPtr<Browser> self = this;
+    const auto extension = url.substr(19, url.find('/', 19) - 19);
+    host->app.extension_host->prepare_popup(extension,
+      [self] { return !self->closing && self->host && !self->host->closing && !self->host->destroyed; },
+      [self](const std::string& error) {
+        self->waiting_extension_background_ = false;
+        if (self->closing) return;
+        if (!error.empty()) { self->show_error("Could Not Open Extension", error); return; }
+        self->extension_background_ready_ = true;
+        self->start();
+      });
+    return;
+  }
   auto context = ephy_engine_session_context(host && host->session ? host->session : ephy_engine_session_get_default());
   if (!context) {
     waiting_context_ = true;
@@ -321,7 +405,10 @@ void Browser::start() {
   CefBrowserSettings settings;
   settings.windowless_frame_rate = 60;
   settings.background_color = CefColorSetARGB(255, 255, 255, 255);
-  if (!CefBrowserHost::CreateBrowser(info, this, "", settings, nullptr, context)) {
+  // Extension bindings need their site selected when the web contents are created.
+  creation_url_ = url.starts_with("chrome-extension://") ? url : "";
+  if (!CefBrowserHost::CreateBrowser(info, this, creation_url_, settings, nullptr, context)) {
+    creation_url_.clear();
     --active_count;
     creating_ = false;
     loaded = false;
@@ -329,6 +416,7 @@ void Browser::start() {
   }
 }
 void Browser::OnAfterCreated(CefRefPtr<CefBrowser> browser) {
+  CefRefPtr<Browser> keep_alive = this;
   if (browser_id_) {
     // A client belongs to exactly one native tab and one Chromium browser.
     // Reject unexpected extra creations without replacing its live browser.
@@ -340,7 +428,13 @@ void Browser::OnAfterCreated(CefRefPtr<CefBrowser> browser) {
   creating_ = false;
   browser_ = browser;
   browser_id_ = browser->GetIdentifier();
+  if (popup_opener_) {
+    auto* opener = popup_opener_;
+    popup_opener_ = nullptr;
+    opener->pending_popups_.erase(popup_id_);
+  }
   cookie_filter_ = ephy_engine_session_cookie_filter(host && host->session ? host->session : ephy_engine_session_get_default());
+  session_request_handler_ = ephy_engine_session_request_handler(host && host->session ? host->session : ephy_engine_session_get_default());
   loaded = true;
   if (!requested) ++active_count;
   if (host) {
@@ -360,13 +454,20 @@ void Browser::OnAfterCreated(CefRefPtr<CefBrowser> browser) {
   refresh_theme();
   set_permissions();
   changed();
-  // Native creations start blank: load only the latest requested address once
-  // creation finishes. Popups retain Chromium's opener and initial navigation.
-  if (prepare_navigation) prepare_navigation();
-  if (requested || !pending_navigation_.empty()) {
-    pending_navigation_.clear();
-    browser_->GetMainFrame()->LoadURL(url);
-  }
+  if (closing) return;
+  // Ordinary pages start blank for preference setup; native extension pages already
+  // have their initial URL. Chromium-owned popups retain their opener navigation.
+  auto prepare = prepare_navigation;
+  if (prepare) prepare();
+  if (closing) return;
+  const bool supplied_initial_url = requested && !creation_url_.empty() && creation_url_ == url;
+  creation_url_.clear();
+  const bool navigate = !native_popup_child_ &&
+                        (requested || !pending_navigation_.empty()) && !supplied_initial_url;
+  pending_navigation_.clear();
+  if (navigate) browser_->GetMainFrame()->LoadURL(url);
+  auto ready = on_ready;
+  if (ready) ready();
 }
 bool Browser::owns(CefRefPtr<CefBrowser> source) const {
   return source && browser_id_ && source->GetIdentifier() == browser_id_;
@@ -375,8 +476,11 @@ void Browser::OnBeforeClose(CefRefPtr<CefBrowser> source) {
   if (!owns(source))
     return;
   closing = true;
+  certificate_failure_.reset();
   cancel_file_dialogs();
   cancel_permissions();
+  cancel_authentication();
+  cancel_pending_popups();
   ephy_engine_download_browser_closed(browser_id_);
   CefRefPtr<Browser> keep_alive = this;
   Window* win = owner();
@@ -394,21 +498,65 @@ void Browser::OnBeforeClose(CefRefPtr<CefBrowser> source) {
   if (held_app_) { g_application_release(held_app_); g_clear_object(&held_app_); }
 }
 void Browser::detach_callbacks() {
+  page_message_context.clear();
+  cancel_authentication();
+  on_authentication = nullptr;
+  on_client_certificate = nullptr;
   on_permission = nullptr;
   on_page_message = nullptr;
+  on_external_uri = nullptr;
+  on_webstore_install_blocked = nullptr;
   on_changed = nullptr;
+  on_security_changed = nullptr;
+  on_fullscreen_changed = nullptr;
   on_favicon = nullptr;
   on_closed = nullptr;
   on_close_cancelled = nullptr;
+  on_create_popup = nullptr;
+  on_ready = nullptr;
+  on_contents_bounds_change = nullptr;
   on_load_end = nullptr;
   on_load_error = nullptr;
+  on_tls_error = nullptr;
+  certificate_failure_.reset();
   on_load_start = nullptr;
   prepare_navigation = nullptr;
   on_response = nullptr;
+  on_resource_complete = nullptr;
+}
+void Browser::cancel_pending_popups() {
+  auto pending = std::move(pending_popups_);
+  pending_popups_.clear();
+  for (auto& [id, popup] : pending) {
+    popup->popup_opener_ = nullptr;
+    if (popup->creating_) {
+      popup->creating_ = false;
+      --active_count;
+    }
+    popup->loaded = false;
+    popup->close();
+  }
+}
+void Browser::OnBeforePopupAborted(CefRefPtr<CefBrowser> source, int popup_id) {
+  if (!owns(source)) return;
+  auto found = pending_popups_.find(popup_id);
+  if (found == pending_popups_.end()) return;
+  auto popup = found->second;
+  pending_popups_.erase(found);
+  popup->popup_opener_ = nullptr;
+  if (popup->creating_) {
+    popup->creating_ = false;
+    --active_count;
+  }
+  popup->loaded = false;
+  popup->close();
 }
 void Browser::close() {
+  if (brave_) { closing = true; brave_->close(); if (on_closed) on_closed(); return; }
+  certificate_failure_.reset();
   cancel_file_dialogs();
   cancel_permissions();
+  cancel_authentication();
   if (closing)
     return;
   gtk_im_context_focus_out(im_);
@@ -424,13 +572,24 @@ void Browser::close() {
   }
 }
 void Browser::shutdown() {
+  if (brave_) { closing = true; brave_->close(); detach_callbacks(); return; }
   detach_callbacks();
   cancel_file_dialogs();
   cancel_permissions();
+  cancel_authentication();
   closing = true;
   if (browser_) browser_->GetHost()->CloseBrowser(true);
 }
 void Browser::navigate(const std::string& address) {
+  if (JupiterBrave::enabled()) { url = address; main_navigation_uri_ = address; if (brave_) brave_->navigate(address); else start(); return; }
+  if (address == url || address.substr(0, address.find('#')) != url.substr(0, url.find('#')))
+    page_message_context.clear();
+  cancel_authentication();
+  // Local documents can commit without Chromium's OnBeforeBrowse callback.
+  certificate_failure_.reset();
+  ++main_navigation_epoch_;
+  main_navigation_uri_ = address;
+  loading_document_frame_.clear();
   url = address;
   gtk_widget_set_visible(error_page_, false);
   if (browser_)
@@ -441,6 +600,13 @@ void Browser::navigate(const std::string& address) {
     start();
 }
 void Browser::reload() {
+  if (JupiterBrave::enabled()) {
+    gtk_widget_set_visible(error_page_, false);
+    if (brave_ && !brave_->is_closed()) brave_->reload();
+    else { brave_.reset(); start(); }
+    return;
+  }
+  page_message_context.clear();
   gtk_widget_set_visible(error_page_, false);
   if (browser_)
     browser_->Reload();
@@ -450,14 +616,18 @@ void Browser::reload() {
     start();
 }
 void Browser::back() {
+  if (brave_) { brave_->back(); return; }
   if (browser_)
     browser_->GoBack();
 }
 void Browser::forward() {
+  if (brave_) { brave_->forward(); return; }
   if (browser_)
     browser_->GoForward();
 }
 void Browser::set_visible(bool visible) {
+  if (brave_) { brave_->set_visible(visible); return; }
+  if (!visible) cancel_authentication();
   if (browser_) {
     browser_->GetHost()->WasHidden(!visible);
     if (visible)
@@ -472,6 +642,80 @@ GdkPaintable* Browser::thumbnail() {
   if (thumbnail_)
     return GDK_PAINTABLE(g_object_ref(thumbnail_));
   return nullptr;
+}
+GdkTexture* Browser::snapshot_texture() {
+  if (brave_) return thumbnail_ && GDK_IS_TEXTURE(thumbnail_) ? GDK_TEXTURE(g_object_ref(thumbnail_)) : nullptr;
+  // An explicit saved snapshot must use the latest CEF frame, not the GTK
+  // thumbnail node, whose low-priority refresh may still be pending.
+  struct RestoreContext {
+    GdkGLContext* previous = gdk_gl_context_get_current();
+    RestoreContext() { if (previous) g_object_ref(previous); }
+    ~RestoreContext() {
+      if (previous) {
+        gdk_gl_context_make_current(previous);
+        g_object_unref(previous);
+      } else {
+        gdk_gl_context_clear_current();
+      }
+    }
+  } restore_context;
+  if (closing || !texture_ || texture_width_ <= 0 || texture_height_ <= 0 || !gl_ready())
+    return nullptr;
+  const gsize stride = static_cast<gsize>(texture_width_) * 4;
+  if (static_cast<gsize>(texture_height_) > G_MAXSIZE / stride)
+    return nullptr;
+  const gsize size = stride * texture_height_;
+  auto* pixels = static_cast<guint8*>(g_try_malloc(size));
+  if (!pixels)
+    return nullptr;
+
+  GLint previous_read, previous_draw, previous_read_buffer, pack_buffer;
+  GLint alignment, row_length, skip_rows, skip_pixels;
+  glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &previous_read);
+  glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &previous_draw);
+  glGetIntegerv(GL_READ_BUFFER, &previous_read_buffer);
+  glGetIntegerv(GL_PIXEL_PACK_BUFFER_BINDING, &pack_buffer);
+  glGetIntegerv(GL_PACK_ALIGNMENT, &alignment);
+  glGetIntegerv(GL_PACK_ROW_LENGTH, &row_length);
+  glGetIntegerv(GL_PACK_SKIP_ROWS, &skip_rows);
+  glGetIntegerv(GL_PACK_SKIP_PIXELS, &skip_pixels);
+  GLuint framebuffer;
+  glGenFramebuffers(1, &framebuffer);
+  glBindFramebuffer(GL_READ_FRAMEBUFFER, framebuffer);
+  glFramebufferTexture2D(GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, texture_, 0);
+  const bool complete = glCheckFramebufferStatus(GL_READ_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE;
+  GLenum error = GL_NO_ERROR;
+  if (complete) {
+    glReadBuffer(GL_COLOR_ATTACHMENT0);
+    glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
+    glPixelStorei(GL_PACK_ALIGNMENT, 4);
+    glPixelStorei(GL_PACK_ROW_LENGTH, 0);
+    glPixelStorei(GL_PACK_SKIP_ROWS, 0);
+    glPixelStorei(GL_PACK_SKIP_PIXELS, 0);
+    glReadPixels(0, 0, texture_width_, texture_height_, GL_RGBA, GL_UNSIGNED_BYTE, pixels);
+    error = glGetError();
+  }
+  glBindBuffer(GL_PIXEL_PACK_BUFFER, pack_buffer);
+  glPixelStorei(GL_PACK_ALIGNMENT, alignment);
+  glPixelStorei(GL_PACK_ROW_LENGTH, row_length);
+  glPixelStorei(GL_PACK_SKIP_ROWS, skip_rows);
+  glPixelStorei(GL_PACK_SKIP_PIXELS, skip_pixels);
+  glBindFramebuffer(GL_READ_FRAMEBUFFER, previous_read);
+  glReadBuffer(previous_read_buffer);
+  glBindFramebuffer(GL_DRAW_FRAMEBUFFER, previous_draw);
+  glDeleteFramebuffers(1, &framebuffer);
+  if (!complete || error != GL_NO_ERROR) {
+    g_free(pixels);
+    return nullptr;
+  }
+
+  // CEF's first image row is stored at texture y=0. The display shader flips
+  // texture coordinates, so readback is already in GDK's top-to-bottom order.
+  GBytes* bytes = g_bytes_new_take(pixels, size);
+  const auto format = texture_bgra_ ? GDK_MEMORY_B8G8R8A8_PREMULTIPLIED : GDK_MEMORY_R8G8B8A8_PREMULTIPLIED;
+  GdkTexture* snapshot = gdk_memory_texture_new(texture_width_, texture_height_, format, bytes, stride);
+  g_bytes_unref(bytes);
+  return snapshot;
 }
 void Browser::set_permissions() {}
 void Browser::GetViewRect(CefRefPtr<CefBrowser>, CefRect& rect) {
@@ -735,8 +979,16 @@ void Browser::setup_input() {
   g_object_set_data(G_OBJECT(area_), "browser-im", im_);
   gtk_im_context_set_client_widget(im_, area_);
   g_signal_connect(im_, "commit", G_CALLBACK(+[](GtkIMContext*, const char* text, Browser* self) {
-                     if (self->browser_)
+                     if (!self->browser_)
+                       return;
+                     if (self->im_space_event_ && !g_strcmp0(text, " ")) {
+                       // A literal key needs CHAR for Chromium's Space activation, not an IM insertion.
+                       self->browser_->GetHost()->SendKeyEvent(*self->im_space_event_);
+                       self->im_space_event_.reset();
+                     } else {
+                       self->im_space_event_.reset();
                        self->browser_->GetHost()->ImeCommitText(text, CefRange(UINT32_MAX, UINT32_MAX), 0);
+                     }
                    }),
                    this);
   g_signal_connect(im_, "preedit-changed", G_CALLBACK(+[](GtkIMContext* im, Browser* self) {
@@ -746,6 +998,9 @@ void Browser::setup_input() {
                      int cursor;
                      PangoAttrList* attrs;
                      gtk_im_context_get_preedit_string(im, &text, &attrs, &cursor);
+                     self->im_preedit_active_ = text && *text;
+                     if (self->im_preedit_active_)
+                       self->im_space_event_.reset();
                      std::u16string value = CefString(text).ToString16();
                      CefCompositionUnderline underline;
                      underline.range = CefRange(0, value.size());
@@ -875,8 +1130,19 @@ void Browser::setup_input() {
         }
         self->send_key(key, code, state, false);
         GdkEvent* event = gtk_event_controller_get_current_event(GTK_EVENT_CONTROLLER(c));
-        if (event)
-          gtk_im_context_filter_keypress(self->im_, event);
+        if (key == GDK_KEY_space && !self->im_preedit_active_)
+          self->im_space_event_ = key_event(key, code, state, KEYEVENT_CHAR);
+        const bool handled = event && gtk_im_context_filter_keypress(self->im_, event);
+        if (!handled && self->browser_ && self->im_space_event_)
+          self->browser_->GetHost()->SendKeyEvent(*self->im_space_event_);
+        self->im_space_event_.reset();
+        if (!handled && self->browser_ && (key == GDK_KEY_Return || key == GDK_KEY_KP_Enter) &&
+            !(state & (GDK_CONTROL_MASK | GDK_ALT_MASK | GDK_SUPER_MASK))) {
+          // Chromium activates Enter controls on CHAR; IM composition must consume it first.
+          auto character = key_event(key, code, state, KEYEVENT_CHAR);
+          character.character = character.unmodified_character = '\r';
+          self->browser_->GetHost()->SendKeyEvent(character);
+        }
         return true;
       }),
       this);
@@ -905,15 +1171,7 @@ void Browser::send_key(guint keyval, guint keycode, GdkModifierType state, bool 
   }
   if (!browser_)
     return;
-  CefKeyEvent e;
-  e.type = release ? KEYEVENT_KEYUP : KEYEVENT_RAWKEYDOWN;
-  e.windows_key_code = windows_key(keyval);
-  e.native_key_code = keycode;
-  e.modifiers = modifiers(state);
-  e.is_system_key = (state & GDK_ALT_MASK) != 0;
-  e.character = gdk_keyval_to_unicode(keyval);
-  e.unmodified_character = gdk_keyval_to_unicode(gdk_keyval_to_lower(keyval));
-  browser_->GetHost()->SendKeyEvent(e);
+  browser_->GetHost()->SendKeyEvent(key_event(keyval, keycode, state, release ? KEYEVENT_KEYUP : KEYEVENT_RAWKEYDOWN));
 }
 void Browser::OnTitleChange(CefRefPtr<CefBrowser> source, const CefString& title) {
   if (!owns(source))
@@ -981,8 +1239,18 @@ void Browser::OnLoadingStateChange(CefRefPtr<CefBrowser> source, bool value, boo
   if (!value) navigation_started_ = false;
   changed();
 }
-void Browser::OnLoadStart(CefRefPtr<CefBrowser> source, CefRefPtr<CefFrame> frame, TransitionType) {
+void Browser::OnLoadStart(CefRefPtr<CefBrowser> source, CefRefPtr<CefFrame> frame, TransitionType transition) {
   if (!owns(source) || !frame->IsMain() || closing || (frame->GetURL() == "about:blank" && url != "about:blank")) return;
+  if ((transition & TT_FORWARD_BACK_FLAG) && !navigation_started_) {
+    // Chromium restores cached documents without calling OnBeforeBrowse.
+    page_message_context.clear();
+    cancel_authentication();
+    certificate_failure_.reset();
+    ++main_navigation_epoch_;
+    main_navigation_uri_ = frame->GetURL();
+  }
+  if (!main_navigation_uri_.empty() && frame->GetURL() != main_navigation_uri_) return;
+  loading_document_frame_ = frame->GetIdentifier().ToString();
   if (!navigation_started_ && on_load_start) {
     auto callback = on_load_start;
     callback(frame->GetURL());
@@ -994,12 +1262,29 @@ void Browser::OnLoadEnd(CefRefPtr<CefBrowser> source, CefRefPtr<CefFrame> frame,
     return;
   if (frame->GetURL() == "about:blank" && url != "about:blank")
     return;
+  // A replaced error document can finish after its replacement has been requested.
+  if (loading_document_frame_ != frame->GetIdentifier().ToString()) return;
+  loading_document_frame_.clear();
   if (on_load_end)
     on_load_end(status);
 }
 void Browser::OnLoadError(CefRefPtr<CefBrowser> source, CefRefPtr<CefFrame> frame, ErrorCode error,
                           const CefString& text, const CefString& failed_url) {
-  if (!owns(source) || !frame->IsMain() || error == ERR_ABORTED || closing) return;
+  if (!owns(source) || !frame->IsMain() || closing) return;
+  const auto failed_uri = failed_url.ToString();
+  const bool current_failure = certificate_failure_ && certificate_failure_->navigation == main_navigation_epoch_ &&
+    certificate_failure_->uri == main_navigation_uri_ && certificate_failure_->uri == failed_uri;
+  if (error == ERR_ABORTED) {
+    if (current_failure) certificate_failure_.reset();
+    return;
+  }
+  if (current_failure && certificate_failure_->error == error) {
+    auto failure = std::exchange(certificate_failure_, {});
+    auto callback = on_tls_error;
+    if (callback && callback(failure->uri, failure->info)) return;
+  }
+  // A later navigation must not be replaced by an older request's error page.
+  if (failed_uri != (main_navigation_uri_.empty() ? url : main_navigation_uri_)) return;
   auto callback = on_load_error;
   if (callback && callback(failed_url, text)) return;
   show_error("Unable to Display This Website", text.ToString());
@@ -1195,6 +1480,108 @@ bool Browser::OnRequestMediaAccessPermission(CefRefPtr<CefBrowser> source, CefRe
   else ephy_engine_permission_decide(request, state == EPHY_ENGINE_PERMISSION_STATE_ALLOW ? EPHY_ENGINE_PERMISSION_ALLOW : EPHY_ENGINE_PERMISSION_DENY);
   return true;
 }
+bool Browser::GetAuthCredentials(CefRefPtr<CefBrowser> source, const CefString& origin_url,
+                                 bool is_proxy, const CefString& auth_host, int port,
+                                 const CefString& realm, const CefString& scheme,
+                                 CefRefPtr<CefAuthCallback> callback) {
+  // Only immutable CEF metadata and the atomic navigation token are read on IO.
+  CefRefPtr<Browser> self = this;
+  const auto generation = authentication_generation_.load();
+  const auto origin = origin_url.ToString(), hostname = auth_host.ToString();
+  const auto auth_realm = realm.ToString(), auth_scheme = scheme.ToString();
+  if (!CefPostTask(TID_UI, new ResponseTask([self, source, callback, generation, origin,
+                                            hostname, port, auth_realm, auth_scheme, is_proxy] {
+    if (!self->owns(source) || self->closing || !self->host || hostname.empty() ||
+        port < 1 || port > 65535 || generation != self->authentication_generation_.load() ||
+        !gtk_widget_get_mapped(self->area_)) {
+      callback->Cancel();
+      return;
+    }
+    auto *session = self->host->session ? self->host->session : ephy_engine_session_get_default();
+    auto context = source->GetHost()->GetRequestContext();
+    if (!context->IsSame(ephy_engine_session_context(session))) {
+      callback->Cancel();
+      return;
+    }
+    const auto id = ++self->authentication_serial_;
+    auto *request = ephy_engine_authentication_new(origin.c_str(), hostname.c_str(), port,
+      auth_realm.c_str(), auth_scheme.c_str(), is_proxy, session,
+      [self, source, context, callback, generation, id](const char *username, const char *password) {
+        // Erase before completing CEF: completion may reenter navigation or the dialog.
+        self->authentication_requests_.erase(id);
+        if (!username || !self->owns(source) || self->closing || !self->host ||
+            generation != self->authentication_generation_.load() ||
+            !gtk_widget_get_mapped(self->area_) ||
+            !context->IsSame(source->GetHost()->GetRequestContext()) ||
+            !context->IsSame(ephy_engine_session_context(self->host->session ?
+              self->host->session : ephy_engine_session_get_default()))) {
+          callback->Cancel();
+          return false;
+        }
+        callback->Continue(username, password);
+        return true;
+      });
+    auto owned = std::shared_ptr<EphyEngineAuthentication>(request, g_object_unref);
+    self->authentication_requests_.emplace(id, owned);
+    const auto present = self->on_authentication;
+    if (!present || !present(request)) ephy_engine_authentication_cancel(request);
+  }))) callback->Cancel();
+  return true;
+}
+bool Browser::OnSelectClientCertificate(CefRefPtr<CefBrowser> source, bool is_proxy,
+                                         const CefString& certificate_host, int port,
+                                         const X509CertificateList& certificates,
+                                         CefRefPtr<CefSelectClientCertificateCallback> callback) {
+  // Always handle manually: Chromium's fallback may choose a certificate.
+  CefRefPtr<Browser> self = this;
+  const auto hostname = certificate_host.ToString();
+  if (!owns(source) || closing || !host || hostname.empty() || port < 1 || port > 65535 ||
+      !gtk_widget_get_mapped(area_)) {
+    callback->Select(nullptr);
+    return true;
+  }
+  auto *session = host->session ? host->session : ephy_engine_session_get_default();
+  auto context = source->GetHost()->GetRequestContext();
+  if (!context || !context->IsSame(ephy_engine_session_context(session))) {
+    callback->Select(nullptr);
+    return true;
+  }
+  const auto generation = authentication_generation_.load();
+  const auto id = ++authentication_serial_;
+  auto *request = ephy_engine_client_certificate_new(hostname.c_str(), port, is_proxy, certificates, session,
+    [self, source, context, callback, generation, id](CefRefPtr<CefX509Certificate> certificate) {
+      // Unlink first: native completion and UI cancellation may reenter teardown.
+      self->client_certificate_requests_.erase(id);
+      if (!certificate || !self->owns(source) || self->closing || !self->host ||
+          generation != self->authentication_generation_.load() || !gtk_widget_get_mapped(self->area_) ||
+          !context->IsSame(source->GetHost()->GetRequestContext()) ||
+          !context->IsSame(ephy_engine_session_context(self->host->session ?
+            self->host->session : ephy_engine_session_get_default()))) {
+        callback->Select(nullptr);
+        return false;
+      }
+      callback->Select(certificate);
+      return true;
+    });
+  if (!request) return true;
+  auto owned = std::shared_ptr<EphyEngineClientCertificate>(request, g_object_unref);
+  client_certificate_requests_.emplace(id, owned);
+  const auto present = on_client_certificate;
+  if (!present || !present(request)) ephy_engine_client_certificate_cancel(request);
+  return true;
+}
+void Browser::cancel_authentication(bool invalidate_resources) {
+  ++authentication_generation_;
+  if (invalidate_resources) {
+    std::lock_guard lock(resource_frame_mutex_);
+    ++resource_lifetime_;
+    resource_frame_generations_.clear();
+  }
+  auto requests = std::exchange(authentication_requests_, {});
+  auto certificates = std::exchange(client_certificate_requests_, {});
+  for (const auto& [id, request] : requests) ephy_engine_authentication_cancel(request.get());
+  for (const auto& [id, request] : certificates) ephy_engine_client_certificate_cancel(request.get());
+}
 void Browser::cancel_permissions() {
   auto prompts = std::move(permission_prompts_);
   auto media = std::move(media_requests_);
@@ -1210,9 +1597,15 @@ void Browser::cancel_media_permissions(const std::string& frame) {
   for (auto& request : cancelled) ephy_engine_permission_decide(request.get(), EPHY_ENGINE_PERMISSION_DISMISS);
 }
 void Browser::OnFrameDetached(CefRefPtr<CefBrowser> source, CefRefPtr<CefFrame> frame) {
-  if (owns(source) && !media_requests_.empty()) cancel_media_permissions(frame->GetIdentifier());
+  if (!owns(source) || !frame) return;
+  {
+    std::lock_guard lock(resource_frame_mutex_);
+    ++resource_frame_generations_[frame->GetIdentifier().ToString()];
+  }
+  if (!media_requests_.empty()) cancel_media_permissions(frame->GetIdentifier());
 }
-bool Browser::route(const std::string& target, bool user_gesture, bool new_tab) {
+bool Browser::route(const std::string& target, bool user_gesture, bool new_tab,
+                    CefRefPtr<CefFrame> source_frame, bool initiator_known) {
   if (!owner())
     return false;
   if (Policy::navigable(target)) {
@@ -1222,24 +1615,43 @@ bool Browser::route(const std::string& target, bool user_gesture, bool new_tab) 
     }
     return false;
   }
-  if (user_gesture)
-    owner()->app.external(target);
+  if (user_gesture && source_frame && source_frame->IsMain() && on_external_uri) {
+    // GetURL is the committed frame URL; the pending target is not its origin.
+    const auto context = source_frame->GetURL().ToString();
+    if (!context.empty()) on_external_uri(target, context, initiator_known);
+  }
   return true;
 }
-bool Browser::OnBeforeBrowse(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame> frame, CefRefPtr<CefRequest> request,
+bool Browser::OnBeforeBrowse(CefRefPtr<CefBrowser> source, CefRefPtr<CefFrame> frame, CefRefPtr<CefRequest> request,
                              bool user_gesture, bool is_redirect) {
-  if (frame->IsMain()) cancel_permissions();
-  else if (!media_requests_.empty()) cancel_media_permissions(frame->GetIdentifier());
+  if (!owns(source) || !frame) return false;
   auto target = request->GetURL().ToString();
-  const bool handled = frame->IsMain() && route(target, user_gesture, false);
+  // CEF identifies the destination here, which may have a different initiator.
+  if (frame->IsMain() && route(target, user_gesture, false, frame, false)) return true;
+  if (!is_redirect && !frame->IsMain()) {
+    std::lock_guard lock(resource_frame_mutex_);
+    ++resource_frame_generations_[frame->GetIdentifier().ToString()];
+  }
+  if (frame->IsMain()) {
+    page_message_context.clear();
+    cancel_permissions();
+    cancel_authentication(!is_redirect);
+    certificate_failure_.reset();
+    ++main_navigation_epoch_;
+    main_navigation_uri_ = target;
+    loading_document_frame_.clear();
+    if (!host || !host->session || !ephy_engine_session_is_ephemeral(host->session))
+      ephy_engine_certificate_reset_cached_decisions(source->GetHost()->GetRequestContext(), request->GetURL(), false);
+  }
+  else if (!media_requests_.empty()) cancel_media_permissions(frame->GetIdentifier());
   // Overall loading also changes for fragments and subframes, which keep the document.
-  if (!handled && frame->IsMain() && !is_redirect && on_load_start &&
+  if (frame->IsMain() && !is_redirect && on_load_start &&
       (target != "about:blank" || url == "about:blank")) {
     navigation_started_ = true;
     auto callback = on_load_start;
     callback(target);
   }
-  return handled;
+  return false;
 }
 CefRefPtr<CefResourceRequestHandler> Browser::GetResourceRequestHandler(CefRefPtr<CefBrowser>,
     CefRefPtr<CefFrame> frame, CefRefPtr<CefRequest> request, bool, bool, const CefString&, bool&) {
@@ -1247,11 +1659,41 @@ CefRefPtr<CefResourceRequestHandler> Browser::GetResourceRequestHandler(CefRefPt
     main_request_.store(request->GetIdentifier());
   return this;
 }
-cef_return_value_t Browser::OnBeforeResourceLoad(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame>,
-    CefRefPtr<CefRequest> request, CefRefPtr<CefCallback>) {
+cef_return_value_t Browser::OnBeforeResourceLoad(CefRefPtr<CefBrowser> source, CefRefPtr<CefFrame> frame,
+    CefRefPtr<CefRequest> request, CefRefPtr<CefCallback> callback) {
+  // Redirects may revisit this callback; retain the originating document even
+  // if an old keepalive request redirects after its frame has navigated away.
+  if (!resource_generations_.contains(request->GetIdentifier())) {
+    std::lock_guard lock(resource_frame_mutex_);
+    const auto frame_id = frame ? frame->GetIdentifier().ToString() : std::string();
+    resource_generations_.emplace(request->GetIdentifier(), ResourceGeneration {
+      resource_lifetime_, frame_id, resource_frame_generations_[frame_id]});
+  }
   auto agent = request_user_agent_.load();
   ephy_engine_settings_apply_request(request, agent.get());
+  if (session_request_handler_) return session_request_handler_->OnBeforeResourceLoad(source, frame, request, callback);
   return RV_CONTINUE;
+}
+void Browser::OnResourceLoadComplete(CefRefPtr<CefBrowser> source, CefRefPtr<CefFrame> frame,
+    CefRefPtr<CefRequest> request, CefRefPtr<CefResponse> response, URLRequestStatus status, int64_t) {
+  auto found = resource_generations_.find(request->GetIdentifier());
+  if (found == resource_generations_.end()) return;
+  const auto generation = found->second;
+  resource_generations_.erase(found);
+  if (status != UR_SUCCESS || !frame || !response) return;
+  CefRefPtr<Browser> self = this;
+  auto uri = request->GetURL().ToString();
+  CefPostTask(TID_UI, new ResponseTask([self, source, frame, response, uri, generation] {
+    if (!self->owns(source) || self->closing || !frame->IsValid() ||
+        frame->GetIdentifier().ToString() != generation.frame) return;
+    {
+      std::lock_guard lock(self->resource_frame_mutex_);
+      if (self->resource_lifetime_ != generation.lifetime ||
+          self->resource_frame_generations_[generation.frame] != generation.document) return;
+    }
+    auto callback = self->on_resource_complete;
+    if (callback) callback(uri, response);
+  }));
 }
 bool Browser::OnResourceResponse(CefRefPtr<CefBrowser> source, CefRefPtr<CefFrame> frame,
     CefRefPtr<CefRequest> request, CefRefPtr<CefResponse> response) {
@@ -1266,24 +1708,50 @@ bool Browser::OnResourceResponse(CefRefPtr<CefBrowser> source, CefRefPtr<CefFram
   }));
   return false;
 }
-bool Browser::OnOpenURLFromTab(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame>, const CefString& target,
+bool Browser::OnOpenURLFromTab(CefRefPtr<CefBrowser> source, CefRefPtr<CefFrame> frame, const CefString& target,
                                cef_window_open_disposition_t, bool user_gesture) {
-  return route(target, user_gesture, true);
+  // CEF may substitute the main frame when it cannot resolve the actual source.
+  return !owns(source) || route(target, user_gesture, true, frame, false);
 }
-bool Browser::OnBeforePopup(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame>, int, const CefString& target,
+bool Browser::OnBeforePopup(CefRefPtr<CefBrowser> source, CefRefPtr<CefFrame> frame, int popup_id, const CefString& target,
                             const CefString&, cef_window_open_disposition_t, bool user_gesture,
-                            const CefPopupFeatures&, CefWindowInfo& info, CefRefPtr<CefClient>& client,
+                            const CefPopupFeatures& features, CefWindowInfo& info, CefRefPtr<CefClient>& client,
                             CefBrowserSettings&, CefRefPtr<CefDictionaryValue>&, bool*) {
-  if (!owner() || (!target.empty() && !Policy::navigable(target)))
-    return true;
-  auto popup = owner()->open(target.empty() ? "about:blank" : target, true, true);
-  if (!popup) return true;
+  if (!owns(source) || closing || !owner() || pending_popups_.contains(popup_id)) return true;
+  if (!target.empty() && !Policy::navigable(target))
+    return route(target, user_gesture, true, frame, true);
+  CefRefPtr<Browser> keep_alive = this;
+  const auto context = source->GetHost()->GetRequestContext();
+  const auto address = target.empty() ? std::string("about:blank") : target.ToString();
+  auto create = on_create_popup;
+  auto popup = create ? create(address, features) : owner()->open(address, true, true);
+  if (closing || !owns(source) || !popup || popup.get() == this || popup->closing ||
+      popup->loaded || popup->creating_ || popup->waiting_context_ || popup->browser_ ||
+      popup->browser_id_ || popup->popup_opener_ || !popup->host || popup->host->closing ||
+      popup->host->destroyed) return true;
+  auto popup_context = ephy_engine_session_context(
+      popup->host->session ? popup->host->session : ephy_engine_session_get_default());
+  if (!context || !popup_context || !context->IsSame(popup_context)) return true;
+  // Mapping the GTK child must never start a second, unrelated CEF browser.
+  popup->defer_start = true;
   popup->loaded = true;
-  popup->creating_ = false;
+  popup->creating_ = true;
+  ++active_count;
+  popup->native_popup_child_ = true;
+  popup->popup_opener_ = this;
+  popup->popup_id_ = popup_id;
+  pending_popups_.emplace(popup_id, popup);
   client = popup;
   info.SetAsWindowless(0);
-  info.shared_texture_enabled = !software_;
+  info.shared_texture_enabled = !popup->software_;
   return false;
+}
+bool Browser::OnContentsBoundsChange(CefRefPtr<CefBrowser> source, const CefRect& bounds) {
+  if (!owns(source) || closing || !native_popup_child_ || is_extension_popup ||
+      !on_contents_bounds_change) return false;
+  auto callback = on_contents_bounds_change;
+  callback(bounds);
+  return true;
 }
 bool Browser::OnBeforeDownload(CefRefPtr<CefBrowser> source, CefRefPtr<CefDownloadItem> item, const CefString& suggested,
                                CefRefPtr<CefBeforeDownloadCallback> callback) {

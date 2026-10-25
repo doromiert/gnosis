@@ -1,16 +1,5 @@
+# Native extension APIs execute in Chromium; the former JSC provider is not built.
 ephywebextension_src = [
-  'webextension/api/alarms.c',
-  'webextension/api/browseraction.c',
-  'webextension/api/commands.c',
-  'webextension/api/cookies.c',
-  'webextension/api/downloads.c',
-  'webextension/api/menus.c',
-  'webextension/api/notifications.c',
-  'webextension/api/pageaction.c',
-  'webextension/api/runtime.c',
-  'webextension/api/storage.c',
-  'webextension/api/tabs.c',
-  'webextension/api/windows.c',
   'webextension/ephy-gizmo.c',
   'webextension/ephy-indicator-bin.c',
   'webextension/adw-widget-utils.c',

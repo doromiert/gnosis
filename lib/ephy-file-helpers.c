@@ -775,36 +775,52 @@ ephy_sanitize_filename (char *filename)
   return g_strdelimit (filename, G_DIR_SEPARATOR_S, '_');
 }
 
+static gboolean
+spawn_current_instance (const char * const *arguments,
+                        GError            **error)
+{
+  g_autofree char *executable = NULL;
+  g_autoptr (GPtrArray) argv = g_ptr_array_new ();
+
+  /* The installed launcher may be a Nix wrapper that is not on PATH. Its
+   * environment is already inherited; restart the exact executable it ran. */
+  executable = g_file_read_link ("/proc/self/exe", error);
+  if (!executable)
+    return FALSE;
+
+  g_ptr_array_add (argv, executable);
+  for (const char * const *argument = arguments; *argument; argument++)
+    g_ptr_array_add (argv, (gpointer)*argument);
+  g_ptr_array_add (argv, NULL);
+
+  return g_spawn_async (NULL, (char **)argv->pdata, NULL, G_SPAWN_DEFAULT,
+                        NULL, NULL, NULL, error);
+}
+
 void
 ephy_open_default_instance_window (void)
 {
-  GError *error = NULL;
+  const char *arguments[] = { "--new-window", NULL };
+  g_autoptr (GError) error = NULL;
 
-  g_spawn_command_line_async ("jupiter --new-window", &error);
+  spawn_current_instance (arguments, &error);
 
-  if (error) {
+  if (error)
     g_warning ("Couldn't open default instance: %s", error->message);
-    g_error_free (error);
-  }
 }
 
 void
 ephy_open_incognito_window (const char *uri)
 {
-  g_autofree char *quoted_profile_dir = NULL;
-  g_autofree char *command = NULL;
+  const char *uri_arguments[] = {
+    "--incognito-mode", "--profile", ephy_profile_dir (), "--", uri, NULL
+  };
+  const char *window_arguments[] = {
+    "--incognito-mode", "--new-window", "--profile", ephy_profile_dir (), NULL
+  };
   g_autoptr (GError) error = NULL;
 
-  quoted_profile_dir = g_shell_quote (ephy_profile_dir ());
-
-  if (uri) {
-    g_autofree char *quoted_uri = g_shell_quote (uri);
-    command = g_strdup_printf ("jupiter --incognito-mode --profile %s -- %s", quoted_profile_dir, quoted_uri);
-  } else {
-    command = g_strdup_printf ("jupiter --incognito-mode --new-window --profile %s", quoted_profile_dir);
-  }
-
-  g_spawn_command_line_async (command, &error);
+  spawn_current_instance (uri ? uri_arguments : window_arguments, &error);
 
   if (error)
     g_warning ("Couldn't open link in incognito window: %s", error->message);

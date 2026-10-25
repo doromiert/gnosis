@@ -23,6 +23,8 @@
 
 #include "config.h"
 
+#include "ephy-json-utils.h"
+
 #include "window-commands.h"
 
 #include <string.h>

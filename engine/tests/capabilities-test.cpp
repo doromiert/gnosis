@@ -67,10 +67,11 @@ struct ScriptReply {
       reply->ready = true;
   }
 };
-static std::string evaluate(EphyEngineView *view, const char *script, const char* world = nullptr) {
+static std::string evaluate(EphyEngineView *view, const char *script, const char* world = nullptr,
+                            std::source_location caller = std::source_location::current()) {
   ScriptReply reply;
   ephy_engine_web_view_evaluate_javascript(view, script, -1, world, nullptr, nullptr, ScriptReply::done, &reply);
-  wait_for([&]{ return reply.ready; });
+  wait_for([&]{ return reply.ready; }, caller);
   if (reply.error) g_error("Script failed in %s: %s; %s", world ? world : "main", reply.error->message, script);
   return reply.text;
 }

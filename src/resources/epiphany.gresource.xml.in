@@ -2,6 +2,7 @@
 <gresources>
   <gresource prefix="/org/gnome/epiphany">
     <file compressed="true">about.ini</file>
+    <file compressed="true">overview.js</file>
     <file preprocess="xml-stripblanks" compressed="true" alias="gtk/action-bar-end.ui">resources/gtk/action-bar-end.ui</file>
     <file preprocess="xml-stripblanks" compressed="true" alias="gtk/action-bar-start.ui">resources/gtk/action-bar-start.ui</file>
     <file preprocess="xml-stripblanks" compressed="true" alias="gtk/action-bar.ui">resources/gtk/action-bar.ui</file>
@@ -10,6 +11,7 @@
     <file preprocess="xml-stripblanks" compressed="true" alias="gtk/bookmark-row.ui">resources/gtk/bookmark-row.ui</file>
     <file preprocess="xml-stripblanks" compressed="true" alias="gtk/bookmarks-dialog.ui">resources/gtk/bookmarks-dialog.ui</file>
     <file preprocess="xml-stripblanks" compressed="true" alias="gtk/browser-action-row.ui">resources/gtk/browser-action-row.ui</file>
+    <file preprocess="xml-stripblanks" compressed="true" alias="gtk/tab-switcher.ui">resources/gtk/tab-switcher.ui</file>
     <file preprocess="xml-stripblanks" compressed="true" alias="gtk/clear-data-view.ui">resources/gtk/clear-data-view.ui</file>
     <file preprocess="xml-stripblanks" compressed="true" alias="gtk/data-view.ui">resources/gtk/data-view.ui</file>
     <file preprocess="xml-stripblanks" compressed="true" alias="gtk/encoding-dialog.ui">resources/gtk/encoding-dialog.ui</file>
@@ -47,6 +49,7 @@
     <file compressed="true">error.html</file>
   </gresource>
   <gresource prefix="/org/gnome/epiphany/page-icons">
+    <file preprocess="xml-stripblanks" compressed="true" alias="application.svg">../../data/icons/hicolor/scalable/apps/@appid@.svg</file>
     <file preprocess="xml-stripblanks" compressed="true">channel-insecure-symbolic.svg</file>
     <file preprocess="xml-stripblanks" compressed="true">computer-fail-symbolic.svg</file>
     <file preprocess="xml-stripblanks" compressed="true">private-mode.svg</file>

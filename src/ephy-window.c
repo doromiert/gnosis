@@ -37,8 +37,10 @@
 #include "context-menu-commands.h"
 #include "ephy-action-bar.h"
 #include "ephy-action-helper.h"
+#include "ephy-authentication-dialog.h"
 #include "ephy-bookmarks-dialog.h"
 #include "ephy-bookmarks-manager.h"
+#include "ephy-client-certificate-dialog.h"
 #include "ephy-debug.h"
 #include "ephy-desktop-utils.h"
 #include "ephy-embed-container.h"
@@ -46,6 +48,8 @@
 #include "ephy-embed-shell.h"
 #include "ephy-embed-type-builtins.h"
 #include "ephy-embed-utils.h"
+#include "ephy-engine-authentication.h"
+#include "ephy-engine-client-certificate.h"
 #include "ephy-file-helpers.h"
 #include "ephy-find-toolbar.h"
 #include "ephy-flatpak-utils.h"
@@ -65,6 +69,8 @@
 #include "ephy-site-menu-button.h"
 #include "ephy-title-box.h"
 #include "ephy-title-widget.h"
+#include "ephy-tab-switcher.h"
+#include "ephy-tab-switcher-model.h"
 #include "ephy-type-builtins.h"
 #include "ephy-uri-helpers.h"
 #include "ephy-view-source-handler.h"
@@ -157,6 +163,8 @@ struct _EphyWindow {
   GtkWidget *header_bar;
   GHashTable *action_labels;
   EphyTabView *tab_view;
+  EphyTabSwitcherModel *tab_switcher_model;
+  GtkWidget *tab_switcher;
   AdwTabBar *tab_bar;
   GtkWidget *action_bar_revealer;
   GtkWidget *action_bar;
@@ -166,9 +174,6 @@ struct _EphyWindow {
   EphyEmbed *active_embed;
   EphyEmbed *previous_embed;
   EphyWindowChrome chrome;
-  WebKitHitTestResult *context_event;
-  WebKitHitTestResult *hit_test_result;
-  guint idle_worker;
   EphyLocationController *location_controller;
   guint modified_forms_timeout_id;
   EphyMouseGestureController *mouse_gesture_controller;
@@ -177,6 +182,12 @@ struct _EphyWindow {
   gboolean show_fullscreen_header_bar;
   guint64 uid;
   GtkWidget *toast_overlay;
+  GtkWidget *content_overlay;
+  GtkWidget *download_feedback;
+  GtkWidget *download_feedback_icon;
+  guint download_feedback_tick;
+  gint64 download_feedback_requested;
+  gint64 download_feedback_started;
   GtkWidget *switch_to_tab;
   AdwToast *switch_toast;
   AdwToast *download_start_toast;
@@ -854,116 +865,6 @@ ephy_window_close_request (GtkWindow *window)
 #define MAX_SPELL_CHECK_GUESSES 4
 
 static void
-update_link_actions_sensitivity (EphyWindow *window,
-                                 gboolean    can_open)
-{
-  GAction *action;
-  GActionGroup *action_group;
-
-  action_group = ephy_window_get_action_group (window, "popup");
-
-  action = g_action_map_lookup_action (G_ACTION_MAP (action_group),
-                                       "open-link-in-new-window");
-  g_simple_action_set_enabled (G_SIMPLE_ACTION (action), can_open);
-
-  action = g_action_map_lookup_action (G_ACTION_MAP (action_group),
-                                       "open-link-in-new-tab");
-  ephy_action_change_sensitivity_flags (G_SIMPLE_ACTION (action), SENS_FLAG_CONTEXT, !can_open);
-
-  action = g_action_map_lookup_action (G_ACTION_MAP (action_group),
-                                       "open-link-in-incognito-window");
-  g_simple_action_set_enabled (G_SIMPLE_ACTION (action), can_open);
-}
-
-static void
-update_edit_action_sensitivity (EphyWindow *window,
-                                const char *action_name,
-                                gboolean    sensitive,
-                                gboolean    hide)
-{
-  GActionGroup *action_group;
-  GAction *action;
-
-  action_group = ephy_window_get_action_group (window, "win");
-
-  action = g_action_map_lookup_action (G_ACTION_MAP (action_group),
-                                       action_name);
-  g_simple_action_set_enabled (G_SIMPLE_ACTION (action), sensitive || hide);
-}
-
-static void
-update_edit_actions_sensitivity (EphyWindow *window,
-                                 gboolean    hide)
-{
-  GtkWidget *widget = gtk_window_get_focus (GTK_WINDOW (window));
-  gboolean can_cut, can_copy, can_undo, can_redo, can_paste;
-
-  if (GTK_IS_EDITABLE (widget)) {
-    EphyTitleWidget *title_widget;
-    gboolean has_selection;
-
-    title_widget = ephy_header_bar_get_title_widget (EPHY_HEADER_BAR (window->header_bar));
-
-    has_selection = gtk_editable_get_selection_bounds (GTK_EDITABLE (widget), NULL, NULL);
-
-    can_cut = has_selection;
-    can_copy = has_selection;
-    can_paste = TRUE;
-    can_undo = EPHY_IS_LOCATION_ENTRY (title_widget);
-    can_redo = EPHY_IS_LOCATION_ENTRY (title_widget) &&
-               ephy_location_entry_get_can_redo (EPHY_LOCATION_ENTRY (title_widget));
-  } else {
-    EphyEmbed *embed;
-    EphyEngineView *view;
-    WebKitEditorState *state;
-
-    embed = window->active_embed;
-    g_assert (embed);
-
-    view = EPHY_GET_WEBKIT_WEB_VIEW_FROM_EMBED (embed);
-    state = ephy_engine_web_view_get_editor_state (view);
-
-    can_cut = webkit_editor_state_is_cut_available (state);
-    can_copy = webkit_editor_state_is_copy_available (state);
-    can_paste = webkit_editor_state_is_paste_available (state);
-    can_undo = webkit_editor_state_is_undo_available (state);
-    can_redo = webkit_editor_state_is_redo_available (state);
-  }
-
-  update_edit_action_sensitivity (window, "cut", can_cut, hide);
-  update_edit_action_sensitivity (window, "copy", can_copy, hide);
-  update_edit_action_sensitivity (window, "paste", can_paste, hide);
-  update_edit_action_sensitivity (window, "paste-as-plain-text", can_paste, hide);
-  update_edit_action_sensitivity (window, "undo", can_undo, hide);
-  update_edit_action_sensitivity (window, "redo", can_redo, hide);
-}
-
-static void
-enable_edit_actions_sensitivity (EphyWindow *window)
-{
-  GActionGroup *action_group;
-  GAction *action;
-
-  if (window->closing)
-    return;
-
-  action_group = ephy_window_get_action_group (window, "win");
-
-  action = g_action_map_lookup_action (G_ACTION_MAP (action_group), "cut");
-  g_simple_action_set_enabled (G_SIMPLE_ACTION (action), TRUE);
-  action = g_action_map_lookup_action (G_ACTION_MAP (action_group), "copy");
-  g_simple_action_set_enabled (G_SIMPLE_ACTION (action), TRUE);
-  action = g_action_map_lookup_action (G_ACTION_MAP (action_group), "paste");
-  g_simple_action_set_enabled (G_SIMPLE_ACTION (action), TRUE);
-  action = g_action_map_lookup_action (G_ACTION_MAP (action_group), "paste-as-plain-text");
-  g_simple_action_set_enabled (G_SIMPLE_ACTION (action), TRUE);
-  action = g_action_map_lookup_action (G_ACTION_MAP (action_group), "undo");
-  g_simple_action_set_enabled (G_SIMPLE_ACTION (action), TRUE);
-  action = g_action_map_lookup_action (G_ACTION_MAP (action_group), "redo");
-  g_simple_action_set_enabled (G_SIMPLE_ACTION (action), TRUE);
-}
-
-static void
 change_combined_stop_reload_state (GSimpleAction *action,
                                    GVariant      *loading,
                                    gpointer       user_data)
@@ -1062,38 +963,6 @@ static const GActionEntry toolbar_entries [] = {
 
 static const GActionEntry popup_entries [] = {
   { "context-bookmark-page", window_cmd_bookmark_page },
-  /* Links. */
-
-  { "open-link-in-new-window", context_cmd_link_in_new_window },
-  { "open-link-in-new-tab", context_cmd_link_in_new_tab },
-  { "open-link-in-incognito-window", context_cmd_link_in_incognito_window },
-  { "download-link-as", context_cmd_download_link_as },
-  { "copy-link-address", context_cmd_copy_link_address },
-  { "copy-email-address", context_cmd_copy_link_address },
-  { "send-via-email", context_cmd_send_via_email },
-  { "add-link-to-bookmarks", context_cmd_add_link_to_bookmarks },
-
-  /* Images. */
-
-  { "view-image", context_cmd_view_image_in_new_tab },
-  { "copy-image-location", context_cmd_copy_image_location },
-  { "save-image-as", context_cmd_save_image_as },
-  { "set-image-as-background", context_cmd_set_image_as_background },
-
-  /* Video. */
-
-  { "open-video-in-new-window", context_cmd_media_in_new_window },
-  { "open-video-in-new-tab", context_cmd_media_in_new_tab },
-  { "save-video-as", context_cmd_save_media_as },
-  { "copy-video-location", context_cmd_copy_media_location },
-
-  /* Audio. */
-
-  { "open-audio-in-new-window", context_cmd_media_in_new_window },
-  { "open-audio-in-new-tab", context_cmd_media_in_new_tab },
-  { "save-audios-as", context_cmd_save_media_as },
-  { "copy-audio-location", context_cmd_copy_media_location },
-
   /* Selection */
   { "search-selection", context_cmd_search_selection, "s" },
   { "open-selection", context_cmd_open_selection, "s" },
@@ -1118,45 +987,12 @@ const struct {
   { "select-all", N_("Select _All") },
   { "generate-password", N_("Generate _Password") },
 
-  { "send-via-email", N_("S_end Link by Email…") },
-  { "add-link-to-bookmarks", N_("Add _Link to Bookmarks") },
-
   { "reload", N_("_Reload") },
   { "navigation-back", N_("_Back") },
   { "navigation-forward", N_("_Forward") },
 
   /* Bookmarks */
   { "context-bookmark-page", N_("Add Boo_kmark…") },
-
-  /* Links. */
-
-  { "open-link-in-new-window", N_("Open Link in New _Window") },
-  { "open-link-in-new-tab", N_("Open Link in New _Tab") },
-  { "open-link-in-incognito-window", N_("Open Link in I_ncognito Window") },
-  { "download-link-as", N_("_Save Link As…") },
-  { "copy-link-address", N_("_Copy Link Address") },
-  { "copy-email-address", N_("_Copy E-mail Address") },
-
-  /* Images. */
-
-  { "view-image", N_("View _Image in New Tab") },
-  { "copy-image-location", N_("Copy I_mage Address") },
-  { "save-image-as", N_("_Save Image As…") },
-  { "set-image-as-background", N_("Set as _Wallpaper") },
-
-  /* Video. */
-
-  { "open-video-in-new-window", N_("Open Video in New _Window") },
-  { "open-video-in-new-tab", N_("Open Video in New _Tab") },
-  { "save-video-as", N_("_Save Video As…") },
-  { "copy-video-location", N_("_Copy Video Address") },
-
-  /* Audio. */
-
-  { "open-audio-in-new-window", N_("Open Audio in New _Window") },
-  { "open-audio-in-new-tab", N_("Open Audio in New _Tab") },
-  { "save-audios-as", N_("_Save Audio As…") },
-  { "copy-audio-location", N_("_Copy Audio Address") },
 
   /* Selection */
   { "search-selection", "search-selection-placeholder" },
@@ -1211,10 +1047,6 @@ _ephy_window_set_default_actions_sensitive (EphyWindow *window,
   action_group = ephy_window_get_action_group (window, "popup");
   action = g_action_map_lookup_action (G_ACTION_MAP (action_group),
                                        "context-bookmark-page");
-  ephy_action_change_sensitivity_flags (G_SIMPLE_ACTION (action),
-                                        flags, set);
-  action = g_action_map_lookup_action (G_ACTION_MAP (action_group),
-                                       "send-via-email");
   ephy_action_change_sensitivity_flags (G_SIMPLE_ACTION (action),
                                         flags, set);
 
@@ -1430,17 +1262,6 @@ sync_tab_title (EphyEmbed  *embed,
 }
 
 static void
-sync_tab_page_action (EphyWebView *view,
-                      GParamSpec  *pspec,
-                      EphyWindow  *window)
-{
-  EphyWebExtensionManager *manager;
-
-  manager = ephy_web_extension_manager_get_default ();
-  ephy_web_extension_manager_update_location_entry (manager, window);
-}
-
-static void
 update_mute_action (EphyWindow    *window,
                     GParamSpec    *pspec,
                     EphyEngineView *web_view)
@@ -1454,642 +1275,8 @@ update_mute_action (EphyWindow    *window,
   g_simple_action_set_enabled (G_SIMPLE_ACTION (action), ephy_engine_web_view_is_playing_audio (web_view));
 }
 
-static void
-idle_unref_context_event (EphyWindow *window)
-{
-  LOG ("Idle unreffing context event %p", window->context_event);
 
-  g_clear_object (&window->context_event);
 
-  window->idle_worker = 0;
-}
-
-static void
-_ephy_window_set_context_event (EphyWindow          *window,
-                                WebKitHitTestResult *hit_test_result)
-{
-  g_clear_handle_id (&window->idle_worker, g_source_remove);
-
-  g_set_object (&window->context_event, hit_test_result);
-}
-
-static void
-_ephy_window_unset_context_event (EphyWindow *window)
-{
-  /* Unref the event from idle since we still need it
-   * from the action callbacks which will run before idle.
-   */
-  if (window->idle_worker == 0 && window->context_event) {
-    window->idle_worker =
-      g_idle_add_once ((GSourceOnceFunc)idle_unref_context_event, window);
-  }
-}
-
-static void
-context_menu_dismissed_cb (EphyEngineView *webView,
-                           EphyWindow    *window)
-{
-  LOG ("Deactivating popup menu");
-
-  enable_edit_actions_sensitivity (window);
-
-  g_signal_handlers_disconnect_by_func
-    (webView, G_CALLBACK (context_menu_dismissed_cb), window);
-
-  _ephy_window_unset_context_event (window);
-}
-
-static char *
-ellipsize_string (const char *string,
-                  glong       max_length)
-{
-  char *ellipsized;
-  glong length = g_utf8_strlen (string, -1);
-
-  if (length == 0)
-    return NULL;
-
-  if (length < max_length) {
-    ellipsized = g_strdup (string);
-  } else {
-    char *str = g_utf8_substring (string, 0, max_length);
-    ellipsized = g_strconcat (str, "…", NULL);
-    g_free (str);
-  }
-  return ellipsized;
-}
-
-static char *
-mnemonic_escape_string (const char *string)
-{
-  GString *gstring;
-  const char *ptr;
-
-  gstring = g_string_new (string);
-  ptr = gstring->str;
-
-  /* Convert each underscore to a double underscore. */
-  while ((ptr = g_utf8_strchr (ptr, -1, '_'))) {
-    ptrdiff_t pos = ptr - gstring->str;
-    g_string_insert (gstring, pos, "_");
-    ptr = gstring->str + pos + 2;
-  }
-
-  return g_string_free_and_steal (gstring);
-}
-
-static char *
-format_search_label (const char *search_term)
-{
-  g_autofree char *ellipsized = ellipsize_string (search_term, 32);
-  g_autofree char *escaped = mnemonic_escape_string (ellipsized);
-
-  return g_strdup_printf (_("Search the Web for “%s”"), escaped);
-}
-
-static void
-add_action_to_context_menu (WebKitContextMenu *context_menu,
-                            GActionGroup      *action_group,
-                            const char        *action_name,
-                            EphyWindow        *window)
-{
-  GAction *action;
-  g_autofree char *name = NULL;
-  const char *label;
-  g_autoptr (GVariant) target = NULL;
-
-  g_action_parse_detailed_name (action_name, &name, &target, NULL);
-
-  label = g_hash_table_lookup (window->action_labels, name);
-  if (strcmp (label, "search-selection-placeholder") == 0) {
-    const char *search_term;
-    g_autofree char *search_label = NULL;
-
-    search_term = g_variant_get_string (target, NULL);
-    search_label = format_search_label (search_term);
-    action = g_action_map_lookup_action (G_ACTION_MAP (action_group), name);
-    webkit_context_menu_append (context_menu, webkit_context_menu_item_new_from_gaction (action, search_label, target));
-  } else if (strcmp (label, "open-selection-placeholder") == 0) {
-    webkit_context_menu_append (context_menu,
-                                webkit_context_menu_item_new_separator ());
-    action = g_action_map_lookup_action (G_ACTION_MAP (action_group), "open-selection");
-    webkit_context_menu_append (context_menu, webkit_context_menu_item_new_from_gaction (action, _("Open Link"), target));
-    action = g_action_map_lookup_action (G_ACTION_MAP (action_group), "open-selection-in-new-tab");
-    webkit_context_menu_append (context_menu, webkit_context_menu_item_new_from_gaction (action, _("Open Link In New Tab"), target));
-    action = g_action_map_lookup_action (G_ACTION_MAP (action_group), "open-selection-in-new-window");
-    webkit_context_menu_append (context_menu, webkit_context_menu_item_new_from_gaction (action, _("Open Link In New Window"), target));
-    action = g_action_map_lookup_action (G_ACTION_MAP (action_group), "open-selection-in-incognito-window");
-    webkit_context_menu_append (context_menu, webkit_context_menu_item_new_from_gaction (action, _("Open Link In Incognito Window"), target));
-  } else {
-    action = g_action_map_lookup_action (G_ACTION_MAP (action_group), name);
-    webkit_context_menu_append (context_menu, webkit_context_menu_item_new_from_gaction (action, _(label), target));
-  }
-}
-
-static void
-add_item_to_context_menu (WebKitContextMenu     *context_menu,
-                          WebKitContextMenuItem *item)
-{
-  if (!item)
-    return;
-
-  webkit_context_menu_append (context_menu, item);
-  g_object_unref (item);
-}
-
-/* FIXME: Add webkit_context_menu_find() ? */
-static WebKitContextMenuItem *
-find_item_in_context_menu (WebKitContextMenu       *context_menu,
-                           WebKitContextMenuAction  action)
-{
-  GList *items, *iter;
-
-  items = webkit_context_menu_get_items (context_menu);
-  for (iter = items; iter; iter = g_list_next (iter)) {
-    WebKitContextMenuItem *item = (WebKitContextMenuItem *)iter->data;
-
-    if (webkit_context_menu_item_get_stock_action (item) == action)
-      return g_object_ref (item);
-  }
-
-  return NULL;
-}
-
-static GList *
-find_spelling_guess_context_menu_items (WebKitContextMenu *context_menu)
-{
-  GList *items, *iter;
-  guint i;
-  GList *retval = NULL;
-
-  items = webkit_context_menu_get_items (context_menu);
-  for (iter = items, i = 0; iter && i < MAX_SPELL_CHECK_GUESSES; iter = g_list_next (iter), i++) {
-    WebKitContextMenuItem *item = (WebKitContextMenuItem *)iter->data;
-
-    if (webkit_context_menu_item_get_stock_action (item) == WEBKIT_CONTEXT_MENU_ACTION_SPELLING_GUESS) {
-      retval = g_list_prepend (retval, g_object_ref (item));
-    } else {
-      /* Spelling guesses are always at the beginning of the context menu, so
-       * we can break the loop as soon as we find the first item that is not
-       * spelling guess.
-       */
-      break;
-    }
-  }
-
-  return g_list_reverse (retval);
-}
-
-static gboolean
-should_show_copy_outside_editable (EphyEngineView *view)
-{
-  WebKitEditorState *state;
-
-  state = ephy_engine_web_view_get_editor_state (view);
-
-  return webkit_editor_state_is_copy_available (state);
-}
-
-static void
-parse_context_menu_user_data (WebKitContextMenu  *context_menu,
-                              const char        **selected_text,
-                              gboolean           *is_password,
-                              guint64            *frame_id)
-{
-  GVariantDict dict;
-
-  g_variant_dict_init (&dict, webkit_context_menu_get_user_data (context_menu));
-  g_variant_dict_lookup (&dict, "SelectedText", "&s", selected_text);
-
-  if (is_password) {
-    *is_password = FALSE;
-    g_variant_dict_lookup (&dict, "IsPassword", "b", is_password);
-  }
-
-  if (frame_id) {
-    *frame_id = 0;
-    g_variant_dict_lookup (&dict, "FrameID", "t", frame_id);
-  }
-}
-
-static gboolean
-populate_context_menu (EphyEngineView       *web_view,
-                       WebKitContextMenu   *context_menu,
-                       WebKitHitTestResult *hit_test_result,
-                       EphyWindow          *window)
-{
-  EphyWebExtensionManager *extension_manager = ephy_web_extension_manager_get_default ();
-  WebKitContextMenuItem *input_methods_item = NULL;
-  WebKitContextMenuItem *insert_emoji_item = NULL;
-  WebKitContextMenuItem *copy_image_item = NULL;
-  WebKitContextMenuItem *play_pause_item = NULL;
-  WebKitContextMenuItem *mute_item = NULL;
-  WebKitContextMenuItem *toggle_controls_item = NULL;
-  WebKitContextMenuItem *toggle_loop_item = NULL;
-  WebKitContextMenuItem *fullscreen_item = NULL;
-  WebKitContextMenuItem *paste_as_plain_text_item = NULL;
-  WebKitContextMenuItem *delete_item = NULL;
-  GActionGroup *window_action_group;
-  GActionGroup *toolbar_action_group;
-  GActionGroup *popup_action_group;
-  GList *spelling_guess_items = NULL;
-  gboolean app_mode, incognito_mode;
-  gboolean is_document = FALSE;
-  gboolean is_image = FALSE;
-  gboolean is_media = FALSE;
-  gboolean is_downloadable_video = FALSE;
-  gboolean is_downloadable_audio = FALSE;
-  gboolean is_selected_text = FALSE;
-  gboolean can_search_selection = FALSE;
-  gboolean can_open_selection = FALSE;
-  char *search_selection_action_name = NULL;
-  char *open_selection_action_name = NULL;
-  const char *selected_text = NULL;
-  const char *uri = NULL;
-  GdkEvent *event = NULL;
-  GdkModifierType state = 0;
-  gboolean fullscreen_lockdown;
-  gboolean is_password = FALSE;
-  guint64 frame_id = 0;
-
-  fullscreen_lockdown = g_settings_get_boolean (EPHY_SETTINGS_LOCKDOWN, EPHY_PREFS_LOCKDOWN_FULLSCREEN) ||
-                        ephy_embed_shell_get_mode (ephy_embed_shell_get_default ()) == EPHY_EMBED_SHELL_MODE_KIOSK;
-
-  if (fullscreen_lockdown || g_settings_get_boolean (EPHY_SETTINGS_LOCKDOWN, EPHY_PREFS_LOCKDOWN_CONTEXT_MENU))
-    return GDK_EVENT_STOP;
-
-  window_action_group = ephy_window_get_action_group (window, "win");
-  toolbar_action_group = ephy_window_get_action_group (window, "toolbar");
-  popup_action_group = ephy_window_get_action_group (window, "popup");
-
-  if (webkit_hit_test_result_context_is_image (hit_test_result)) {
-    is_image = TRUE;
-    copy_image_item = find_item_in_context_menu (context_menu, WEBKIT_CONTEXT_MENU_ACTION_COPY_IMAGE_TO_CLIPBOARD);
-  }
-
-  if (webkit_hit_test_result_context_is_editable (hit_test_result)) {
-    paste_as_plain_text_item = find_item_in_context_menu (context_menu, WEBKIT_CONTEXT_MENU_ACTION_PASTE_AS_PLAIN_TEXT);
-    input_methods_item = find_item_in_context_menu (context_menu, WEBKIT_CONTEXT_MENU_ACTION_INPUT_METHODS);
-    insert_emoji_item = find_item_in_context_menu (context_menu, WEBKIT_CONTEXT_MENU_ACTION_INSERT_EMOJI);
-    spelling_guess_items = find_spelling_guess_context_menu_items (context_menu);
-    delete_item = find_item_in_context_menu (context_menu, WEBKIT_CONTEXT_MENU_ACTION_DELETE);
-  }
-
-  if (webkit_hit_test_result_context_is_media (hit_test_result)) {
-    WebKitContextMenuItem *item;
-
-    is_media = TRUE;
-    play_pause_item = find_item_in_context_menu (context_menu, WEBKIT_CONTEXT_MENU_ACTION_MEDIA_PLAY);
-    if (!play_pause_item)
-      play_pause_item = find_item_in_context_menu (context_menu, WEBKIT_CONTEXT_MENU_ACTION_MEDIA_PAUSE);
-    mute_item = find_item_in_context_menu (context_menu, WEBKIT_CONTEXT_MENU_ACTION_MEDIA_MUTE);
-    toggle_controls_item = find_item_in_context_menu (context_menu, WEBKIT_CONTEXT_MENU_ACTION_TOGGLE_MEDIA_CONTROLS);
-    toggle_loop_item = find_item_in_context_menu (context_menu, WEBKIT_CONTEXT_MENU_ACTION_TOGGLE_MEDIA_LOOP);
-    fullscreen_item = find_item_in_context_menu (context_menu, WEBKIT_CONTEXT_MENU_ACTION_ENTER_VIDEO_FULLSCREEN);
-
-    item = find_item_in_context_menu (context_menu, WEBKIT_CONTEXT_MENU_ACTION_DOWNLOAD_VIDEO_TO_DISK);
-    if (item) {
-      is_downloadable_video = TRUE;
-      g_object_unref (item);
-    } else {
-      item = find_item_in_context_menu (context_menu, WEBKIT_CONTEXT_MENU_ACTION_DOWNLOAD_AUDIO_TO_DISK);
-      if (item) {
-        is_downloadable_audio = TRUE;
-        g_object_unref (item);
-      }
-    }
-  }
-
-  parse_context_menu_user_data (context_menu, &selected_text, &is_password, &frame_id);
-  if (selected_text && *selected_text) {
-    is_selected_text = TRUE;
-
-    if (ephy_embed_utils_address_is_valid (selected_text)) {
-      GVariant *value;
-
-      value = g_variant_new_string (selected_text);
-      open_selection_action_name = g_action_print_detailed_name ("open-selection",
-                                                                 value);
-      g_variant_unref (value);
-      can_open_selection = TRUE;
-    } else {
-      GVariant *value;
-
-      value = g_variant_new_string (selected_text);
-      search_selection_action_name = g_action_print_detailed_name ("search-selection",
-                                                                   value);
-      g_variant_unref (value);
-      can_search_selection = TRUE;
-    }
-  }
-
-  webkit_context_menu_remove_all (context_menu);
-
-  _ephy_window_set_context_event (window, hit_test_result);
-
-  app_mode = ephy_embed_shell_get_mode (ephy_embed_shell_get_default ()) == EPHY_EMBED_SHELL_MODE_APPLICATION;
-  incognito_mode = ephy_embed_shell_get_mode (ephy_embed_shell_get_default ()) == EPHY_EMBED_SHELL_MODE_INCOGNITO;
-
-  update_edit_actions_sensitivity (window, FALSE);
-
-  if (webkit_hit_test_result_context_is_link (hit_test_result)) {
-    const char *uri;
-
-    uri = webkit_hit_test_result_get_link_uri (hit_test_result);
-
-    update_edit_actions_sensitivity (window, TRUE);
-    update_link_actions_sensitivity (window, ephy_embed_utils_address_is_valid (uri));
-
-    if (!app_mode) {
-      add_action_to_context_menu (context_menu, popup_action_group,
-                                  "open-link-in-new-tab", window);
-    }
-
-    add_action_to_context_menu (context_menu, popup_action_group,
-                                "open-link-in-new-window", window);
-    if (!incognito_mode)
-      add_action_to_context_menu (context_menu, popup_action_group,
-                                  "open-link-in-incognito-window", window);
-    webkit_context_menu_append (context_menu,
-                                webkit_context_menu_item_new_separator ());
-
-    if (should_show_copy_outside_editable (web_view))
-      add_action_to_context_menu (context_menu, window_action_group,
-                                  "copy", window);
-    if (can_search_selection && !app_mode)
-      add_action_to_context_menu (context_menu, popup_action_group,
-                                  search_selection_action_name, window);
-    webkit_context_menu_append (context_menu,
-                                webkit_context_menu_item_new_separator ());
-    add_action_to_context_menu (context_menu, popup_action_group,
-                                "download-link-as", window);
-
-    if (g_str_has_prefix (uri, "mailto:")) {
-      add_action_to_context_menu (context_menu, popup_action_group,
-                                  "copy-email-address", window);
-    } else {
-      add_action_to_context_menu (context_menu, popup_action_group,
-                                  "copy-link-address", window);
-    }
-    add_action_to_context_menu (context_menu, popup_action_group,
-                                "send-via-email", window);
-    add_action_to_context_menu (context_menu, popup_action_group,
-                                "add-link-to-bookmarks", window);
-  } else if (webkit_hit_test_result_context_is_editable (hit_test_result)) {
-    GList *l;
-    gboolean has_guesses = FALSE;
-
-    /* FIXME: Add a Spelling Suggestions... submenu. Utilize
-     * WEBKIT_CONTEXT_MENU_ACTION_NO_GUESSES_FOUND,
-     * WEBKIT_CONTEXT_MENU_ACTION_IGNORE_SPELLING, and
-     * WEBKIT_CONTEXT_MENU_ACTION_LEARN_SPELLING. */
-    for (l = spelling_guess_items; l; l = g_list_next (l)) {
-      WebKitContextMenuItem *item = WEBKIT_CONTEXT_MENU_ITEM (l->data);
-
-      webkit_context_menu_append (context_menu, item);
-      g_object_unref (item);
-      has_guesses = TRUE;
-    }
-    g_list_free (spelling_guess_items);
-
-    if (has_guesses) {
-      webkit_context_menu_append (context_menu,
-                                  webkit_context_menu_item_new_separator ());
-    }
-
-    update_edit_actions_sensitivity (window, FALSE);
-
-    add_action_to_context_menu (context_menu, window_action_group,
-                                "undo", window);
-    add_action_to_context_menu (context_menu, window_action_group,
-                                "redo", window);
-    webkit_context_menu_append (context_menu,
-                                webkit_context_menu_item_new_separator ());
-    add_action_to_context_menu (context_menu, window_action_group,
-                                "cut", window);
-    add_action_to_context_menu (context_menu, window_action_group,
-                                "copy", window);
-    add_action_to_context_menu (context_menu, window_action_group,
-                                "paste", window);
-    if (paste_as_plain_text_item)
-      add_action_to_context_menu (context_menu, window_action_group,
-                                  "paste-as-plain-text", window);
-    add_item_to_context_menu (context_menu, delete_item);
-    webkit_context_menu_append (context_menu,
-                                webkit_context_menu_item_new_separator ());
-    add_action_to_context_menu (context_menu, window_action_group,
-                                "select-all", window);
-
-    if (is_password && ephy_embed_shell_should_remember_passwords (ephy_embed_shell_get_default ())) {
-      g_autoptr (GVariant) target = g_variant_new_uint64 (frame_id);
-      g_autofree char *generate_password_action_name = g_action_print_detailed_name ("generate-password", target);
-
-      webkit_context_menu_append (context_menu,
-                                  webkit_context_menu_item_new_separator ());
-      add_action_to_context_menu (context_menu, window_action_group,
-                                  generate_password_action_name, window);
-    }
-
-    if (can_search_selection)
-      add_action_to_context_menu (context_menu, popup_action_group,
-                                  search_selection_action_name, window);
-
-    if (can_open_selection)
-      add_action_to_context_menu (context_menu, popup_action_group,
-                                  open_selection_action_name, window);
-
-    if (input_methods_item || insert_emoji_item)
-      webkit_context_menu_append (context_menu,
-                                  webkit_context_menu_item_new_separator ());
-    add_item_to_context_menu (context_menu, input_methods_item);
-    add_item_to_context_menu (context_menu, insert_emoji_item);
-  } else {
-    is_document = TRUE;
-
-    update_edit_actions_sensitivity (window, TRUE);
-
-    if (should_show_copy_outside_editable (web_view))
-      add_action_to_context_menu (context_menu, window_action_group, "copy",
-                                  window);
-    if (can_search_selection && !app_mode)
-      add_action_to_context_menu (context_menu, popup_action_group,
-                                  search_selection_action_name, window);
-    if (can_open_selection)
-      add_action_to_context_menu (context_menu, popup_action_group,
-                                  open_selection_action_name, window);
-    if (should_show_copy_outside_editable (web_view) || can_search_selection)
-      webkit_context_menu_append (context_menu,
-                                  webkit_context_menu_item_new_separator ());
-
-    if (!is_selected_text && !is_image && !is_media) {
-      add_action_to_context_menu (context_menu, toolbar_action_group,
-                                  "navigation-back", window);
-      add_action_to_context_menu (context_menu, toolbar_action_group,
-                                  "navigation-forward", window);
-      add_action_to_context_menu (context_menu, toolbar_action_group,
-                                  "reload", window);
-      webkit_context_menu_append (context_menu,
-                                  webkit_context_menu_item_new_separator ());
-    }
-
-    if (!app_mode && !is_image && !is_media)
-      add_action_to_context_menu (context_menu, popup_action_group,
-                                  "context-bookmark-page", window);
-  }
-
-  if (is_image) {
-    webkit_context_menu_append (context_menu,
-                                webkit_context_menu_item_new_separator ());
-    add_action_to_context_menu (context_menu, popup_action_group,
-                                "save-image-as", window);
-    add_item_to_context_menu (context_menu, copy_image_item);
-    add_action_to_context_menu (context_menu, popup_action_group,
-                                "copy-image-location", window);
-    if (!app_mode)
-      add_action_to_context_menu (context_menu, popup_action_group,
-                                  "view-image", window);
-    add_action_to_context_menu (context_menu, popup_action_group,
-                                "set-image-as-background", window);
-  }
-
-  if (is_media) {
-    add_item_to_context_menu (context_menu, play_pause_item);
-    add_item_to_context_menu (context_menu, mute_item);
-    add_item_to_context_menu (context_menu, toggle_controls_item);
-    add_item_to_context_menu (context_menu, toggle_loop_item);
-    add_item_to_context_menu (context_menu, fullscreen_item);
-    webkit_context_menu_append (context_menu,
-                                webkit_context_menu_item_new_separator ());
-    if (is_downloadable_video) {
-      if (!app_mode) {
-        add_action_to_context_menu (context_menu, popup_action_group,
-                                    "open-video-in-new-window", window);
-        add_action_to_context_menu (context_menu, popup_action_group,
-                                    "open-video-in-new-tab", window);
-      }
-      add_action_to_context_menu (context_menu, popup_action_group,
-                                  "save-video-as", window);
-      add_action_to_context_menu (context_menu, popup_action_group,
-                                  "copy-video-location", window);
-    } else if (is_downloadable_audio) {
-      if (!app_mode) {
-        add_action_to_context_menu (context_menu, popup_action_group,
-                                    "open-audio-in-new-window", window);
-        add_action_to_context_menu (context_menu, popup_action_group,
-                                    "open-audio-in-new-tab", window);
-      }
-      add_action_to_context_menu (context_menu, popup_action_group,
-                                  "save-audios-as", window);
-      add_action_to_context_menu (context_menu, popup_action_group,
-                                  "copy-audio-location", window);
-    }
-  }
-
-  g_signal_connect_object (web_view, "context-menu-dismissed",
-                           G_CALLBACK (context_menu_dismissed_cb),
-                           window, G_CONNECT_DEFAULT);
-
-  g_free (search_selection_action_name);
-
-  if (!app_mode) {
-    if (is_document && !is_image && !is_media) {
-      webkit_context_menu_append (context_menu,
-                                  webkit_context_menu_item_new_separator ());
-      add_action_to_context_menu (context_menu, popup_action_group,
-                                  "send-via-email", window);
-    }
-
-    webkit_context_menu_append (context_menu,
-                                webkit_context_menu_item_new_separator ());
-    add_action_to_context_menu (context_menu, window_action_group,
-                                "save-as", window);
-    add_action_to_context_menu (context_menu, window_action_group,
-                                "screenshot", window);
-
-    if (g_settings_get_boolean (EPHY_SETTINGS_WEB, EPHY_PREFS_WEB_SHOW_DEVELOPER_ACTIONS)) {
-      webkit_context_menu_append (context_menu,
-                                  webkit_context_menu_item_new_separator ());
-      uri = ephy_engine_web_view_get_uri (web_view);
-      if (uri && !strstr (uri, EPHY_VIEW_SOURCE_SCHEME)) {
-        add_action_to_context_menu (context_menu, window_action_group,
-                                    "page-source", window);
-      }
-
-      webkit_context_menu_append (context_menu,
-                                  webkit_context_menu_item_new_from_stock_action (WEBKIT_CONTEXT_MENU_ACTION_INSPECT_ELEMENT));
-    }
-  }
-
-  event = webkit_context_menu_get_event (context_menu);
-  if (event && gdk_event_get_event_type (event) == GDK_BUTTON_PRESS)
-    state = gdk_event_get_modifier_state (event);
-
-  ephy_web_extension_manager_append_context_menu (extension_manager, web_view,
-                                                  context_menu, hit_test_result, state,
-                                                  is_downloadable_audio, is_downloadable_video);
-
-  return GDK_EVENT_PROPAGATE;
-}
-
-static gboolean
-save_target_uri (EphyWindow    *window,
-                 EphyEngineView *view)
-{
-  guint context;
-  char *location = NULL;
-  gboolean retval = FALSE;
-
-  g_object_get (window->hit_test_result, "context", &context, NULL);
-
-  LOG ("save_target_uri: context %d", context);
-
-  /* shift+click saves the link target */
-  if (context & WEBKIT_HIT_TEST_RESULT_CONTEXT_LINK)
-    g_object_get (G_OBJECT (window->hit_test_result), "link-uri", &location, NULL);
-  /* Note: pressing enter to submit a form synthesizes a mouse click event */
-  /* shift+click saves the non-link image */
-  else if (context & WEBKIT_HIT_TEST_RESULT_CONTEXT_IMAGE &&
-           !(context & WEBKIT_HIT_TEST_RESULT_CONTEXT_EDITABLE))
-    g_object_get (G_OBJECT (window->hit_test_result), "image-uri", &location, NULL);
-
-  if (location) {
-    LOG ("Location: %s", location);
-
-    retval = ephy_embed_utils_address_is_valid (location);
-    if (retval) {
-      EphyDownload *download;
-
-      download = ephy_download_new_for_uri (location);
-      ephy_download_set_action (download, EPHY_DOWNLOAD_ACTION_OPEN);
-      ephy_downloads_manager_add_download (ephy_embed_shell_get_downloads_manager (EPHY_EMBED_SHELL (ephy_shell_get_default ())),
-                                           download);
-      g_object_unref (download);
-    }
-
-    g_free (location);
-  }
-
-  return retval;
-}
-
-static void
-ephy_window_mouse_target_changed_cb (EphyEngineView       *web_view,
-                                     WebKitHitTestResult *hit_test_result,
-                                     guint                modifiers,
-                                     EphyWindow          *window)
-{
-  if (window->hit_test_result)
-    g_object_unref (window->hit_test_result);
-  window->hit_test_result = g_object_ref (hit_test_result);
-}
-
-static void
-web_process_terminated_cb (EphyWebView                       *web_view,
-                           WebKitWebProcessTerminationReason  reason,
-                           EphyWindow                        *window)
-{
-  gtk_window_unfullscreen (GTK_WINDOW (window));
-}
 
 static void
 ephy_window_set_is_popup (EphyWindow *window,
@@ -2101,70 +1288,269 @@ ephy_window_set_is_popup (EphyWindow *window,
 }
 
 static void
-window_properties_geometry_changed (WebKitWindowProperties *properties,
-                                    GParamSpec             *pspec,
-                                    EphyWindow             *window)
+get_popup_window_allocated_size (EphyWindow *window,
+                                 int        *width,
+                                 int        *height)
 {
-  GdkRectangle geometry;
+  /* GtkWindow's default size covers its allocated CSS box, while
+   * gtk_widget_get_width/height() return only the content box. */
+  G_GNUC_BEGIN_IGNORE_DEPRECATIONS
+  *width = gtk_widget_get_allocated_width (GTK_WIDGET (window));
+  *height = gtk_widget_get_allocated_height (GTK_WIDGET (window));
+  G_GNUC_END_IGNORE_DEPRECATIONS
+}
 
-  webkit_window_properties_get_geometry (properties, &geometry);
+static gboolean
+popup_content_matches_geometry (EphyEngineView                   *web_view,
+                                const EphyEnginePopupProperties *properties)
+{
+  return (!properties->width_set || properties->geometry.width <= 0 ||
+          gtk_widget_get_width (GTK_WIDGET (web_view)) == properties->geometry.width) &&
+         (!properties->height_set || properties->geometry.height <= 0 ||
+          gtk_widget_get_height (GTK_WIDGET (web_view)) == properties->geometry.height);
+}
 
-  if (geometry.width > 0 && geometry.height > 0)
-    gtk_window_set_default_size (GTK_WINDOW (window), geometry.width, geometry.height);
+static void
+apply_popup_geometry (EphyWindow                       *window,
+                      EphyEngineView                   *web_view,
+                      const EphyEnginePopupProperties *properties,
+                      gboolean                          require_allocation)
+{
+  int chrome_width = 0;
+  int chrome_height = 0;
+  int outer_width;
+  int outer_height;
+  int content_width;
+  int content_height;
+  int width;
+  int height;
+  gboolean changed = FALSE;
+
+  get_popup_window_allocated_size (window, &outer_width, &outer_height);
+  content_width = gtk_widget_get_width (GTK_WIDGET (web_view));
+  content_height = gtk_widget_get_height (GTK_WIDGET (web_view));
+
+  if (outer_width > 0 && outer_height > 0 &&
+      content_width > 0 && content_height > 0) {
+    chrome_width = MAX (outer_width - content_width, 0);
+    chrome_height = MAX (outer_height - content_height, 0);
+  } else if (require_allocation) {
+    return;
+  }
+
+  gtk_window_get_default_size (GTK_WINDOW (window), &width, &height);
+
+  if (properties->width_set && properties->geometry.width > 0) {
+    width = properties->geometry.width + chrome_width;
+    changed = TRUE;
+  }
+  if (properties->height_set && properties->geometry.height > 0) {
+    height = properties->geometry.height + chrome_height;
+    changed = TRUE;
+  }
+
+  if (changed)
+    gtk_window_set_default_size (GTK_WINDOW (window), width, height);
+}
+
+typedef struct {
+  GWeakRef window;
+  gint64 settle_deadline;
+  gint64 hard_deadline;
+  int requested_width;
+  int requested_height;
+  gboolean width_set;
+  gboolean height_set;
+} PopupGeometryTickData;
+
+#define POPUP_GEOMETRY_TICK_KEY "ephy-popup-geometry-tick"
+#define POPUP_GEOMETRY_SETTLE_TIME (400 * G_TIME_SPAN_MILLISECOND)
+#define POPUP_GEOMETRY_HARD_DEADLINE (1 * G_TIME_SPAN_SECOND)
+
+static void
+popup_geometry_tick_data_free (PopupGeometryTickData *data)
+{
+  g_weak_ref_clear (&data->window);
+  g_free (data);
+}
+
+static gboolean
+popup_geometry_tick_request_changed (PopupGeometryTickData            *data,
+                                     const EphyEnginePopupProperties *properties)
+{
+  return data->width_set != properties->width_set ||
+         data->height_set != properties->height_set ||
+         data->requested_width != properties->geometry.width ||
+         data->requested_height != properties->geometry.height;
+}
+
+static void
+popup_geometry_tick_set_request (PopupGeometryTickData            *data,
+                                 const EphyEnginePopupProperties *properties,
+                                 gint64                           now)
+{
+  data->width_set = properties->width_set;
+  data->height_set = properties->height_set;
+  data->requested_width = properties->geometry.width;
+  data->requested_height = properties->geometry.height;
+
+  if (now > 0) {
+    data->settle_deadline = now + POPUP_GEOMETRY_SETTLE_TIME;
+    data->hard_deadline = now + POPUP_GEOMETRY_HARD_DEADLINE;
+  }
+}
+
+static gboolean
+apply_popup_geometry_tick_cb (GtkWidget     *widget,
+                              GdkFrameClock *frame_clock,
+                              gpointer       user_data)
+{
+  PopupGeometryTickData *data = user_data;
+  g_autoptr (EphyWindow) window = g_weak_ref_get (&data->window);
+  EphyEngineView *web_view = EPHY_ENGINE_VIEW (widget);
+  const EphyEnginePopupProperties *properties;
+  gint64 now;
+  int outer_width;
+  int outer_height;
+
+  (void)frame_clock;
+
+  if (!window || !window->is_popup ||
+      gtk_widget_get_root (widget) != GTK_ROOT (window)) {
+    g_object_set_data (G_OBJECT (widget), POPUP_GEOMETRY_TICK_KEY, NULL);
+    return G_SOURCE_REMOVE;
+  }
+
+  get_popup_window_allocated_size (window, &outer_width, &outer_height);
+  if (gtk_widget_get_width (widget) <= 0 ||
+      gtk_widget_get_height (widget) <= 0 ||
+      outer_width <= 0 || outer_height <= 0)
+    return G_SOURCE_CONTINUE;
+
+  properties = ephy_engine_web_view_get_popup_properties (web_view);
+  if (!properties->is_popup) {
+    g_object_set_data (G_OBJECT (widget), POPUP_GEOMETRY_TICK_KEY, NULL);
+    return G_SOURCE_REMOVE;
+  }
+
+  now = g_get_monotonic_time ();
+  if (data->hard_deadline == 0 ||
+      popup_geometry_tick_request_changed (data, properties))
+    popup_geometry_tick_set_request (data, properties, now);
+
+  if (now >= data->hard_deadline) {
+    g_object_set_data (G_OBJECT (widget), POPUP_GEOMETRY_TICK_KEY, NULL);
+    return G_SOURCE_REMOVE;
+  }
+
+  if (!popup_content_matches_geometry (web_view, properties))
+    apply_popup_geometry (window, web_view, properties, TRUE);
+
+  /* Responsive toolbar transitions can change the available content size for
+   * several frames after the first exact allocation. Keep observing through
+   * that short settle period, then remove the callback once the viewport is
+   * exact. The hard deadline prevents enforcing a size the WM cannot provide. */
+  if (now >= data->settle_deadline &&
+      popup_content_matches_geometry (web_view, properties)) {
+    g_object_set_data (G_OBJECT (widget), POPUP_GEOMETRY_TICK_KEY, NULL);
+    return G_SOURCE_REMOVE;
+  }
+
+  return G_SOURCE_CONTINUE;
+}
+
+static void
+schedule_popup_geometry_correction (EphyWindow     *window,
+                                    EphyEngineView *web_view)
+{
+  const EphyEnginePopupProperties *properties;
+  PopupGeometryTickData *data;
+
+  properties = ephy_engine_web_view_get_popup_properties (web_view);
+  data = g_object_get_data (G_OBJECT (web_view), POPUP_GEOMETRY_TICK_KEY);
+  if (data) {
+    if (popup_geometry_tick_request_changed (data, properties))
+      popup_geometry_tick_set_request (data, properties,
+                                       data->hard_deadline > 0 ? g_get_monotonic_time () : 0);
+    return;
+  }
+
+  data = g_new0 (PopupGeometryTickData, 1);
+
+  g_weak_ref_init (&data->window, window);
+  popup_geometry_tick_set_request (data, properties, 0);
+  g_object_set_data (G_OBJECT (web_view), POPUP_GEOMETRY_TICK_KEY, data);
+  gtk_widget_add_tick_callback (GTK_WIDGET (web_view),
+                                apply_popup_geometry_tick_cb,
+                                data,
+                                (GDestroyNotify)popup_geometry_tick_data_free);
+}
+
+static void
+popup_geometry_changed_cb (EphyEngineView *web_view,
+                           EphyWindow     *window)
+{
+  const EphyEnginePopupProperties *properties;
+
+  if (!window->is_popup ||
+      gtk_widget_get_root (GTK_WIDGET (web_view)) != GTK_ROOT (window))
+    return;
+
+  properties = ephy_engine_web_view_get_popup_properties (web_view);
+  if (!properties->is_popup ||
+      popup_content_matches_geometry (web_view, properties))
+    return;
+
+  apply_popup_geometry (window, web_view, properties, TRUE);
+  schedule_popup_geometry_correction (window, web_view);
 }
 
 static void
 ephy_window_configure_for_view (EphyWindow    *window,
                                 EphyEngineView *web_view)
 {
-  WebKitWindowProperties *properties;
-  GdkRectangle geometry;
-  EphyWindowChrome chrome = 0;
+  const EphyEnginePopupProperties *properties;
+  EphyWindowChrome chrome = EPHY_WINDOW_CHROME_HEADER_BAR;
 
-  properties = ephy_engine_web_view_get_window_properties (web_view);
-
-  if (webkit_window_properties_get_toolbar_visible (properties))
-    chrome |= EPHY_WINDOW_CHROME_HEADER_BAR;
+  properties = ephy_engine_web_view_get_popup_properties (web_view);
+  if (!properties->is_popup)
+    return;
 
   if (ephy_embed_shell_get_mode (ephy_embed_shell_get_default ()) != EPHY_EMBED_SHELL_MODE_APPLICATION) {
     GtkWidget *title_widget;
-    EphyLocationEntry *lentry;
 
     title_widget = GTK_WIDGET (ephy_header_bar_get_title_widget (EPHY_HEADER_BAR (window->header_bar)));
-    lentry = EPHY_LOCATION_ENTRY (title_widget);
-    gtk_editable_set_editable (GTK_EDITABLE (lentry), FALSE);
+    if (EPHY_IS_LOCATION_ENTRY (title_widget))
+      gtk_editable_set_editable (GTK_EDITABLE (title_widget), FALSE);
 
-    if (webkit_window_properties_get_menubar_visible (properties))
-      chrome |= EPHY_WINDOW_CHROME_MENU;
-    if (webkit_window_properties_get_locationbar_visible (properties))
-      chrome |= EPHY_WINDOW_CHROME_LOCATION;
+    chrome |= EPHY_WINDOW_CHROME_LOCATION;
   }
 
-  webkit_window_properties_get_geometry (properties, &geometry);
-  if (geometry.width > 0 && geometry.height > 0)
-    gtk_window_set_default_size (GTK_WINDOW (window), geometry.width, geometry.height);
-
-  if (!webkit_window_properties_get_resizable (properties))
-    gtk_window_set_resizable (GTK_WINDOW (window), FALSE);
-
-  window->is_popup = TRUE;
+  ephy_window_set_is_popup (window, TRUE);
   ephy_window_set_chrome (window, chrome);
-  g_signal_connect (properties, "notify::geometry",
-                    G_CALLBACK (window_properties_geometry_changed),
-                    window);
+  apply_popup_geometry (window, web_view, properties, FALSE);
+  schedule_popup_geometry_correction (window, web_view);
+  g_signal_connect_object (web_view, "popup-geometry-changed",
+                           G_CALLBACK (popup_geometry_changed_cb),
+                           window, G_CONNECT_DEFAULT);
 }
 
-static gboolean
+static void
 web_view_ready_cb (EphyEngineView *web_view,
                    EphyEngineView *parent_web_view)
 {
-  EphyWindow *window, *parent_view_window;
+  GtkRoot *root;
+  GtkRoot *parent_root;
+  EphyWindow *window;
   gboolean using_new_window;
 
-  window = EPHY_WINDOW (gtk_widget_get_root (GTK_WIDGET (web_view)));
-  parent_view_window = EPHY_WINDOW (gtk_widget_get_root (GTK_WIDGET (parent_web_view)));
+  root = gtk_widget_get_root (GTK_WIDGET (web_view));
+  if (!EPHY_IS_WINDOW (root))
+    return;
 
-  using_new_window = window != parent_view_window;
+  window = EPHY_WINDOW (root);
+  parent_root = gtk_widget_get_root (GTK_WIDGET (parent_web_view));
+  using_new_window = !EPHY_IS_WINDOW (parent_root) || root != parent_root;
 
   if (using_new_window) {
     ephy_window_configure_for_view (window, web_view);
@@ -2172,19 +1558,19 @@ web_view_ready_cb (EphyEngineView *web_view,
   }
 
   gtk_widget_set_visible (GTK_WIDGET (window), TRUE);
-
-  return TRUE;
 }
 
-static EphyEngineView *
-create_web_view_cb (EphyEngineView          *web_view,
-                    WebKitNavigationAction *navigation_action,
-                    EphyWindow             *window)
+static GtkWidget *
+create_popup_cb (EphyEngineView                       *web_view,
+                 const EphyEnginePopupProperties     *properties,
+                 EphyWindow                          *window)
 {
   EphyEmbed *embed;
   EphyEngineView *new_web_view;
   EphyNewTabFlags flags;
   EphyWindow *target_window;
+
+  g_assert (properties != NULL);
 
   if ((ephy_embed_shell_get_mode (ephy_embed_shell_get_default ()) != EPHY_EMBED_SHELL_MODE_APPLICATION) &&
       (g_settings_get_boolean (EPHY_SETTINGS_MAIN,
@@ -2213,381 +1599,451 @@ create_web_view_cb (EphyEngineView          *web_view,
                            G_CALLBACK (web_view_ready_cb),
                            web_view, G_CONNECT_DEFAULT);
 
-  return new_web_view;
+  return GTK_WIDGET (new_web_view);
+}
+
+
+typedef struct {
+  GWeakRef view;
+  GWeakRef window;
+  GCancellable *cancellable;
+  char *uri;
+  char *opener_origin;
+  char *target_scheme;
+  GtkWidget *always_allow_switch;
+  gboolean can_persist;
+  gboolean remember;
+} ExternalURIData;
+
+static void
+external_uri_data_free (ExternalURIData *data)
+{
+  g_weak_ref_clear (&data->view);
+  g_weak_ref_clear (&data->window);
+  g_clear_object (&data->cancellable);
+  g_clear_object (&data->always_allow_switch);
+  g_free (data->uri);
+  g_free (data->opener_origin);
+  g_free (data->target_scheme);
+  g_free (data);
+}
+
+static EphyWindow *
+external_uri_current_window (ExternalURIData *data)
+{
+  g_autoptr (EphyEngineView) view = g_weak_ref_get (&data->view);
+  g_autoptr (EphyWindow) window = g_weak_ref_get (&data->window);
+  EphyEmbed *embed;
+
+  if (!view || !window || g_cancellable_is_cancelled (data->cancellable) ||
+      !gtk_widget_get_mapped (GTK_WIDGET (view)) ||
+      gtk_widget_get_root (GTK_WIDGET (view)) != GTK_ROOT (window))
+    return NULL;
+
+  embed = ephy_window_get_active_embed (window);
+  if (!embed || EPHY_ENGINE_VIEW (ephy_embed_get_web_view (embed)) != view)
+    return NULL;
+
+  return g_steal_pointer (&window);
 }
 
 static gboolean
-accept_navigation_policy_decision (EphyWindow           *window,
-                                   EphyEngineView        *web_view,
-                                   WebKitPolicyDecision *decision,
-                                   const char           *uri)
+external_scheme_is_allowed (const char *opener_origin,
+                            const char *scheme)
 {
-  g_autoptr (WebKitWebsitePolicies) website_policies = NULL;
-  EphyPermission autoplay_permission = EPHY_PERMISSION_UNDECIDED;
-  EphyEmbedShell *shell;
-  g_autofree char *origin = ephy_uri_to_security_origin (uri);
+  g_autoptr (GVariant) stored = g_settings_get_value (EPHY_SETTINGS_WEB, EPHY_PREFS_WEB_AUTO_OPEN_SCHEMES);
+  GVariantIter iter;
+  const char *saved_origin;
+  const char *saved_scheme;
 
-  shell = ephy_embed_shell_get_default ();
-
-  if (origin) {
-    autoplay_permission = ephy_permissions_manager_get_permission (ephy_embed_shell_get_permissions_manager (shell),
-                                                                   EPHY_PERMISSION_TYPE_AUTOPLAY_POLICY,
-                                                                   origin);
+  g_variant_iter_init (&iter, stored);
+  while (g_variant_iter_loop (&iter, "(&s&s)", &saved_origin, &saved_scheme)) {
+    if (g_str_equal (opener_origin, saved_origin) && !g_ascii_strcasecmp (scheme, saved_scheme))
+      return TRUE;
   }
-
-  switch (autoplay_permission) {
-    case EPHY_PERMISSION_UNDECIDED:
-      website_policies = webkit_website_policies_new_with_policies ("autoplay", WEBKIT_AUTOPLAY_ALLOW_WITHOUT_SOUND, NULL);
-      break;
-    case EPHY_PERMISSION_PERMIT:
-      website_policies = webkit_website_policies_new_with_policies ("autoplay", WEBKIT_AUTOPLAY_ALLOW, NULL);
-      break;
-    case EPHY_PERMISSION_DENY:
-      website_policies = webkit_website_policies_new_with_policies ("autoplay", WEBKIT_AUTOPLAY_DENY, NULL);
-      break;
-  }
-
-  webkit_policy_decision_use_with_policies (decision, website_policies);
-
-  return TRUE;
-}
-
-static GHashTable *
-load_auto_open_schemes_table (void)
-{
-  g_autoptr (GHashTable) table = NULL;
-  GVariantIter *iter = NULL;
-  char *pref_uri;
-  char *pref_scheme;
-
-  table = g_hash_table_new_full (g_str_hash, g_str_equal, g_free, NULL);
-  g_settings_get (EPHY_SETTINGS_WEB, EPHY_PREFS_WEB_AUTO_OPEN_SCHEMES, "a(ss)", &iter);
-
-  while (g_variant_iter_next (iter, "(ss)", &pref_uri, &pref_scheme))
-    g_hash_table_insert (table, pref_uri, pref_scheme);
-
-  return g_steal_pointer (&table);
-}
-
-static gboolean
-url_should_open_automatically (const char *opener_origin,
-                               const char *navigation_uri)
-{
-  g_autoptr (GError) error = NULL;
-  g_autoptr (GVariant) allowed_uris = NULL;
-  g_autoptr (GUri) uri = g_uri_parse (navigation_uri, G_URI_FLAGS_NONE, &error);
-  g_autoptr (GHashTable) table = NULL;
-  const char *pref_scheme;
-
-  if (!uri) {
-    g_warning ("Failed to parse URI %s: %s", navigation_uri, error->message);
-    return FALSE;
-  }
-
-  table = load_auto_open_schemes_table ();
-  pref_scheme = g_hash_table_lookup (table, opener_origin);
-  if (g_strcmp0 (pref_scheme, g_uri_get_scheme (uri)) == 0)
-    return TRUE;
-
   return FALSE;
 }
 
-typedef struct {
-  WebKitURIRequest *request;
-  EphyWindow *window;
-  char *target_scheme;
-  char *opener_origin;
-
-  GtkWidget *always_allow_switch;
-} OpenURLPermissionData;
-
-static OpenURLPermissionData *
-open_url_permission_data_new (const char       *opener_origin,
-                              WebKitURIRequest *request,
-                              EphyWindow       *window)
-{
-  OpenURLPermissionData *data = g_new0 (OpenURLPermissionData, 1);
-  const char *navigation_uri_str;
-  g_autoptr (GUri) navigation_uri = NULL;
-  g_autoptr (GError) error = NULL;
-
-  navigation_uri_str = webkit_uri_request_get_uri (request);
-  navigation_uri = g_uri_parse (navigation_uri_str, G_URI_FLAGS_NONE, &error);
-  if (!navigation_uri) {
-    g_warning ("Could not parse ask permission uri %s: %s", navigation_uri_str, error->message);
-    return NULL;
-  }
-
-  data->opener_origin = g_strdup (opener_origin);
-  data->target_scheme = g_strdup (g_uri_get_scheme (navigation_uri));
-  data->request = g_object_ref (request);
-  data->window = g_object_ref (window);
-
-  return data;
-}
-
 static void
-open_url_permission_data_new_free (OpenURLPermissionData *data)
+remember_external_scheme (const char *opener_origin,
+                          const char *scheme)
 {
-  g_clear_pointer (&data->opener_origin, g_free);
-  g_clear_pointer (&data->target_scheme, g_free);
-  g_clear_object (&data->request);
-  g_clear_object (&data->always_allow_switch);
-  g_clear_object (&data->window);
-}
-
-static void
-add_auto_open_scheme (char *openeer_uri,
-                      char *target_scheme)
-{
+  g_autoptr (GVariant) stored = NULL;
   GVariantBuilder builder;
-  GVariant *variant;
-  GHashTable *table = load_auto_open_schemes_table ();
-  GHashTableIter iter;
-  gpointer key;
-  gpointer value;
+  GVariantIter iter;
+  const char *saved_origin;
+  const char *saved_scheme;
 
+  if (external_scheme_is_allowed (opener_origin, scheme))
+    return;
+
+  stored = g_settings_get_value (EPHY_SETTINGS_WEB, EPHY_PREFS_WEB_AUTO_OPEN_SCHEMES);
   g_variant_builder_init (&builder, G_VARIANT_TYPE ("a(ss)"));
-  g_hash_table_iter_init (&iter, table);
-
-  while (g_hash_table_iter_next (&iter, &key, &value))
-    g_variant_builder_add (&builder, "(ss)", key, value);
-
-  g_variant_builder_add (&builder, "(ss)", openeer_uri, target_scheme);
-
-  variant = g_variant_builder_end (&builder);
-  g_settings_set_value (EPHY_SETTINGS_WEB, EPHY_PREFS_WEB_AUTO_OPEN_SCHEMES, variant);
+  g_variant_iter_init (&iter, stored);
+  while (g_variant_iter_loop (&iter, "(&s&s)", &saved_origin, &saved_scheme))
+    g_variant_builder_add (&builder, "(ss)", saved_origin, saved_scheme);
+  g_variant_builder_add (&builder, "(ss)", opener_origin, scheme);
+  g_settings_set_value (EPHY_SETTINGS_WEB, EPHY_PREFS_WEB_AUTO_OPEN_SCHEMES,
+                         g_variant_builder_end (&builder));
 }
 
-static void
-on_open (AdwAlertDialog *self,
-         gchar          *response,
-         gpointer        user_data)
+static AdwAlertDialog *
+create_external_uri_dialog (const char  *opener_origin,
+                            const char  *target_scheme,
+                            gboolean     one_time_only,
+                            GtkWidget  **always_allow_switch)
 {
-  OpenURLPermissionData *data = user_data;
-
-  if (g_strcmp0 (response, "open") == 0) {
-    const char *uri = webkit_uri_request_get_uri (data->request);
-    g_autoptr (GFile) file = g_file_new_for_uri (uri);
-    gboolean always_allow = adw_switch_row_get_active (ADW_SWITCH_ROW (data->always_allow_switch));
-
-    if (always_allow)
-      add_auto_open_scheme (data->opener_origin, data->target_scheme);
-
-    ephy_file_launch_uri_handler (file,
-                                  NULL,
-                                  gtk_widget_get_display (GTK_WIDGET (data->window)),
-                                  EPHY_FILE_LAUNCH_URI_HANDLER_FILE);
-  }
-
-  g_clear_pointer (&data, open_url_permission_data_new_free);
-}
-
-static void
-ask_for_permission (gpointer user_data)
-{
-  OpenURLPermissionData *data = user_data;
   g_autofree char *body = NULL;
-  AdwDialog *dialog;
-  GtkWidget *always_allow_switch;
-  GtkWidget *group;
+  AdwAlertDialog *dialog;
 
-  /* Additional user interaction is required to prevent malicious websites
-   * from launching URL handler application's on the user's computer without
-   * explicit user consent. Notably, websites can download malicious files
-   * without consent, so they should not be able to also open those files
-   * without user interaction.
-   */
-  body = g_strdup_printf (_("Allow “%s” to open the “%s” link in an external app"), data->opener_origin, data->target_scheme);
-  dialog = adw_alert_dialog_new (_("Open in External App?"), body);
-  adw_alert_dialog_add_response (ADW_ALERT_DIALOG (dialog), "cancel", _("_Cancel"));
-  adw_alert_dialog_add_response (ADW_ALERT_DIALOG (dialog), "open", _("_Open Link"));
-  adw_alert_dialog_set_response_appearance (ADW_ALERT_DIALOG (dialog), "open", ADW_RESPONSE_SUGGESTED);
+  *always_allow_switch = NULL;
 
-  group = adw_preferences_group_new ();
-  always_allow_switch = adw_switch_row_new ();
-  data->always_allow_switch = g_object_ref (always_allow_switch);
-  adw_preferences_row_set_title (ADW_PREFERENCES_ROW (always_allow_switch), _("Always Allow"));
-  adw_preferences_group_add (ADW_PREFERENCES_GROUP (group), always_allow_switch);
-  adw_alert_dialog_set_extra_child (ADW_ALERT_DIALOG (dialog), group);
-  adw_dialog_present (dialog, GTK_WIDGET (data->window));
+  body = g_strdup_printf (_("Allow “%s” to open the “%s” link in an external app"), opener_origin, target_scheme);
+  dialog = ADW_ALERT_DIALOG (adw_alert_dialog_new (_("Open in External App?"), body));
+  adw_alert_dialog_add_response (dialog, "cancel", _("_Cancel"));
+  adw_alert_dialog_add_response (dialog, "open", _("_Open Link"));
+  adw_alert_dialog_set_response_appearance (dialog, "open", ADW_RESPONSE_SUGGESTED);
 
-  g_signal_connect (G_OBJECT (dialog), "response", G_CALLBACK (on_open), data);
+  if (!one_time_only) {
+    GtkWidget *group = adw_preferences_group_new ();
+    GtkWidget *row = adw_switch_row_new ();
+
+    *always_allow_switch = g_object_ref (row);
+    adw_preferences_row_set_title (ADW_PREFERENCES_ROW (row), _("Always Allow"));
+    adw_preferences_group_add (ADW_PREFERENCES_GROUP (group), row);
+    adw_alert_dialog_set_extra_child (dialog, group);
+  }
+
+  return dialog;
+}
+
+static void
+show_external_uri_error (EphyWindow  *window,
+                         const GError *error)
+{
+  g_autofree char *title = g_strdup_printf (_("Could Not Open Link: %s"), error->message);
+  AdwToast *toast = adw_toast_new (title);
+
+  adw_toast_set_use_markup (toast, FALSE);
+  adw_toast_overlay_add_toast (ADW_TOAST_OVERLAY (window->toast_overlay), toast);
+}
+
+static void
+external_uri_opened (GObject      *source,
+                     GAsyncResult *result,
+                     gpointer      user_data)
+{
+  ExternalURIData *data = user_data;
+  g_autoptr (GError) error = NULL;
+  g_autoptr (EphyWindow) window = external_uri_current_window (data);
+  gboolean opened = ephy_open_uri_via_portal_finish (result, &error);
+
+  if (window) {
+    if (opened && data->can_persist && data->remember)
+      remember_external_scheme (data->opener_origin, data->target_scheme);
+    else if (error && !g_error_matches (error, G_IO_ERROR, G_IO_ERROR_CANCELLED))
+      show_external_uri_error (window, error);
+  }
+  external_uri_data_free (data);
+}
+
+static void
+launch_external_uri (ExternalURIData *data)
+{
+  g_autoptr (EphyWindow) window = external_uri_current_window (data);
+
+  if (!window) {
+    external_uri_data_free (data);
+    return;
+  }
+  ephy_open_uri_via_portal (GTK_WINDOW (window), data->uri, data->cancellable,
+                            external_uri_opened, data);
+}
+
+static void
+external_uri_chosen (GObject      *source,
+                     GAsyncResult *result,
+                     gpointer      user_data)
+{
+  ExternalURIData *data = user_data;
+  const char *response = adw_alert_dialog_choose_finish (ADW_ALERT_DIALOG (source), result);
+
+  if (g_strcmp0 (response, "open") || g_cancellable_is_cancelled (data->cancellable)) {
+    external_uri_data_free (data);
+    return;
+  }
+  data->remember = data->can_persist && data->always_allow_switch &&
+                   adw_switch_row_get_active (ADW_SWITCH_ROW (data->always_allow_switch));
+  launch_external_uri (data);
 }
 
 static gboolean
-decide_navigation_policy (EphyEngineView            *web_view,
-                          WebKitPolicyDecision     *decision,
-                          WebKitPolicyDecisionType  decision_type,
-                          EphyWindow               *window)
+open_external_uri_cb (EphyEngineView *view,
+                      const char     *uri,
+                      const char     *context_uri,
+                      gboolean        initiator_known,
+                      GCancellable   *cancellable,
+                      EphyWindow     *window)
 {
-  WebKitNavigationPolicyDecision *navigation_decision;
-  WebKitNavigationAction *navigation_action;
-  WebKitNavigationType navigation_type;
-  WebKitURIRequest *request;
-  const char *request_uri;
+  g_autoptr (GUri) target = g_uri_parse (uri, G_URI_FLAGS_NONE, NULL);
+  g_autofree char *origin = ephy_uri_to_security_origin (context_uri);
+  g_autoptr (EphyEngineSession) session = NULL;
+  ExternalURIData *data;
+  AdwAlertDialog *dialog;
+  const char *scheme = target ? g_uri_get_scheme (target) : NULL;
 
-  g_assert (EPHY_IS_ENGINE_VIEW (web_view));
-  g_assert (WEBKIT_IS_NAVIGATION_POLICY_DECISION (decision));
-  g_assert (decision_type != WEBKIT_POLICY_DECISION_TYPE_RESPONSE);
-  g_assert (EPHY_IS_WINDOW (window));
+  if (!scheme || !origin || g_cancellable_is_cancelled (cancellable) ||
+      gtk_widget_get_root (GTK_WIDGET (view)) != GTK_ROOT (window))
+    return TRUE;
+  if (!g_ascii_strcasecmp (scheme, "javascript") || !g_ascii_strcasecmp (scheme, "vbscript") ||
+      !g_ascii_strcasecmp (scheme, "chrome") || !g_ascii_strcasecmp (scheme, "chrome-untrusted") ||
+      !g_ascii_strcasecmp (scheme, "devtools") || !g_ascii_strcasecmp (scheme, "inspector"))
+    return TRUE;
 
-  navigation_decision = WEBKIT_NAVIGATION_POLICY_DECISION (decision);
-  navigation_action = webkit_navigation_policy_decision_get_navigation_action (navigation_decision);
-  request = webkit_navigation_action_get_request (navigation_action);
-  request_uri = webkit_uri_request_get_uri (request);
+  g_object_get (view, "network-session", &session, NULL);
+  if (!session)
+    return TRUE;
 
-  if (!ephy_embed_utils_address_has_web_scheme (request_uri)) {
-    g_autofree char *opener_origin = NULL;
-    const char *view_uri = ephy_engine_web_view_get_uri (web_view);
+  data = g_new0 (ExternalURIData, 1);
+  g_weak_ref_init (&data->view, view);
+  g_weak_ref_init (&data->window, window);
+  data->cancellable = g_object_ref (cancellable);
+  data->uri = g_strdup (uri);
+  data->opener_origin = g_steal_pointer (&origin);
+  data->target_scheme = g_strdup (scheme);
+  /* CEF's navigation callback omits the initiator; only attributed requests may persist grants. */
+  data->can_persist = initiator_known && !ephy_engine_session_is_ephemeral (session);
 
-    webkit_policy_decision_ignore (decision);
-
-    if (!view_uri)
-      return TRUE;
-
-    opener_origin = ephy_uri_to_security_origin (view_uri);
-    if (!opener_origin)
-      return TRUE;
-
-    if (url_should_open_automatically (opener_origin, request_uri)) {
-      g_autoptr (GFile) file = g_file_new_for_uri (request_uri);
-
-      ephy_file_launch_uri_handler (file,
-                                    NULL,
-                                    gtk_widget_get_display (GTK_WIDGET (window)),
-                                    EPHY_FILE_LAUNCH_URI_HANDLER_FILE);
-    } else {
-      OpenURLPermissionData *data;
-
-      data = open_url_permission_data_new (opener_origin, request, window);
-      if (data)
-        g_idle_add_once (ask_for_permission, data);
-    }
-
+  if (data->can_persist && external_scheme_is_allowed (data->opener_origin, scheme)) {
+    launch_external_uri (data);
     return TRUE;
   }
+  dialog = create_external_uri_dialog (data->opener_origin, scheme, !data->can_persist,
+                                       &data->always_allow_switch);
+  adw_alert_dialog_choose (dialog, GTK_WIDGET (window), cancellable, external_uri_chosen, data);
+  return TRUE;
+}
 
-  if (decision_type == WEBKIT_POLICY_DECISION_TYPE_NEW_WINDOW_ACTION &&
-      !g_settings_get_boolean (EPHY_SETTINGS_WEB, EPHY_PREFS_WEB_ENABLE_POPUPS) &&
-      !webkit_navigation_action_is_user_gesture (navigation_action)) {
-    webkit_policy_decision_ignore (decision);
-    return TRUE;
-  }
+typedef struct {
+  GWeakRef view;
+  GWeakRef window;
+  EphyEngineAuthentication *request;
+  AdwEntryRow *username_row;
+  AdwPasswordEntryRow *password_row;
+} AuthenticationDialogData;
 
-  navigation_type = webkit_navigation_action_get_navigation_type (navigation_action);
-
-  if (ephy_embed_shell_get_mode (ephy_embed_shell_get_default ()) == EPHY_EMBED_SHELL_MODE_APPLICATION) {
-    if (!gtk_widget_is_visible (GTK_WIDGET (window))) {
-      if (ephy_web_application_is_uri_allowed (request_uri)) {
-        gtk_widget_set_visible (GTK_WIDGET (window), TRUE);
-      } else {
-        ephy_file_open_uri_in_default_browser (request_uri, gtk_widget_get_display (GTK_WIDGET (window)));
-        webkit_policy_decision_ignore (decision);
-
-        gtk_window_destroy (GTK_WINDOW (window));
-
-        return TRUE;
-      }
-    }
-
-    if (navigation_type == WEBKIT_NAVIGATION_TYPE_LINK_CLICKED ||
-        (navigation_type == WEBKIT_NAVIGATION_TYPE_OTHER && webkit_navigation_action_is_user_gesture (navigation_action))) {
-      if (ephy_web_application_is_uri_allowed (request_uri))
-        return accept_navigation_policy_decision (window, web_view, decision, request_uri);
-
-      ephy_file_open_uri_in_default_browser (request_uri, gtk_widget_get_display (GTK_WIDGET (window)));
-      webkit_policy_decision_ignore (decision);
-
-      return TRUE;
-    }
-  }
-
-  if (navigation_type == WEBKIT_NAVIGATION_TYPE_LINK_CLICKED) {
-    gint button;
-    gint state;
-    EphyEmbed *new_embed;
-    EphyWebView *new_view;
-    EphyNewTabFlags flags = 0;
-    EphyWindow *target_window = window;
-    gboolean inherit_session = FALSE;
-
-    button = webkit_navigation_action_get_mouse_button (navigation_action);
-    state = webkit_navigation_action_get_modifiers (navigation_action);
-
-    ephy_web_view_set_visit_type (EPHY_WEB_VIEW (web_view),
-                                  EPHY_PAGE_VISIT_LINK);
-
-    /* New tab in new window for shift+click */
-    if (button == GDK_BUTTON_PRIMARY && state == GDK_SHIFT_MASK &&
-        !g_settings_get_boolean (EPHY_SETTINGS_LOCKDOWN,
-                                 EPHY_PREFS_LOCKDOWN_FULLSCREEN)) {
-      target_window = ephy_window_new ();
-    }
-    /* New background tab in existing window for middle click and
-     * control+click */
-    else if (button == GDK_BUTTON_MIDDLE ||
-             (button == GDK_BUTTON_PRIMARY && (state == GDK_CONTROL_MASK))) {
-      flags |= EPHY_NEW_TAB_APPEND_AFTER;
-
-      if (g_settings_get_boolean (EPHY_SETTINGS_WEB, EPHY_PREFS_WEB_SWITCH_TO_NEW_TAB))
-        flags |= EPHY_NEW_TAB_JUMP;
-    }
-    /* New active tab in existing window for control+shift+click */
-    else if (button == GDK_BUTTON_PRIMARY && (state == (GDK_SHIFT_MASK | GDK_CONTROL_MASK))) {
-      flags |= EPHY_NEW_TAB_APPEND_AFTER;
-      inherit_session = TRUE;
-    }
-    /* Alt+click means download URI */
-    else if (button == GDK_BUTTON_PRIMARY && state == GDK_ALT_MASK) {
-      if (save_target_uri (window, web_view)) {
-        webkit_policy_decision_ignore (decision);
-        return TRUE;
-      }
-    } else {
-      return accept_navigation_policy_decision (window, web_view, decision, request_uri);
-    }
-
-    new_embed = ephy_shell_new_tab_full (ephy_shell_get_default (),
-                                         NULL, NULL,
-                                         target_window,
-                                         window->active_embed,
-                                         flags);
-
-    new_view = ephy_embed_get_web_view (new_embed);
-    if (inherit_session) {
-      EphyEngineSessionState *session_state;
-
-      session_state = ephy_engine_web_view_get_session_state (web_view);
-      ephy_engine_web_view_restore_session_state (EPHY_ENGINE_VIEW (new_view), session_state);
-      ephy_engine_web_view_session_state_unref (session_state);
-
-      if (button == GDK_BUTTON_PRIMARY)
-        ephy_embed_container_set_active_child (EPHY_EMBED_CONTAINER (window), new_embed);
-    }
-    ephy_web_view_load_request (new_view, request);
-
-    webkit_policy_decision_ignore (decision);
-
-    return TRUE;
-  }
-
-  return accept_navigation_policy_decision (window, web_view, decision, request_uri);
+static void
+authentication_dialog_data_free (AuthenticationDialogData *data)
+{
+  g_weak_ref_clear (&data->view);
+  g_weak_ref_clear (&data->window);
+  g_clear_object (&data->request);
+  g_clear_object (&data->username_row);
+  g_clear_object (&data->password_row);
+  g_free (data);
 }
 
 static gboolean
-decide_policy_cb (EphyEngineView            *web_view,
-                  WebKitPolicyDecision     *decision,
-                  WebKitPolicyDecisionType  decision_type,
-                  EphyWindow               *window)
+authentication_dialog_is_current (AuthenticationDialogData *data)
 {
-  /* Response policy decisions are handled in EphyWebView instead. */
-  if (decision_type != WEBKIT_POLICY_DECISION_TYPE_NAVIGATION_ACTION &&
-      decision_type != WEBKIT_POLICY_DECISION_TYPE_NEW_WINDOW_ACTION)
+  g_autoptr (EphyEngineView) view = g_weak_ref_get (&data->view);
+  g_autoptr (EphyWindow) window = g_weak_ref_get (&data->window);
+  EphyEmbed *embed;
+
+  if (!view || !window || ephy_engine_authentication_is_resolved (data->request) ||
+      !gtk_widget_get_mapped (GTK_WIDGET (view)) ||
+      gtk_widget_get_root (GTK_WIDGET (view)) != GTK_ROOT (window))
     return FALSE;
 
-  return decide_navigation_policy (web_view, decision, decision_type, window);
+  embed = ephy_window_get_active_embed (window);
+  return embed && EPHY_ENGINE_VIEW (ephy_embed_get_web_view (embed)) == view;
 }
+
+static void
+authentication_dialog_chosen (GObject      *source,
+                               GAsyncResult *result,
+                               gpointer      user_data)
+{
+  AuthenticationDialogData *data = user_data;
+  const char *response = adw_alert_dialog_choose_finish (ADW_ALERT_DIALOG (source), result);
+
+  if (!g_strcmp0 (response, "login") && authentication_dialog_is_current (data))
+    ephy_engine_authentication_authenticate (data->request,
+                                             gtk_editable_get_text (GTK_EDITABLE (data->username_row)),
+                                             gtk_editable_get_text (GTK_EDITABLE (data->password_row)));
+  else
+    ephy_engine_authentication_cancel (data->request);
+
+  authentication_dialog_data_free (data);
+}
+
+static gboolean
+authentication_request_cb (EphyEngineView           *view,
+                            EphyEngineAuthentication *request,
+                            EphyWindow               *window)
+{
+  AuthenticationDialogData *data = g_new0 (AuthenticationDialogData, 1);
+  AdwAlertDialog *dialog;
+
+  g_weak_ref_init (&data->view, view);
+  g_weak_ref_init (&data->window, window);
+  data->request = g_object_ref (request);
+  if (!authentication_dialog_is_current (data)) {
+    ephy_engine_authentication_cancel (request);
+    authentication_dialog_data_free (data);
+    return TRUE;
+  }
+
+  dialog = ephy_authentication_dialog_new (ephy_engine_authentication_get_host (request),
+                                            ephy_engine_authentication_get_port (request),
+                                            ephy_engine_authentication_get_realm (request),
+                                            ephy_engine_authentication_is_proxy (request),
+                                            &data->username_row, &data->password_row);
+  adw_alert_dialog_choose (dialog, GTK_WIDGET (window),
+                            ephy_engine_authentication_get_cancellable (request),
+                            authentication_dialog_chosen, data);
+  LOG ("Presenting HTTP authentication dialog for %s:%d (proxy=%d)",
+       ephy_engine_authentication_get_host (request),
+       ephy_engine_authentication_get_port (request),
+       ephy_engine_authentication_is_proxy (request));
+  return TRUE;
+}
+
+typedef struct {
+  GWeakRef view;
+  GWeakRef window;
+  EphyEngineClientCertificate *request;
+} ClientCertificateDialogData;
+
+static void
+client_certificate_dialog_data_free (ClientCertificateDialogData *data)
+{
+  g_weak_ref_clear (&data->view);
+  g_weak_ref_clear (&data->window);
+  g_clear_object (&data->request);
+  g_free (data);
+}
+
+static gboolean
+client_certificate_dialog_is_current (ClientCertificateDialogData *data)
+{
+  g_autoptr (EphyEngineView) view = g_weak_ref_get (&data->view);
+  g_autoptr (EphyWindow) window = g_weak_ref_get (&data->window);
+  EphyEmbed *embed;
+
+  if (!view || !window || ephy_engine_client_certificate_is_resolved (data->request) ||
+      g_cancellable_is_cancelled (ephy_engine_client_certificate_get_cancellable (data->request)) ||
+      !gtk_widget_get_mapped (GTK_WIDGET (view)) ||
+      gtk_widget_get_root (GTK_WIDGET (view)) != GTK_ROOT (window))
+    return FALSE;
+
+  embed = ephy_window_get_active_embed (window);
+  return embed && EPHY_ENGINE_VIEW (ephy_embed_get_web_view (embed)) == view;
+}
+
+static void
+client_certificate_dialog_chosen (GObject      *source,
+                                  GAsyncResult *result,
+                                  gpointer      user_data)
+{
+  ClientCertificateDialogData *data = user_data;
+  AdwAlertDialog *dialog = ADW_ALERT_DIALOG (source);
+  const char *response = adw_alert_dialog_choose_finish (dialog, result);
+  guint index;
+
+  if (!g_strcmp0 (response, "select") &&
+      client_certificate_dialog_is_current (data) &&
+      ephy_client_certificate_dialog_get_selected (dialog, &index))
+    ephy_engine_client_certificate_select (data->request, index);
+  else
+    ephy_engine_client_certificate_cancel (data->request);
+
+  client_certificate_dialog_data_free (data);
+}
+
+static gboolean
+client_certificate_request_cb (EphyEngineView              *view,
+                               EphyEngineClientCertificate *request,
+                               EphyWindow                  *window)
+{
+  ClientCertificateDialogData *data = g_new0 (ClientCertificateDialogData, 1);
+  AdwAlertDialog *dialog;
+
+  g_weak_ref_init (&data->view, view);
+  g_weak_ref_init (&data->window, window);
+  data->request = g_object_ref (request);
+
+  if (!client_certificate_dialog_is_current (data)) {
+    ephy_engine_client_certificate_cancel (request);
+    client_certificate_dialog_data_free (data);
+    return TRUE;
+  }
+
+  dialog = ephy_client_certificate_dialog_new (request);
+  if (!dialog) {
+    ephy_engine_client_certificate_cancel (request);
+    client_certificate_dialog_data_free (data);
+    return TRUE;
+  }
+
+  adw_alert_dialog_choose (dialog, GTK_WIDGET (window),
+                           ephy_engine_client_certificate_get_cancellable (request),
+                           client_certificate_dialog_chosen, data);
+  LOG ("Presenting client certificate dialog for %s:%d (proxy=%d, candidates=%u)",
+       ephy_engine_client_certificate_get_host (request),
+       ephy_engine_client_certificate_get_port (request),
+       ephy_engine_client_certificate_is_proxy (request),
+       ephy_engine_client_certificate_get_n_certificates (request));
+  return TRUE;
+}
+
+#define WEBSTORE_INSTALL_BLOCKED_DIALOG_KEY "ephy-window-webstore-install-blocked-dialog"
+
+static void
+webstore_install_blocked_dialog_closed_cb (AdwDialog  *dialog,
+                                            EphyWindow *window)
+{
+  if (g_object_get_data (G_OBJECT (window), WEBSTORE_INSTALL_BLOCKED_DIALOG_KEY) == dialog)
+    g_object_set_data (G_OBJECT (window), WEBSTORE_INSTALL_BLOCKED_DIALOG_KEY, NULL);
+}
+
+static void
+webstore_install_blocked_cb (EphyEngineView *view,
+                             EphyWindow     *window)
+{
+  EphyEmbed *embed;
+  AdwAlertDialog *dialog;
+
+  if (!gtk_widget_get_mapped (GTK_WIDGET (view)) ||
+      gtk_widget_get_root (GTK_WIDGET (view)) != GTK_ROOT (window))
+    return;
+
+  embed = ephy_window_get_active_embed (window);
+  if (!embed || EPHY_ENGINE_VIEW (ephy_embed_get_web_view (embed)) != view ||
+      g_object_get_data (G_OBJECT (window), WEBSTORE_INSTALL_BLOCKED_DIALOG_KEY))
+    return;
+
+  dialog = ADW_ALERT_DIALOG (adw_alert_dialog_new (
+    _("Chrome Web Store Installation Unavailable"),
+    _("Chrome Web Store installation is not available in Jupiter yet. "
+      "You can still install an unpacked extension from Preferences > Extensions > "
+      "Install Unpacked Extension.")));
+  adw_alert_dialog_set_body_use_markup (dialog, FALSE);
+  adw_alert_dialog_add_response (dialog, "close", _("_Close"));
+  adw_alert_dialog_set_default_response (dialog, "close");
+  adw_alert_dialog_set_close_response (dialog, "close");
+
+  g_object_set_data_full (G_OBJECT (window),
+                          WEBSTORE_INSTALL_BLOCKED_DIALOG_KEY,
+                          g_object_ref (dialog),
+                          g_object_unref);
+  g_signal_connect_object (dialog, "closed",
+                           G_CALLBACK (webstore_install_blocked_dialog_closed_cb),
+                           window, G_CONNECT_DEFAULT);
+  adw_dialog_present (ADW_DIALOG (dialog), GTK_WIDGET (window));
+}
+
+
 
 static void
 progress_update (EphyEngineView *web_view,
@@ -2773,7 +2229,6 @@ ephy_window_connect_active_embed (EphyWindow *window)
   sync_tab_address (view, NULL, window);
 
   sync_tab_zoom (web_view, NULL, window);
-  sync_tab_page_action (view, NULL, window);
 
   if (EPHY_IS_LOCATION_ENTRY (title_widget)) {
     EphyLocationEntry *lentry = EPHY_LOCATION_ENTRY (title_widget);
@@ -2812,11 +2267,20 @@ ephy_window_connect_active_embed (EphyWindow *window)
                            G_CALLBACK (sync_tab_zoom),
                            window, G_CONNECT_DEFAULT);
 
-  g_signal_connect_object (web_view, "create",
-                           G_CALLBACK (create_web_view_cb),
+  g_signal_connect_object (web_view, "create-popup",
+                           G_CALLBACK (create_popup_cb),
                            window, G_CONNECT_DEFAULT);
-  g_signal_connect_object (web_view, "decide-policy",
-                           G_CALLBACK (decide_policy_cb),
+  g_signal_connect_object (web_view, "open-external-uri",
+                           G_CALLBACK (open_external_uri_cb),
+                           window, G_CONNECT_DEFAULT);
+  g_signal_connect_object (web_view, "authentication-request",
+                           G_CALLBACK (authentication_request_cb),
+                           window, G_CONNECT_DEFAULT);
+  g_signal_connect_object (web_view, "client-certificate-request",
+                           G_CALLBACK (client_certificate_request_cb),
+                           window, G_CONNECT_DEFAULT);
+  g_signal_connect_object (web_view, "webstore-install-blocked",
+                           G_CALLBACK (webstore_install_blocked_cb),
                            window, G_CONNECT_DEFAULT);
 
   g_signal_connect_object (embed, "notify::title",
@@ -2840,15 +2304,7 @@ ephy_window_connect_active_embed (EphyWindow *window)
   g_signal_connect_object (view, "notify::is-blank",
                            G_CALLBACK (sync_tab_is_blank),
                            window, G_CONNECT_DEFAULT);
-  g_signal_connect_object (view, "context-menu",
-                           G_CALLBACK (populate_context_menu),
-                           window, G_CONNECT_DEFAULT);
-  g_signal_connect_object (view, "mouse-target-changed",
-                           G_CALLBACK (ephy_window_mouse_target_changed_cb),
-                           window, G_CONNECT_DEFAULT);
-  g_signal_connect_object (view, "web-process-terminated",
-                           G_CALLBACK (web_process_terminated_cb),
-                           window, G_CONNECT_DEFAULT);
+
 
   update_mute_action (window, NULL, EPHY_ENGINE_VIEW (view));
 
@@ -2896,10 +2352,19 @@ ephy_window_disconnect_active_embed (EphyWindow *window)
                                         G_CALLBACK (sync_tab_zoom),
                                         window);
   g_signal_handlers_disconnect_by_func (web_view,
-                                        G_CALLBACK (create_web_view_cb),
+                                        G_CALLBACK (create_popup_cb),
                                         window);
-  g_signal_handlers_disconnect_by_func (view,
-                                        G_CALLBACK (decide_policy_cb),
+  g_signal_handlers_disconnect_by_func (web_view,
+                                        G_CALLBACK (open_external_uri_cb),
+                                        window);
+  g_signal_handlers_disconnect_by_func (web_view,
+                                        G_CALLBACK (authentication_request_cb),
+                                        window);
+  g_signal_handlers_disconnect_by_func (web_view,
+                                        G_CALLBACK (client_certificate_request_cb),
+                                        window);
+  g_signal_handlers_disconnect_by_func (web_view,
+                                        G_CALLBACK (webstore_install_blocked_cb),
                                         window);
   g_signal_handlers_disconnect_by_func (embed,
                                         G_CALLBACK (sync_tab_title),
@@ -2922,15 +2387,7 @@ ephy_window_disconnect_active_embed (EphyWindow *window)
   g_signal_handlers_disconnect_by_func (view,
                                         G_CALLBACK (sync_tab_is_blank),
                                         window);
-  g_signal_handlers_disconnect_by_func (view,
-                                        G_CALLBACK (populate_context_menu),
-                                        window);
-  g_signal_handlers_disconnect_by_func (view,
-                                        G_CALLBACK (ephy_window_mouse_target_changed_cb),
-                                        window);
-  g_signal_handlers_disconnect_by_func (view,
-                                        G_CALLBACK (web_process_terminated_cb),
-                                        window);
+
 }
 
 static void
@@ -3675,6 +3132,7 @@ setup_tab_view (EphyWindow *window)
   g_autoptr (GtkBuilder) builder = NULL;
 
   gtk_widget_set_vexpand (GTK_WIDGET (tab_view), TRUE);
+  adw_tab_view_remove_shortcuts (view, ADW_TAB_VIEW_SHORTCUT_CONTROL_TAB | ADW_TAB_VIEW_SHORTCUT_CONTROL_SHIFT_TAB);
 
   builder = gtk_builder_new_from_resource ("/org/gnome/epiphany/gtk/notebook-context-menu.ui");
 
@@ -3831,22 +3289,137 @@ is_browser_default (void)
 }
 
 static void
+tab_switcher_closed_cb (EphyTabSwitcherModel *model, EphyWindow *window)
+{
+  (void)model;
+  if (!window->closing && window->active_embed && gtk_window_is_active (GTK_WINDOW (window)))
+    gtk_widget_grab_focus (GTK_WIDGET (ephy_embed_get_web_view (window->active_embed)));
+}
+
+static gboolean
+tab_switcher_key_pressed_cb (GtkEventControllerKey *controller,
+                             guint keyval, guint keycode,
+                             GdkModifierType state, EphyWindow *window)
+{
+  gboolean active;
+
+  (void)controller; (void)keycode;
+  if (window->closing)
+    return GDK_EVENT_PROPAGATE;
+  active = ephy_tab_switcher_model_get_active (window->tab_switcher_model);
+  if (!active && adw_application_window_get_visible_dialog (ADW_APPLICATION_WINDOW (window)))
+    return GDK_EVENT_PROPAGATE;
+  if ((state & GDK_CONTROL_MASK) && !(state & (GDK_ALT_MASK | GDK_SUPER_MASK)) &&
+      (keyval == GDK_KEY_Tab || keyval == GDK_KEY_ISO_Left_Tab)) {
+    int direction = (state & GDK_SHIFT_MASK) || keyval == GDK_KEY_ISO_Left_Tab ? -1 : 1;
+    adw_tab_overview_set_open (ADW_TAB_OVERVIEW (window->overview), FALSE);
+    ephy_tab_switcher_model_begin (window->tab_switcher_model, direction);
+    return GDK_EVENT_STOP;
+  }
+  if (!active)
+    return GDK_EVENT_PROPAGATE;
+  switch (keyval) {
+    case GDK_KEY_Escape:
+      ephy_tab_switcher_model_cancel (window->tab_switcher_model);
+      break;
+    case GDK_KEY_Return:
+    case GDK_KEY_KP_Enter:
+      ephy_tab_switcher_model_commit (window->tab_switcher_model);
+      break;
+    case GDK_KEY_Left:
+      ephy_tab_switcher_model_move (window->tab_switcher_model, -1);
+      break;
+    case GDK_KEY_Right:
+      ephy_tab_switcher_model_move (window->tab_switcher_model, 1);
+      break;
+    case GDK_KEY_Up:
+      ephy_tab_switcher_model_move (window->tab_switcher_model, -(int)ephy_tab_switcher_get_columns (window->tab_switcher));
+      break;
+    case GDK_KEY_Down:
+      ephy_tab_switcher_model_move (window->tab_switcher_model, ephy_tab_switcher_get_columns (window->tab_switcher));
+      break;
+    default:
+      break;
+  }
+  return GDK_EVENT_STOP;
+}
+
+static void
+tab_switcher_key_released_cb (GtkEventControllerKey *controller,
+                              guint keyval, guint keycode,
+                              GdkModifierType state, EphyWindow *window)
+{
+  (void)controller; (void)keycode; (void)state;
+  if (!window->closing && (keyval == GDK_KEY_Control_L || keyval == GDK_KEY_Control_R))
+    ephy_tab_switcher_model_commit (window->tab_switcher_model);
+}
+
+static void
+tab_switcher_window_active_cb (EphyWindow *window, GParamSpec *pspec, gpointer user_data)
+{
+  (void)pspec; (void)user_data;
+  if (window->tab_switcher_model && !gtk_window_is_active (GTK_WINDOW (window)))
+    ephy_tab_switcher_model_cancel (window->tab_switcher_model);
+}
+
+static void
+tab_switcher_outside_pressed_cb (GtkGestureClick *gesture, int n_press,
+                                 double x, double y, EphyWindow *window)
+{
+  (void)gesture; (void)n_press;
+  if (!window->closing && window->tab_switcher_model &&
+      ephy_tab_switcher_model_get_active (window->tab_switcher_model) &&
+      !ephy_tab_switcher_contains_widget (window->tab_switcher,
+                                          gtk_widget_pick (GTK_WIDGET (window), x, y, GTK_PICK_DEFAULT)))
+    ephy_tab_switcher_model_cancel (window->tab_switcher_model);
+}
+
+static void
+setup_tab_switcher (EphyWindow *window)
+{
+  GtkWidget *overlay = gtk_overlay_new ();
+  GtkEventController *keys = gtk_event_controller_key_new ();
+  GtkGesture *outside = gtk_gesture_click_new ();
+  window->content_overlay = overlay;
+  window->tab_switcher_model = ephy_tab_switcher_model_new (ephy_tab_view_get_tab_view (window->tab_view), EPHY_SETTINGS_MAIN);
+  window->tab_switcher = ephy_tab_switcher_new (window->tab_switcher_model);
+  gtk_overlay_set_child (GTK_OVERLAY (overlay), GTK_WIDGET (window->tab_view));
+  gtk_overlay_add_overlay (GTK_OVERLAY (overlay), window->tab_switcher);
+  adw_toast_overlay_set_child (ADW_TOAST_OVERLAY (window->toast_overlay), overlay);
+  g_signal_connect_object (window->tab_switcher_model, "closed", G_CALLBACK (tab_switcher_closed_cb), window, 0);
+  gtk_event_controller_set_propagation_phase (keys, GTK_PHASE_CAPTURE);
+  g_signal_connect_object (keys, "key-pressed", G_CALLBACK (tab_switcher_key_pressed_cb), window, 0);
+  g_signal_connect_object (keys, "key-released", G_CALLBACK (tab_switcher_key_released_cb), window, 0);
+  gtk_widget_add_controller (GTK_WIDGET (window), keys);
+  gtk_event_controller_set_propagation_phase (GTK_EVENT_CONTROLLER (outside), GTK_PHASE_CAPTURE);
+  gtk_gesture_single_set_button (GTK_GESTURE_SINGLE (outside), 0);
+  g_signal_connect_object (outside, "pressed", G_CALLBACK (tab_switcher_outside_pressed_cb), window, 0);
+  gtk_widget_add_controller (GTK_WIDGET (window), GTK_EVENT_CONTROLLER (outside));
+  g_signal_connect_object (window, "notify::is-active", G_CALLBACK (tab_switcher_window_active_cb), window, 0);
+}
+
+static void clear_download_feedback (EphyWindow *window);
+
+static void
 ephy_window_dispose (GObject *object)
 {
   EphyWindow *window = EPHY_WINDOW (object);
 
   LOG ("EphyWindow dispose %p", window);
+  clear_download_feedback (window);
 
   /* Only do these once */
   if (!window->closing) {
     window->closing = TRUE;
 
+    if (window->tab_switcher_model)
+      ephy_tab_switcher_model_cancel (window->tab_switcher_model);
+    g_clear_object (&window->tab_switcher_model);
+
     g_cancellable_cancel (window->cancellable);
     g_clear_object (&window->cancellable);
 
-    _ephy_window_set_context_event (window, NULL);
 
-    g_clear_object (&window->hit_test_result);
     g_clear_object (&window->mouse_gesture_controller);
     g_clear_object (&window->search_engine_model);
 
@@ -4129,8 +3702,94 @@ download_start_toast_dismissed_cb (EphyWindow *window)
 }
 
 static void
+clear_download_feedback (EphyWindow *window)
+{
+  if (window->download_feedback_tick) {
+    gtk_widget_remove_tick_callback (window->content_overlay, window->download_feedback_tick);
+    window->download_feedback_tick = 0;
+  }
+  if (window->download_feedback) {
+    gtk_overlay_remove_overlay (GTK_OVERLAY (window->content_overlay), window->download_feedback);
+    window->download_feedback = NULL;
+    window->download_feedback_icon = NULL;
+  }
+  window->download_feedback_started = 0;
+}
+
+static gboolean
+download_feedback_tick_cb (GtkWidget     *overlay,
+                           GdkFrameClock *clock,
+                           gpointer       user_data)
+{
+  EphyWindow *window = user_data;
+  EphyActionBarEnd *end = ephy_header_bar_get_action_bar_end (EPHY_HEADER_BAR (window->header_bar));
+  GtkWidget *button = ephy_action_bar_end_get_downloads_button (end);
+  graphene_rect_t bounds;
+  gint64 now = gdk_frame_clock_get_frame_time (clock);
+  double progress, x, y;
+
+  /* The revealer needs an allocation before its new button has a position.
+   * Keep the icon hidden until then; never fall back to screen coordinates. */
+  if (!gtk_widget_get_mapped (button) ||
+      !gtk_widget_compute_bounds (button, overlay, &bounds) || bounds.size.width <= 0) {
+    if (now - window->download_feedback_requested < G_USEC_PER_SEC)
+      return G_SOURCE_CONTINUE;
+    window->download_feedback_tick = 0;
+    clear_download_feedback (window);
+    return G_SOURCE_REMOVE;
+  }
+  if (!window->download_feedback_started)
+    window->download_feedback_started = now;
+  progress = CLAMP ((now - window->download_feedback_started) / 650000.0, 0.0, 1.0);
+  if (progress >= 1.0) {
+    window->download_feedback_tick = 0;
+    clear_download_feedback (window);
+    return G_SOURCE_REMOVE;
+  }
+  x = CLAMP (bounds.origin.x + bounds.size.width / 2 - 24,
+             0, MAX (0, gtk_widget_get_width (overlay) - 48));
+  y = MAX (0, bounds.origin.y + bounds.size.height + 4) + 72 * progress * (2 - progress);
+  gtk_fixed_move (GTK_FIXED (window->download_feedback), window->download_feedback_icon, x, y);
+  gtk_widget_set_opacity (window->download_feedback_icon, 1 - progress);
+  gtk_widget_set_visible (window->download_feedback_icon, TRUE);
+  return G_SOURCE_CONTINUE;
+}
+
+static void
+show_download_feedback (EphyWindow *window)
+{
+  GtkWidget *image;
+  gboolean animations = TRUE;
+
+  if (!gtk_window_is_active (GTK_WINDOW (window)) || !gtk_widget_get_mapped (window->content_overlay))
+    return;
+  g_object_get (gtk_widget_get_settings (window->content_overlay), "gtk-enable-animations", &animations, NULL);
+  if (!animations)
+    return;
+  clear_download_feedback (window);
+  window->download_feedback = gtk_fixed_new ();
+  gtk_widget_set_can_target (window->download_feedback, FALSE);
+  gtk_overlay_add_overlay (GTK_OVERLAY (window->content_overlay), window->download_feedback);
+  window->download_feedback_icon = gtk_box_new (GTK_ORIENTATION_VERTICAL, 0);
+  gtk_widget_set_size_request (window->download_feedback_icon, 48, 48);
+  gtk_widget_set_can_target (window->download_feedback_icon, FALSE);
+  gtk_widget_set_visible (window->download_feedback_icon, FALSE);
+  image = gtk_image_new_from_icon_name ("ephy-download-symbolic");
+  gtk_widget_add_css_class (image, "accent");
+  gtk_image_set_pixel_size (GTK_IMAGE (image), 32);
+  gtk_widget_set_vexpand (image, TRUE);
+  gtk_widget_set_can_target (image, FALSE);
+  gtk_box_append (GTK_BOX (window->download_feedback_icon), image);
+  gtk_fixed_put (GTK_FIXED (window->download_feedback), window->download_feedback_icon, 0, 0);
+  window->download_feedback_requested = g_get_monotonic_time ();
+  window->download_feedback_tick = gtk_widget_add_tick_callback (window->content_overlay,
+                                                                 download_feedback_tick_cb, window, NULL);
+}
+
+static void
 download_added_cb (EphyWindow *window)
 {
+  show_download_feedback (window);
   window->download_start_toast = adw_toast_new (_("Download started"));
   g_signal_connect_object (window->download_start_toast, "dismissed",
                            G_CALLBACK (download_start_toast_dismissed_cb), window, G_CONNECT_SWAPPED);
@@ -4407,7 +4066,8 @@ show_sidebar_cb (EphyWindow *window)
     adw_tab_view_set_shortcuts (tab_view, ADW_TAB_VIEW_SHORTCUT_ALL_SHORTCUTS);
     adw_tab_view_remove_shortcuts (tab_view,
                                    ADW_TAB_VIEW_SHORTCUT_CONTROL_HOME | ADW_TAB_VIEW_SHORTCUT_CONTROL_END |
-                                   ADW_TAB_VIEW_SHORTCUT_CONTROL_SHIFT_HOME | ADW_TAB_VIEW_SHORTCUT_CONTROL_SHIFT_END);
+                                   ADW_TAB_VIEW_SHORTCUT_CONTROL_SHIFT_HOME | ADW_TAB_VIEW_SHORTCUT_CONTROL_SHIFT_END |
+                                   ADW_TAB_VIEW_SHORTCUT_CONTROL_TAB | ADW_TAB_VIEW_SHORTCUT_CONTROL_SHIFT_TAB);
   }
 
   _ephy_window_set_default_actions_sensitive (window,
@@ -4604,7 +4264,7 @@ ephy_window_constructed (GObject *object)
   gtk_revealer_set_child (GTK_REVEALER (window->action_bar_revealer), window->action_bar);
   gtk_revealer_set_reveal_child (GTK_REVEALER (window->action_bar_revealer), FALSE);
   window->toast_overlay = adw_toast_overlay_new ();
-  adw_toast_overlay_set_child (ADW_TOAST_OVERLAY (window->toast_overlay), GTK_WIDGET (window->tab_view));
+  setup_tab_switcher (window);
 
   /* Add scroll container to hide action bar during scrolling */
   scroll_controller = gtk_event_controller_scroll_new (GTK_EVENT_CONTROLLER_SCROLL_VERTICAL);
@@ -4670,13 +4330,6 @@ ephy_window_constructed (GObject *object)
                                         SENS_FLAG_CHROME,
                                         window->is_popup);
 
-  action_group = ephy_window_get_action_group (window, "popup");
-  action = g_action_map_lookup_action (G_ACTION_MAP (action_group),
-                                       "open-link-in-new-tab");
-  ephy_action_change_sensitivity_flags (G_SIMPLE_ACTION (action),
-                                        SENS_FLAG_CHROME,
-                                        window->is_popup);
-
   if (mode == EPHY_EMBED_SHELL_MODE_APPLICATION) {
     g_object_set (window->location_controller, "editable", FALSE, NULL);
 
@@ -4709,7 +4362,6 @@ ephy_window_constructed (GObject *object)
 
   ephy_window_set_chrome (window, chrome);
 
-  ephy_web_extension_manager_install_actions (ephy_web_extension_manager_get_default (), window);
 
 #if 0
   /* Disabled due to https://gitlab.gnome.org/GNOME/epiphany/-/issues/1915 */
@@ -5031,23 +4683,6 @@ ephy_window_set_zoom (EphyWindow *window,
 
   if (zoom != current_zoom)
     ephy_engine_web_view_set_zoom_level (web_view, zoom);
-}
-
-/**
- * ephy_window_get_context_event:
- * @window: an #EphyWindow
- *
- * Returns the #EphyEmbedEvent for the current context menu.
- * Use this to get the event from the action callback.
- *
- * Return value: (transfer none): an #EphyEmbedEvent, or %NULL
- **/
-WebKitHitTestResult *
-ephy_window_get_context_event (EphyWindow *window)
-{
-  g_assert (EPHY_IS_WINDOW (window));
-
-  return window->context_event;
 }
 
 /**

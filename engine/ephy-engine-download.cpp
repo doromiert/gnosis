@@ -13,6 +13,7 @@
 #include <set>
 #include <string>
 #include <unistd.h>
+#include <vector>
 
 namespace {
 std::set<EphyEngineDownload*> live;
@@ -23,12 +24,14 @@ struct Download {
   CefRefPtr<CefBeforeDownloadCallback> before;
   CefRefPtr<CefDownloadItemCallback> control;
   std::function<void()> stop;
+  std::function<void()> native_cancel;
   std::string uri, response_uri, mime, destination, partial;
   guint64 total = 0, received = 0;
   double progress = 0;
   gint64 started = g_get_monotonic_time();
   gint64 ended = 0;
   bool overwrite = false, cancelled = false, announced = false, terminal = false, target_started = false;
+  bool native = false, native_completed = false;
   GError *error = nullptr;
   ~Download() {
     if (!partial.empty()) unlink(partial.c_str());
@@ -98,8 +101,17 @@ void announce(EphyEngineDownload *download) {
 void set_error(Download *data, GIOErrorEnum code, const char *message) {
   if (!data->error) data->error = g_error_new_literal(G_IO_ERROR, code, message);
 }
+void finish(EphyEngineDownload *download, bool complete);
 void start_target(EphyEngineDownload *download) {
   auto *data = download->data;
+  if (data->native) {
+    if (data->destination.empty() || data->terminal || data->cancelled || data->target_started) return;
+    data->target_started = true;
+    g_autofree char *uri = g_filename_to_uri(data->destination.c_str(), nullptr, nullptr);
+    g_signal_emit(download, signals[CREATED_DESTINATION], 0, uri);
+    if (data->native_completed && !data->terminal) finish(download, true);
+    return;
+  }
   if (!data->before || data->destination.empty() || data->terminal || data->cancelled || data->target_started) return;
   // Chromium writes a private sibling file. Publishing it must never clobber an
   // existing destination unless the user explicitly approved replacement.
@@ -144,6 +156,7 @@ void finish(EphyEngineDownload *download, bool complete) {
   if (!data->partial.empty()) { unlink(data->partial.c_str()); data->partial.clear(); }
   data->before = nullptr; data->control = nullptr;
   data->stop = nullptr;
+  data->native_cancel = nullptr;
   if (data->error) g_signal_emit(download, signals[FAILED], 0, data->error);
   else g_signal_emit(download, signals[FINISHED], 0);
   g_clear_object(&data->session);
@@ -181,14 +194,16 @@ class DownloadClient final : public CefClient, public CefLifeSpanHandler, public
                              public CefDownloadHandler, public CefRequestHandler {
 public:
   explicit DownloadClient(EphyEngineDownload *download) : download_(EPHY_ENGINE_DOWNLOAD(g_object_ref(download))),
-    cookie_filter_(ephy_engine_session_cookie_filter(download->data->session)) { ++pending_browsers; }
+    cookie_filter_(ephy_engine_session_cookie_filter(download->data->session)),
+    request_handler_(ephy_engine_settings_request_handler(cookie_filter_,
+      ephy_engine_session_request_handler(download->data->session))) { ++pending_browsers; }
   CefRefPtr<CefLifeSpanHandler> GetLifeSpanHandler() override { return this; }
   CefRefPtr<CefRenderHandler> GetRenderHandler() override { return this; }
   CefRefPtr<CefDownloadHandler> GetDownloadHandler() override { return this; }
   CefRefPtr<CefRequestHandler> GetRequestHandler() override { return this; }
   CefRefPtr<CefResourceRequestHandler> GetResourceRequestHandler(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame>,
       CefRefPtr<CefRequest>, bool, bool, const CefString&, bool&) override {
-    return ephy_engine_settings_request_handler(cookie_filter_);
+    return request_handler_;
   }
   void GetViewRect(CefRefPtr<CefBrowser>, CefRect& rect) override { rect = CefRect(0, 0, 1, 1); }
   void OnPaint(CefRefPtr<CefBrowser>, PaintElementType, const RectList&, const void*, int, int) override {}
@@ -220,9 +235,49 @@ private:
   ~DownloadClient() override { if (!closed_) --pending_browsers; g_object_unref(download_); }
   EphyEngineDownload *download_;
   CefRefPtr<CefCookieAccessFilter> cookie_filter_;
+  CefRefPtr<CefResourceRequestHandler> request_handler_;
   bool closed_ = false;
   IMPLEMENT_REFCOUNTING(DownloadClient);
 };
+}
+EphyEngineDownload *ephy_engine_download_native_begin(EphyEngineSession *session, const std::string& uri,
+    const std::string& suggested, const std::string& staging, std::function<void()> cancel) {
+  auto *download = create(session, uri);
+  auto *data = download->data;
+  data->native = true; data->native_cancel = std::move(cancel); data->partial = staging;
+  g_autofree char *name = g_path_get_basename(suggested.empty() ? "download" : suggested.c_str());
+  g_autofree char *content_type = g_content_type_guess(name, nullptr, 0, nullptr);
+  g_autofree char *mime = content_type ? g_content_type_get_mime_type(content_type) : nullptr;
+  data->mime = mime ? mime : "application/octet-stream";
+  announce(download);
+  g_message("Brave download connected to GTK manager");
+  g_object_notify_by_pspec(G_OBJECT(download), properties[PROP_MIME]);
+  if (data->terminal) return download;
+  gboolean handled = false;
+  g_signal_emit(download, signals[DECIDE_DESTINATION], 0, name, &handled);
+  if (!handled && data->destination.empty()) ephy_engine_download_cancel(download);
+  else start_target(download);
+  return download;
+}
+void ephy_engine_download_native_update(EphyEngineDownload *download, guint64 received, guint64 total,
+                                         const std::string& state) {
+  auto *data = download->data;
+  if (!data->native || data->terminal) return;
+  data->received = received; data->total = total;
+  data->progress = total ? std::clamp(double(received) / total, 0., 1.) : 0;
+  if (state == "completed") data->progress = 1;
+  g_object_notify_by_pspec(G_OBJECT(download), properties[PROP_PROGRESS]);
+  if (state == "completed") {
+    g_message("Brave download completed: %" G_GUINT64_FORMAT " bytes", received);
+    data->native_completed = true;
+    // The GTK destination chooser may still be open after a fast transfer.
+    if (data->target_started) finish(download, true);
+  } else if (state == "canceled") finish(download, false);
+  else if (state == "failed") ephy_engine_download_native_fail(download, "The Brave download service stopped");
+}
+void ephy_engine_download_native_fail(EphyEngineDownload *download, const std::string& message) {
+  if (download->data->terminal) return;
+  set_error(download->data, G_IO_ERROR_FAILED, message.c_str()); finish(download, false);
 }
 void ephy_engine_download_before(EphyEngineSession *session, CefRefPtr<CefBrowser> browser, CefRefPtr<CefDownloadItem> item,
                                 const CefString& name, CefRefPtr<CefBeforeDownloadCallback> before, EphyEngineDownload *existing) {
@@ -332,6 +387,11 @@ gboolean ephy_engine_download_destination_exists(EphyEngineDownload *d, const ch
 void ephy_engine_download_cancel(EphyEngineDownload *d) {
   if (d->data->terminal) return;
   d->data->cancelled = true;
+  if (d->data->native) {
+    auto cancel = std::move(d->data->native_cancel);
+    if (cancel) cancel();
+    finish(d, false); return;
+  }
   d->data->before = nullptr;
   if (d->data->control) d->data->control->Cancel();
   else if (d->data->stop) {
@@ -347,10 +407,14 @@ void ephy_engine_download_cancel(EphyEngineDownload *d) {
   }
 }
 void ephy_engine_downloads_shutdown() {
-  for (auto *download : live) ephy_engine_download_cancel(download);
+  // Native cancellation finishes synchronously and removes the object from
+  // live. Hold a snapshot while callbacks update the manager and application.
+  std::vector<EphyEngineDownload*> pending(live.begin(), live.end());
+  for (auto *download : pending) g_object_ref(download);
+  for (auto *download : pending) { ephy_engine_download_cancel(download); g_object_unref(download); }
   auto deadline = g_get_monotonic_time() + 5 * G_TIME_SPAN_SECOND;
   while ((!live.empty() || pending_browsers) && g_get_monotonic_time() < deadline) {
-    CefDoMessageLoopWork();
+    if (!JupiterBrave::enabled()) CefDoMessageLoopWork();
     while (g_main_context_pending(nullptr)) g_main_context_iteration(nullptr, false);
     g_usleep(1000);
   }

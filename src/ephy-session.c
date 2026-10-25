@@ -1226,11 +1226,8 @@ session_parse_embed (SessionParserContext  *context,
     }
 
     if (delay_loading) {
-      WebKitURIRequest *request = webkit_uri_request_new (url);
-
-      ephy_embed_set_delayed_load_request (embed, request, state);
+      ephy_embed_set_delayed_load_uri (embed, url, state);
       ephy_web_view_set_placeholder (web_view, url, title);
-      g_object_unref (request);
     } else {
       EphyEngineHistory *bf_list;
       EphyEngineHistoryItem *item;
