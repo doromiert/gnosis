@@ -68,6 +68,7 @@ public:
   bool close_is_approved() const;
   void focus(); void set_visible(bool); void close();
   void send_key(GdkEvent*);
+  bool handle_vim_key(guint key, GdkModifierType modifiers);
   bool edit(const std::string&);
   void set_zoom(double);
   GtkWidget* create_translation_controls();
@@ -106,6 +107,11 @@ private:
   void theme_document(const std::string&, const std::string&);
   void update_web_theme();
   void update_vim(int context);
+  void set_vim_context(int context);
+  void vim_key(const std::string& command);
+  void show_vim_commands();
+  void dismiss_vim_commands();
+  void execute_vim_command(const std::string& command);
   void request_favicon();
   void apply_zoom();
   void receive_zoom(double);

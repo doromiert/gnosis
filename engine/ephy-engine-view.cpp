@@ -1248,6 +1248,10 @@ gboolean ephy_engine_web_view_close_is_approved(EphyEngineView* view) {
   if (auto page = data(view)->browser->brave_page()) return page->close_is_approved();
   return TRUE;
 }
+gboolean ephy_engine_web_view_handle_vim_key(EphyEngineView* view, guint key, GdkModifierType modifiers) {
+  if (auto page=data(view)->browser->brave_page()) return page->handle_vim_key(key,modifiers);
+  return false;
+}
 void ephy_engine_web_view_cancel_close(EphyEngineView* view) {
   g_return_if_fail(EPHY_IS_ENGINE_VIEW(view));
   if (auto page = data(view)->browser->brave_page()) page->cancel_close();

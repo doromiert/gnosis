@@ -97,7 +97,7 @@ struct _JupiterCompositorView {
   double context_x, context_y;
   gint64 context_time;
   guint pressed_buttons;
-  gboolean captured, capture_inhibited, logged_gpu, logged_shm;
+  gboolean captured, capture_inhibited, logged_gpu, logged_shm, vim_field;
 };
 G_DEFINE_TYPE(JupiterCompositor, jupiter_compositor, G_TYPE_OBJECT)
 G_DEFINE_TYPE(JupiterCompositorView, jupiter_compositor_view, GTK_TYPE_WIDGET)
@@ -641,6 +641,18 @@ static void key(GtkEventControllerKey *controller, guint code, gboolean pressed,
   wlr_seat_keyboard_notify_modifiers(self->server->seat, &self->server->keyboard.modifiers);
   wlr_seat_keyboard_notify_key(self->server->seat, event.time_msec, event.keycode, event.state);
 }
+const char *jupiter_compositor_vim_key(guint value, GdkModifierType modifiers) {
+  if (!(modifiers & GDK_CONTROL_MASK) || (modifiers & (GDK_ALT_MASK | GDK_SUPER_MASK))) return NULL;
+  switch (gdk_keyval_to_lower(value)) {
+    case GDK_KEY_r: return "redo";
+    case GDK_KEY_d: return "scroll-down";
+    case GDK_KEY_u: return "scroll-up";
+    case GDK_KEY_w: return "delete-word";
+    case GDK_KEY_h: return "backspace";
+    default: return NULL;
+  }
+}
+void jupiter_compositor_view_set_vim_field(JupiterCompositorView *self, gboolean enabled) { self->vim_field = enabled; }
 gboolean jupiter_compositor_is_host_shortcut(guint value, GdkModifierType modifiers) {
   value = gdk_keyval_to_lower(value);
   if (value == GDK_KEY_F3) return TRUE;
@@ -662,6 +674,8 @@ gboolean jupiter_compositor_is_host_shortcut(guint value, GdkModifierType modifi
   }
 }
 static gboolean key_pressed(GtkEventControllerKey *controller, guint value, guint code, GdkModifierType modifiers, JupiterCompositorView *self) {
+  const char *vim = self->vim_field ? jupiter_compositor_vim_key(value, modifiers) : NULL;
+  if (vim) { g_signal_emit_by_name(self, "vim-command", vim); return TRUE; }
   if (value == GDK_KEY_Escape && self->constraint) {
     self->capture_inhibited = TRUE; stop_capture(self);
     // Let Chromium also leave HTML fullscreen when Escape releases capture.
@@ -674,6 +688,7 @@ static gboolean key_pressed(GtkEventControllerKey *controller, guint value, guin
   return !(modifiers & (GDK_CONTROL_MASK | GDK_ALT_MASK | GDK_SUPER_MASK));
 }
 static void key_released(GtkEventControllerKey *controller, guint value, guint code, GdkModifierType modifiers, JupiterCompositorView *self) {
+  if (self->vim_field && jupiter_compositor_vim_key(value, modifiers)) return;
   if (!jupiter_compositor_is_host_shortcut(value, modifiers)) key(controller, code, FALSE, self);
 }
 static gboolean dispatch(gint fd, GIOCondition condition, gpointer data) {
@@ -735,6 +750,7 @@ static void jupiter_compositor_view_class_init(JupiterCompositorViewClass *klass
   widget->snapshot = snapshot; widget->size_allocate = size_allocate;
   gtk_widget_class_set_css_name(widget, "jupiter-compositor-view");
   g_signal_new("surface-ready", G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST, 0, NULL, NULL, NULL, G_TYPE_NONE, 0);
+  g_signal_new("vim-command", G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST, 0, NULL, NULL, NULL, G_TYPE_NONE, 1, G_TYPE_STRING);
   g_signal_new("fullscreen-changed", G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST, 0, NULL, NULL, NULL, G_TYPE_NONE, 1, G_TYPE_BOOLEAN);
   g_signal_new("drag-preview-image", G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST, 0, NULL, NULL, NULL, G_TYPE_NONE, 2, GDK_TYPE_DRAG, G_TYPE_STRING);
 }

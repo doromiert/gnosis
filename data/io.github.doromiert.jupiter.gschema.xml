@@ -255,7 +255,7 @@
                 <key type="b" name="enable-vim-mode">
                         <default>false</default>
                         <summary>Use Vim-style keyboard navigation</summary>
-                        <description>Navigate pages with Vim-style keys and link hints. Text fields keep normal input; i temporarily passes keys to websites until Escape.</description>
+                        <description>Select page controls with h/j/k/l and link hints. Enter activates buttons or enters field normal mode; i starts typing, Escape returns to field normal mode, and another Escape returns to page navigation. Use d/u to scroll and : for commands.</description>
                 </key>
 		<key type="b" name="enable-mouse-gestures">
 			<default>false</default>

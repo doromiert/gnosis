@@ -13,15 +13,23 @@ rename preserves browsing data, settings and database pairing.
 Enable **Vim Mode** in **Preferences → General → Browsing** for keyboard navigation.
 It is off by default and takes effect immediately in open tabs.
 
-- `h/j/k/l` scroll, `d/u` move half a page, `gg`/`G` go to the top/bottom.
-  Prefix scrolling commands with a count, such as `3j`.
-- `f` shows link/control hints; type a hint to activate it. `F` opens a hinted
-  HTTP(S) link in a new tab. Escape cancels hints.
+- `h/j/k/l` select nearby page controls; counts such as `3j` move several controls.
+  `d/u` scroll half a page, `gg`/`G` select the first/last control, and Tab cycles controls.
+- `f` shows control hints; type a hint to select it. Enter activates selected
+  buttons and links. `F` selects a link to open in a new tab when you press Enter.
 - `/` opens native find; `n`/`N` select the next/previous match.
 - `H`/`L` go back/forward; `J`/`K` cycle tabs; `o` focuses the address bar;
   `t` opens a tab, `r` reloads and `x` closes through the normal close safeguards.
-- `gi` focuses a text field. Fields, editors and composing text keep normal
-  input. `i` temporarily passes all keys to a website; Escape returns to normal mode.
+- Enter on a selected input enters **field normal mode**. `i/a/I/A` enter
+  insert mode; Escape returns to field normal mode, and another Escape returns
+  to page navigation. `h/j/k/l`, `w/b/e`, `0/$`, `x`, `dd/dw`, `u` and Ctrl+R
+  provide field motions, deletion and undo/redo. `yy`/`p` yank and put within the field. `gi` enters the first field.
+
+Press `:` in page or field normal mode for the native command bar. Commands
+include `:open URL`, `:tabopen URL`, `:tabnext`, `:tabprev`, `:back`, `:forward`,
+`:reload` / `:reload!`, `:write`, `:quit`, `:qall`, `:undo`, `:redo`,
+`:set novim` and `:help`. Save and close use the existing native dialogs and
+unsaved-change safeguards. Field text stays inside the renderer.
 
 F3 and Shift+F3 use the native GTK find bar, including when Vim mode is off.
 

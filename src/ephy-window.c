@@ -903,7 +903,15 @@ vim_cycle_tab (GSimpleAction *action,
   adw_tab_view_set_selected_page (tabs, adw_tab_view_get_nth_page (tabs, index));
 }
 
+static void
+vim_set_mode (GSimpleAction *action, GVariant *parameter, gpointer user_data)
+{
+  g_settings_set_boolean (EPHY_SETTINGS_WEB, EPHY_PREFS_WEB_ENABLE_VIM_MODE,
+                          g_variant_get_boolean (parameter));
+}
+
 static const GActionEntry window_entries [] = {
+  { "set-vim-mode", vim_set_mode, "b" },
   { "vim-tab-next", vim_cycle_tab },
   { "vim-tab-previous", vim_cycle_tab },
   { "page-menu", window_cmd_page_menu },
@@ -3377,6 +3385,9 @@ tab_switcher_key_pressed_cb (GtkEventControllerKey *controller,
   active = ephy_tab_switcher_model_get_active (window->tab_switcher_model);
   if (!active && adw_application_window_get_visible_dialog (ADW_APPLICATION_WINDOW (window)))
     return GDK_EVENT_PROPAGATE;
+  if (!active && window->active_embed &&
+      ephy_engine_web_view_handle_vim_key (EPHY_ENGINE_VIEW (ephy_embed_get_web_view (window->active_embed)), keyval, state))
+    return GDK_EVENT_STOP;
   if ((state & GDK_CONTROL_MASK) && !(state & (GDK_ALT_MASK | GDK_SUPER_MASK)) &&
       (keyval == GDK_KEY_Tab || keyval == GDK_KEY_ISO_Left_Tab)) {
     int direction = (state & GDK_SHIFT_MASK) || keyval == GDK_KEY_ISO_Left_Tab ? -1 : 1;

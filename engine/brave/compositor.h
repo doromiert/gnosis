@@ -4,12 +4,14 @@
 G_BEGIN_DECLS
 
 gboolean jupiter_compositor_is_host_shortcut(guint keyval, GdkModifierType modifiers);
+const char *jupiter_compositor_vim_key(guint keyval, GdkModifierType modifiers);
 #define JUPITER_TYPE_COMPOSITOR (jupiter_compositor_get_type())
 G_DECLARE_FINAL_TYPE(JupiterCompositor, jupiter_compositor, JUPITER, COMPOSITOR, GObject)
 JupiterCompositor *jupiter_compositor_new(GError **error);
 const char *jupiter_compositor_get_socket(JupiterCompositor *self);
 #define JUPITER_TYPE_COMPOSITOR_VIEW (jupiter_compositor_view_get_type())
 G_DECLARE_FINAL_TYPE(JupiterCompositorView, jupiter_compositor_view, JUPITER, COMPOSITOR_VIEW, GtkWidget)
+void jupiter_compositor_view_set_vim_field(JupiterCompositorView *self, gboolean enabled);
 GtkWidget *jupiter_compositor_view_new(GError **error);
 GtkWidget *jupiter_compositor_view_new_for_server(JupiterCompositor *server, const char *token);
 gboolean jupiter_compositor_view_has_surface(JupiterCompositorView *self);

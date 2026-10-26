@@ -60,14 +60,20 @@ static void key(const char* keys) {
   });
 }
 static void wait(){add("settle",[]{next=g_get_monotonic_time()+800000;});}
+static GtkWidget* command_entry(GtkWidget* node) {
+  if(GTK_IS_ENTRY(node)&&gtk_widget_get_mapped(node)&&gtk_editable_get_text(GTK_EDITABLE(node))[0]==':')return node;
+  for(auto*c=gtk_widget_get_first_child(node);c;c=gtk_widget_get_next_sibling(c))if(auto*r=command_entry(c))return r;
+  return nullptr;
+}
+static void ex(const char* text,bool submit=true){key("colon");wait();add(text,[text]{auto*entry=command_entry(GTK_WIDGET(window));if(!entry)fail("native colon command entry missing");std::string command=":"+std::string(text);gtk_editable_set_text(GTK_EDITABLE(entry),command.c_str());});key("Return");wait();if(submit)add("native command completed",[]{if(command_entry(GTK_WIDGET(window)))fail("command did not complete");});}
 static gboolean tick(gpointer) {
-  if(g_get_monotonic_time()-started>150*G_USEC_PER_SEC)fail("timeout");
+  if(g_get_monotonic_time()-started>240*G_USEC_PER_SEC)fail("timeout");
   if(busy||g_get_monotonic_time()<next)return G_SOURCE_CONTINUE;
   if(!ready){if(!page->session.empty())eval("document.readyState==='complete'&&location.pathname==='/keyboard-navigation.html'",[](JsonObject*r){ready=json_object_get_boolean_member_with_default(r,"value",false);if(ready)page->focus();});return G_SOURCE_CONTINUE;}
   if(step==steps.size()) {
     if(!cleaning){cleaning=true;page->navigate("about:blank");next=g_get_monotonic_time()+500000;return G_SOURCE_CONTINUE;}
     if(page->uri!="about:blank"||page->loading)return G_SOURCE_CONTINUE;
-    g_printerr("KEYBOARD_GTK_PASS hardware F3/Shift+F3, native find, Vim scroll/counts/hints, editing guards, insert mode, isolation and live setting changes\n");
+    g_printerr("KEYBOARD_GTK_PASS native F3, page control selection, nested field normal/insert, Unicode editing, undo/redo, safe Ctrl shortcuts, colon commands and isolation\n");
     page.reset();g_action_group_activate_action(G_ACTION_GROUP(g_application_get_default()),"quit",nullptr);return G_SOURCE_REMOVE;
   }
   g_printerr("KEYBOARD_STEP %zu %s\n",step,steps[step].first.c_str());
@@ -81,6 +87,9 @@ static gboolean start(gpointer) {
   auto prefs=reinterpret_cast<GSettings*(*)(const char*)>(dlsym(RTLD_DEFAULT,"ephy_settings_get"));
   if(!embed(window))return G_SOURCE_CONTINUE;
   page=get(view(embed(window)));settings=prefs("io.github.doromiert.Jupiter.web");
+  auto* toolbarGroup=reinterpret_cast<GActionMap*(*)(void*,const char*)>(dlsym(RTLD_DEFAULT,"ephy_window_get_action_group"))(window,"toolbar");
+  if(!g_getenv("GNOSIS_KEYBOARD_PREVIEW"))g_signal_connect(g_action_map_lookup_action(toolbarGroup,"reload"),"activate",G_CALLBACK(+[](GSimpleAction*,GVariant*,gpointer){fail("field Ctrl+R reached browser reload");}),nullptr);
+
   g_settings_set_boolean(prefs("io.github.doromiert.Jupiter"),"ask-for-default",false);
   if(auto*d=adw_application_window_get_visible_dialog(ADW_APPLICATION_WINDOW(window))){
     g_printerr("KEYBOARD_STARTUP_DIALOG %s %s\n",adw_dialog_get_title(d),ADW_IS_ALERT_DIALOG(d)?adw_alert_dialog_get_heading(ADW_ALERT_DIALOG(d)):"");
@@ -106,32 +115,39 @@ static gboolean start(gpointer) {
   add("open preferences",[]{g_action_group_activate_action(G_ACTION_GROUP(g_application_get_default()),"preferences",nullptr);});wait();
   add("enable Vim through its native switch",[]{auto*d=adw_application_window_get_visible_dialog(ADW_APPLICATION_WINDOW(window));auto*row=d?vim_row(GTK_WIDGET(d)):nullptr;if(!row||adw_switch_row_get_active(ADW_SWITCH_ROW(row)))fail("Vim preference missing or enabled by default");adw_switch_row_set_active(ADW_SWITCH_ROW(row),true);if(!g_settings_get_boolean(settings,"enable-vim-mode"))fail("native switch binding");adw_dialog_force_close(d);});wait();
   add("restore page focus",[]{page->focus();});wait();
-  script("pageKeys=[]");key("j");expect("scrollY===60&&!pageKeys.includes('j')");
-  key("k");expect("scrollY===0");key("3");key("j");expect("scrollY===180");
-  key("G");expect("scrollY>1000");key("g");key("g");expect("scrollY===0");
-  script("document.querySelector('#text').focus()");key("j");expect("document.querySelector('#text').value==='j'&&scrollY===0");
-  key("Escape");key("j");expect("scrollY===60");
-  script("scrollTo(0,0);document.querySelector('#area').focus()");key("j");expect("document.querySelector('#area').value==='j'&&scrollY===0");
-  script("document.querySelector('#editor').focus()");key("j");expect("document.querySelector('#editor').textContent.includes('j')&&scrollY===0");
-  script("document.querySelector('#choice').focus();pageKeys=[]");key("j");expect("pageKeys.includes('j')&&scrollY===0");
-  script("document.querySelector('#panel').focus()");key("j");expect("document.querySelector('#panel').scrollTop===60&&scrollY===0");
-  script("focusClosed()");key("j");expect("closedValue()==='j'&&scrollY===0");key("Escape");
-  script("document.querySelector('#shadow').shadowRoot.querySelector('input').focus()");key("j");expect("document.querySelector('#shadow').shadowRoot.querySelector('input').value==='j'&&scrollY===0");
-  script("document.querySelector('#shadow').shadowRoot.activeElement.blur();document.activeElement?.blur();pageKeys=[]");
-  key("i");key("j");expect("scrollY===0&&pageKeys.includes('j')");key("Escape");key("j");expect("scrollY===60");
-  script("scrollTo(0,0);document.activeElement?.blur()");key("f");key("a");expect("hintClicks===1");
+  key("j");expect("document.activeElement.id==='hint-button'");key("l");expect("document.activeElement.id==='right-button'");key("h");expect("document.activeElement.id==='hint-button'");
+  key("j");key("i");key("a");expect("document.querySelector('#text').value===''");
+  key("Return");expect("document.activeElement.id==='text'");key("z");expect("document.querySelector('#text').value===''");
+  key("i");key("a");key("b");key("c");expect("document.querySelector('#text').value==='abc'&&trustedInputs.text==='abc'");
+  key("Escape");key("h");key("x");expect("document.querySelector('#text').value==='ab'");key("u");expect("document.querySelector('#text').value==='abc'");
+  key("ctrl+r");expect("document.querySelector('#text').value==='ab'&&location.pathname==='/keyboard-navigation.html'");
+  key("A");key("space");key("w");key("o");key("r");key("d");expect("document.querySelector('#text').value==='ab word'");
+  key("ctrl+w");expect("document.querySelector('#text').value==='ab '");key("Escape");
+  ex("undo");expect("document.querySelector('#text').value==='ab word'");ex("redo");expect("document.querySelector('#text').value==='ab '");
+  key("d");key("d");expect("document.querySelector('#text').value===''");key("p");expect("document.querySelector('#text').value==='ab '");
+  key("0");key("3");
+  ex("commands",false);key("Escape");key("x");expect("document.querySelector('#text').value==='b '");key("u");expect("document.querySelector('#text').value==='ab '");ex("not-a-command",false);key("Escape");
+  key("Escape");key("k");key("Return");expect("hintClicks===1");key("d");expect("scrollY>0");key("u");
+  script("scrollTo(0,0);document.activeElement?.blur()");key("f");key("a");expect("hintClicks===1");key("Return");expect("hintClicks===2");
+  script("document.querySelector('#area').focus()");key("Return");key("i");key("a");key("Return");key("b");expect("document.querySelector('#area').value==='a\\nb'");
+  key("Escape");key("0");key("k");key("x");expect("document.querySelector('#area').value==='\\nb'");key("u");expect("document.querySelector('#area').value==='a\\nb'");key("Escape");
+  script("document.querySelector('#editor').focus()");key("Return");key("i");key("j");expect("document.querySelector('#editor').textContent.includes('j')");key("Escape");key("Escape");
+  script("document.querySelector('#shadow').shadowRoot.querySelector('input').focus()");key("Return");key("i");key("j");expect("document.querySelector('#shadow').shadowRoot.querySelector('input').value==='j'");key("Escape");key("Escape");
+  script("focusClosed()");key("a");expect("closedValue()===''");key("Return");key("i");key("j");expect("closedValue()==='j'");key("Escape");key("Escape");
+  script("document.querySelector('#text').value='🧪x';document.querySelector('#text').setSelectionRange(0,0);document.querySelector('#text').focus()");key("Return");key("x");expect("document.querySelector('#text').value==='x'");key("Escape");
   key("slash");add("Vim search is native",[]{if(!gtk_widget_get_mapped(entry))fail("Vim / did not open GTK find");gtk_editable_set_text(GTK_EDITABLE(entry),"alpha");});wait();key("Escape");
   add("focus page again",[]{page->focus();});script("document.activeElement?.blur();scrollTo(0,0)");
   key("n");wait();add("Vim match focus",[]{g_object_get(entry,"current-match",&ordinal,nullptr);if(!ordinal||GTK_IS_TEXT(gtk_window_get_focus(window)))fail("Vim n stole page focus");});
   key("n");wait();add("repeated Vim next",[]{guint current=0;g_object_get(entry,"current-match",&current,nullptr);if(current!=ordinal%3+1)fail("repeated Vim n did not advance");});
   key("N");wait();add("Vim previous",[]{guint current=0;g_object_get(entry,"current-match",&current,nullptr);if(current!=ordinal)fail("Vim N did not return");});
-  script("dispatchEvent(new KeyboardEvent('keydown',{key:'j',bubbles:true}))");expect("scrollY===0");
-  expect("typeof gnosisVim==='undefined'&&typeof __jupiterDocumentMetadata==='undefined'");
-  script("document.querySelector('#frame').contentWindow.focus()");key("j");expect("childScroll===60");
-  key("slash");add("child frame Vim action",[]{if(!gtk_widget_get_mapped(entry)||!GTK_IS_TEXT(gtk_window_get_focus(window)))fail("child Vim search did not reach native GTK");});key("Escape");
-  script("document.activeElement?.blur();document.body.tabIndex=-1;document.body.focus();scrollTo(0,0)");
-  add("disable Vim live",[]{g_settings_set_boolean(settings,"enable-vim-mode",false);});wait();
-  script("pageKeys=[]");key("j");expect("scrollY===0&&pageKeys.includes('j')");
+  expect("typeof gnosisVim==='undefined'&&typeof gnosisVimField==='undefined'&&typeof __jupiterDocumentMetadata==='undefined'");
+  script("document.querySelector('#frame').contentWindow.focus()");key("j");key("Return");key("i");key("a");key("b");expect("childValue==='ab'");
+  key("Escape");key("h");key("x");expect("childValue==='a'");key("u");expect("childValue==='ab'");key("ctrl+r");expect("childValue==='a'");key("Escape");
+  script("document.activeElement?.blur();document.body.tabIndex=-1;document.body.focus()");
+  ex("tabopen http://localhost:18473/keyboard-child.html");
+  ex("set novim");expect("document.querySelector('#text').value==='x'");
+  add("Vim disabled through command",[]{if(g_settings_get_boolean(settings,"enable-vim-mode"))fail("set novim did not update settings");});
+  script("document.activeElement?.blur();scrollTo(0,0);pageKeys=[]");key("j");expect("pageKeys.includes('j')");
   started=g_get_monotonic_time();g_timeout_add(100,tick,nullptr);return G_SOURCE_REMOVE;
 }
 __attribute__((constructor))static void setup(){char exe[2048];auto n=readlink("/proc/self/exe",exe,sizeof exe-1);if(n<0)return;exe[n]=0;if(strstr(exe,"/.gnosis-wrapped"))g_timeout_add_seconds(4,start,nullptr);}

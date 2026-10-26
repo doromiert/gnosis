@@ -50,7 +50,7 @@ const char* text(JsonObject* o, const char* key) { return o ? json_object_get_st
 JsonObject* object(JsonObject* o, const char* key) { return o && json_object_has_member(o, key) ? json_object_get_object_member(o, key) : nullptr; }
 std::string document_adapter_source() {
   std::string result;
-  for (const char* name : {"document-metadata.js", "vim-mode.js"}) {
+  for (const char* name : {"document-metadata.js", "vim-field.js", "vim-mode.js"}) {
     g_autofree char* path = g_build_filename(JUPITER_NATIVE_INTEGRATION_DIR, name, nullptr);
     g_autofree char* source = nullptr;
     if (g_file_get_contents(path, &source, nullptr, nullptr)) result += std::string(source) + "\n";
@@ -185,6 +185,8 @@ struct Page::State {
   gint64 install_id = 0;
   guint install_delay = 0;
   std::map<int, std::string> menu_contexts, menu_frames, menu_sessions, metadata_contexts, metadata_unique;
+  int vim_context = 0;
+  GtkWidget *vim_commands = nullptr, *vim_command_entry = nullptr, *vim_command_error = nullptr;
   std::string document_title_uri;
   std::string user_script_id, applied_user_script;
   guint64 user_content_generation = 0;
@@ -365,7 +367,7 @@ public:
         s.requested = page->uri;
         s.attached = s.protocol_ready = s.native_destroyed = false;
         s.window = s.native_tab = -1; s.child = 0;
-        s.main_frame.clear(); s.context_id = 0; s.context_unique.clear(); s.menu_contexts.clear(); s.menu_frames.clear(); s.menu_sessions.clear(); s.metadata_contexts.clear(); s.metadata_unique.clear();
+        page->set_vim_context(0); s.main_frame.clear(); s.context_id = 0; s.context_unique.clear(); s.menu_contexts.clear(); s.menu_frames.clear(); s.menu_sessions.clear(); s.metadata_contexts.clear(); s.metadata_unique.clear();
         s.zoom_busy = false; s.zoom_pending = true; ++s.zoom_revision;
         s.process = replacement;
         page->target.clear(); page->session.clear();
@@ -1239,18 +1241,20 @@ Page::Page(GtkWidget* widget, bool ephemeral) : state_(std::make_unique<State>(w
   unsigned index = 0;
   for (const char* signal : {"notify::accent-color", "notify::dark", "notify::high-contrast"})
     state_->theme_signals[index++] = g_signal_connect(manager, signal, G_CALLBACK(+[](AdwStyleManager*, GParamSpec*, gpointer data) {
-      static_cast<Page*>(data)->update_web_theme();
+      static_cast<Page*>(data)->update_preferences();
     }), this);
   if (composited()) return;
   auto* keys = gtk_event_controller_key_new();
   gtk_event_controller_set_propagation_phase(keys, GTK_PHASE_BUBBLE);
   g_signal_connect(keys, "key-pressed", G_CALLBACK(+[](GtkEventControllerKey* controller, guint value, guint, GdkModifierType modifiers, Page* self) -> gboolean {
+    if (self->state_->vim_context) if (const char* command = jupiter_compositor_vim_key(value, modifiers)) { self->vim_key(command); return TRUE; }
     if (jupiter_compositor_is_host_shortcut(value, modifiers)) return FALSE;
     self->send_key(gtk_event_controller_get_current_event(GTK_EVENT_CONTROLLER(controller)));
     // Let GTK's window shortcuts continue through their normal propagation path.
     return !(modifiers & (GDK_CONTROL_MASK | GDK_ALT_MASK | GDK_SUPER_MASK));
   }), this);
   g_signal_connect(keys, "key-released", G_CALLBACK(+[](GtkEventControllerKey* controller, guint value, guint, GdkModifierType modifiers, Page* self) {
+    if (self->state_->vim_context && jupiter_compositor_vim_key(value, modifiers)) return;
     if (!jupiter_compositor_is_host_shortcut(value, modifiers))
       self->send_key(gtk_event_controller_get_current_event(GTK_EVENT_CONTROLLER(controller)));
   }), this);
@@ -1279,6 +1283,7 @@ void Page::start() {
 }
 void Page::adopt_surface(GtkWidget* widget) {
   state_->surface = widget;
+  g_signal_connect(widget, "vim-command", G_CALLBACK(+[](GtkWidget*, const char* command, gpointer data) { static_cast<Page*>(data)->vim_key(command); }), this);
   g_signal_connect(widget, "surface-ready", G_CALLBACK(+[](GtkWidget*, gpointer data) { static_cast<Page*>(data)->surface_ready(); }), this);
   g_signal_connect(widget, "fullscreen-changed", G_CALLBACK(+[](GtkWidget*, gboolean value, gpointer data) {
     auto* page = static_cast<Page*>(data); if (page->fullscreen_changed) page->fullscreen_changed(value);
@@ -1647,6 +1652,8 @@ void Page::navigate(const std::string& value) {
   dismiss_script_dialog(true);
   dismiss_install_dialog(true);
   dismiss_translation();
+  dismiss_vim_commands();
+  set_vim_context(0);
   dismiss_password_manager();
   state_->requested = value;
   state_->authorized_document = served_document(value) ? value : "";
@@ -1768,12 +1775,14 @@ void Page::handle(const std::string& method, JsonObject* params, bool frame_even
   } else if (method == "Fetch.requestPaused") {
     internal_request(params);
   } else if (method == "Runtime.executionContextsCleared") {
+    set_vim_context(0); dismiss_vim_commands();
     dismiss_context_menu(); state_->menu_contexts.clear(); state_->menu_frames.clear(); state_->menu_sessions.clear(); state_->metadata_contexts.clear(); state_->metadata_unique.clear();
     state_->context_id = 0; state_->context_unique.clear();
   } else if (method == "Runtime.executionContextDestroyed") {
     state_->menu_contexts.erase(json_object_get_int_member_with_default(params, "executionContextId", 0));
     state_->menu_frames.erase(json_object_get_int_member_with_default(params, "executionContextId", 0));
     state_->menu_sessions.erase(json_object_get_int_member_with_default(params, "executionContextId", 0));
+    if (state_->vim_context == json_object_get_int_member_with_default(params, "executionContextId", 0)) set_vim_context(0);
     state_->metadata_contexts.erase(json_object_get_int_member_with_default(params, "executionContextId", 0));
     state_->metadata_unique.erase(json_object_get_int_member_with_default(params, "executionContextId", 0));
     if (json_object_get_int_member_with_default(params, "executionContextId", 0) == state_->context_id) {
@@ -1809,6 +1818,26 @@ void Page::handle(const std::string& method, JsonObject* params, bool frame_even
           if (state_->close_approved || state_->close_callback) cancel_close();
           return;
         }
+        if (std::string(text(value, "kind")) == "vim-edit") {
+          const std::string operation = text(value, "operation");
+          if (vim_mode && state_->vim_context == metadata_context->first && (operation == "Copy" || operation == "Paste")) edit(operation);
+          return;
+        }
+        if (std::string(text(value, "kind")) == "vim-blur") {
+          if (state_->vim_context == metadata_context->first && !state_->vim_commands) set_vim_context(0);
+          return;
+        }
+        if (std::string(text(value, "kind")) == "vim-focus") {
+          const bool active = json_object_get_boolean_member_with_default(value, "active", false);
+          set_vim_context(active && vim_mode && !state_->extension_popup ? metadata_context->first : 0);
+          return;
+        }
+        if (std::string(text(value, "kind")) == "vim-field") {
+          const bool active = json_object_get_boolean_member_with_default(value, "active", false);
+          if (active && vim_mode && !state_->extension_popup) set_vim_context(metadata_context->first);
+          else if (!active && state_->vim_context == metadata_context->first) set_vim_context(0);
+          return;
+        }
         if (std::string(text(value, "kind")) == "vim-ready") {
           update_vim(metadata_context->first);
           return;
@@ -1819,6 +1848,7 @@ void Page::handle(const std::string& method, JsonObject* params, bool frame_even
           auto* focus = root ? gtk_root_get_focus(root) : nullptr;
           if (!focus || (focus != widget() && !gtk_widget_is_ancestor(focus, widget()))) return;
           const std::string action = text(value, "action");
+          if (action == "vim.commands") { show_vim_commands(); return; }
           static const std::set<std::string> allowed = {
             "win.find", "win.find-next", "win.find-prev", "win.location", "win.new-tab",
             "win.vim-tab-next", "win.vim-tab-previous", "toolbar.reload",
@@ -2579,6 +2609,7 @@ GtkWidget* Page::create_translation_controls() {
 
 
 #include "authenticator-ui.inc"
+#include "vim-commands.inc"
 
 void Page::keepassxc_request(const std::string& operation, const std::string& argument, Reply reply) {
   if (is_closed() || state_->ephemeral || !state_->process || state_->native_tab < 1) {
@@ -2782,8 +2813,10 @@ void Page::update_vim(int context) {
   auto unique = state_->metadata_unique.find(context);
   auto source = state_->menu_sessions.find(context);
   if (is_closed() || unique == state_->metadata_unique.end() || source == state_->menu_sessions.end()) return;
+  g_autoptr(GdkRGBA) accent = adw_style_manager_get_accent_color_rgba(adw_style_manager_get_default());
+  g_autofree char* color = gdk_rgba_to_string(accent);
   const std::string expression = std::string("globalThis.gnosisVim?.setEnabled(") +
-    (vim_mode && !state_->extension_popup ? "true" : "false") + ")";
+    (vim_mode && !state_->extension_popup ? "true" : "false") + "," + quote(color) + ")";
   state_->process->command("Runtime.evaluate", "{\"uniqueContextId\":" + quote(unique->second) +
     ",\"expression\":" + quote(expression) + "}", source->second);
 }
@@ -3242,6 +3275,8 @@ void Page::close() {
   dismiss_authenticator(true);
   dismiss_install_dialog(true);
   dismiss_translation();
+  dismiss_vim_commands();
+  set_vim_context(0);
   dismiss_password_manager();
   close_devtools();
   if (s.process && s.process->native_fd >= 0 && !target.empty()) {

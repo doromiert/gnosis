@@ -1129,8 +1129,9 @@ All agents were stopped; integration, fixes and final validation continued solo.
   F3/Shift+F3 and Ctrl+G stay in GTK instead of also reaching Brave's find UI.
   Physical XTest next/previous checks pass. Optional Vim navigation is exposed
   in General → Browsing and defaults off; native switch binding, scroll/counts,
-  link hints, native find, insert mode, editable/closed-shadow input protection
-  and live enable/disable are covered by the keyboard regression.
+  DOM-control selection, nested field normal/insert modes, native colon commands,
+  Unicode-safe motions/deletion, field undo/redo, closed-shadow inputs and live
+  enable/disable are covered by the keyboard regression.
 - Native close preflight runs Chromium's real handlers and preserves all tabs
   until the complete close transaction is approved. GTK last-tab, two-tab window
   and two-window application-wide Keep Open/Leave,

@@ -51,11 +51,15 @@ set `GNOSIS_XDOTOOL` to its executable and run on an isolated X11 display with
 `keyboard-navigation.html` and `keyboard-child.html` served on localhost:18473.
 It dismisses only its disposable window's startup dialog so it cannot intercept
 the test's physical keys. It checks F3/Shift+F3 against native match ordinals and last-query retention,
-enables Vim through the real Preferences switch, and checks scroll/counts,
-native search, link hints, insert mode, live disabling, nested scrolling,
-editable fields and open/closed shadow-DOM fields. It also forces site isolation only in the test and verifies child-frame Vim
-scrolling and native find routing. Page-made keyboard events must not invoke
-privileged navigation, and the adapter's globals stay isolated.
+enables Vim through the real Preferences switch, and checks spatial selection of
+buttons/inputs, Enter entering field normal mode, i entering insert mode, the two
+Escape steps, motions/deletion, trusted input events, Unicode graphemes, undo/redo,
+and Ctrl+R/Ctrl+W remaining field operations. The native colon entry tests help,
+unknown commands, undo/redo, tabopen and set novim. Open and closed shadow-DOM
+inputs and forced cross-process frames are covered; no renderer field values
+are sent through the native binding. Default page-world code cannot access the
+adapter's globals. Only this test adds the site-isolation flag.
+
 
 The close probe checks the real native beforeunload handler, last-tab Keep Open,
 two-tab transactional cancellation, Leave on both tabs and absence of duplicate
