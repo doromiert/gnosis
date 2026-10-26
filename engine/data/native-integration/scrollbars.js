@@ -11,9 +11,71 @@
   const thumbHover = '--jupiter-scrollbar-thumb-hover';
   const pressed = '--jupiter-scrollbar-pressed';
   const reduced = matchMedia('(prefers-reduced-motion: reduce)');
+  // Non-auto scrollbar-width bypasses Blink's custom scrollbar painting.
+  // Normalize thin only; retain none and restore author styles on changes.
+  const normalized = new WeakMap(), pending = new Set(), lastScrollbarStyle = new WeakMap();
+  let normalizeFrame = 0;
+  function normalize(element) {
+    const style = element.style;
+    if (!style) return;
+    const original = normalized.get(element);
+    if (original) {
+      for (const [property, saved] of Object.entries(original)) {
+        if (style.getPropertyValue(property) !== 'auto' || style.getPropertyPriority(property) !== 'important') continue;
+        if (saved.value) style.setProperty(property, saved.value, saved.priority);
+        else style.removeProperty(property);
+      }
+      normalized.delete(element);
+      lastScrollbarStyle.set(element, element.getAttribute('style'));
+    }
+    if (getComputedStyle(element).scrollbarWidth !== 'thin') return;
+    const saved = {};
+    for (const property of ['scrollbar-width','scrollbar-color']) {
+      saved[property] = {value:style.getPropertyValue(property), priority:style.getPropertyPriority(property)};
+      style.setProperty(property, 'auto', 'important');
+    }
+    normalized.set(element, saved);
+    lastScrollbarStyle.set(element, element.getAttribute('style'));
+  }
+  function scan(element) {
+    if (!(element instanceof Element)) return;
+    pending.add(element);
+    if (normalizeFrame) return;
+    normalizeFrame = requestAnimationFrame(() => {
+      normalizeFrame = 0;
+      const roots = [...pending]; pending.clear();
+      for (const root of roots) {
+        if (!root.isConnected || roots.some(other => other !== root && other.contains(root))) continue;
+        normalize(root);
+        for (const child of root.querySelectorAll('*')) normalize(child);
+      }
+    });
+  }
+  new MutationObserver(records => {
+    for (const record of records) {
+      if (record.type === 'attributes') {
+        // Animation and our own inline override must not trigger tree scans.
+        if (record.attributeName === 'style' && lastScrollbarStyle.has(record.target) &&
+            record.target.getAttribute('style') === lastScrollbarStyle.get(record.target)) continue;
+        scan(record.target);
+      } else if (record.target.nodeName === 'STYLE') scan(document.documentElement);
+      else for (const node of record.addedNodes) scan(node);
+    }
+  }).observe(document, {subtree:true, childList:true, attributes:true, attributeFilter:['class','style']});
+  document.addEventListener('DOMContentLoaded', () => scan(document.documentElement), {once:true});
+  document.addEventListener('load', event => {
+    if (event.target instanceof HTMLLinkElement && event.target.relList.contains('stylesheet')) scan(document.documentElement);
+  }, true);
+  scan(document.documentElement);
   const states = new WeakMap();
   const animating = new Set();
   let hovered = null, captured = null, hoveredAxis = 'vertical', capturedAxis = 'vertical', capturedThumb = false, lastPointer = null, frame = 0;
+
+  function writeStyle(element, property, value) {
+    if (value === null) element.style.removeProperty(property);
+    else element.style.setProperty(property, value, 'important');
+    lastScrollbarStyle.set(element, element.getAttribute('style'));
+  }
 
   function state(element, property) {
     let properties = states.get(element);
@@ -36,11 +98,11 @@
     for (const item of animating) {
       const progress = reduced.matches ? 1 : Math.max(0, Math.min(1, (now - item.start) / 200));
       item.value = item.from + (item.to - item.from) * progress;
-      for (const source of sources(item.element)) source.style.setProperty(item.property, String(item.value), 'important');
+      for (const source of sources(item.element)) writeStyle(source, item.property, String(item.value));
       if (progress === 1 || !item.element.isConnected) {
         animating.delete(item);
         if (!item.to || !item.element.isConnected)
-          for (const source of sources(item.element)) source.style.removeProperty(item.property);
+          for (const source of sources(item.element)) writeStyle(source, item.property, null);
       }
     }
     if (animating.size) frame = requestAnimationFrame(tick);
@@ -169,7 +231,7 @@
     if (frame) cancelAnimationFrame(frame);
     frame = 0;
     for (const item of animating) {
-      for (const source of sources(item.element)) source.style.removeProperty(item.property);
+      for (const source of sources(item.element)) writeStyle(source, item.property, null);
       item.value = item.from = item.to = 0;
     }
     animating.clear();
