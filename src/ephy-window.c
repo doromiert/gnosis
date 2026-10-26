@@ -935,6 +935,7 @@ static const GActionEntry window_entries [] = {
   { "zoom-normal", window_cmd_zoom_normal },
   { "print", window_cmd_print },
   { "find", window_cmd_find },
+  { "vim-find", window_cmd_vim_find },
   { "find-prev", window_cmd_find_prev },
   { "find-next", window_cmd_find_next },
   { "bookmark-page", window_cmd_bookmark_page },
@@ -1059,7 +1060,7 @@ _ephy_window_set_default_actions_sensitive (EphyWindow *window,
 
   const char *action_group_actions[] = {
     "save-as", "save-as-application", "screenshot", "print",
-    "find", "find-prev", "find-next",
+    "find", "vim-find", "find-prev", "find-next",
     "bookmark-page", "encoding", "page-source",
     NULL
   };
@@ -1263,6 +1264,8 @@ sync_tab_document_type (EphyWebView *view,
   action = g_action_map_lookup_action (G_ACTION_MAP (action_group), "page-source");
   ephy_action_change_sensitivity_flags (G_SIMPLE_ACTION (action), SENS_FLAG_DOCUMENT, is_image);
   action = g_action_map_lookup_action (G_ACTION_MAP (action_group), "find");
+  ephy_action_change_sensitivity_flags (G_SIMPLE_ACTION (action), SENS_FLAG_DOCUMENT, !can_find);
+  action = g_action_map_lookup_action (G_ACTION_MAP (action_group), "vim-find");
   ephy_action_change_sensitivity_flags (G_SIMPLE_ACTION (action), SENS_FLAG_DOCUMENT, !can_find);
   action = g_action_map_lookup_action (G_ACTION_MAP (action_group), "find-prev");
   ephy_action_change_sensitivity_flags (G_SIMPLE_ACTION (action), SENS_FLAG_DOCUMENT, !can_find);

@@ -42,6 +42,8 @@ void             ephy_find_toolbar_find_previous (EphyFindToolbar *toolbar);
 
 void             ephy_find_toolbar_open          (EphyFindToolbar *toolbar);
 
+void             ephy_find_toolbar_open_for_vim  (EphyFindToolbar *toolbar);
+
 void             ephy_find_toolbar_close         (EphyFindToolbar *toolbar);
 
 void             ephy_find_toolbar_request_close (EphyFindToolbar *toolbar);

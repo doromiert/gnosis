@@ -2847,6 +2847,16 @@ window_cmd_find (GSimpleAction *action,
 }
 
 void
+window_cmd_vim_find (GSimpleAction *action,
+                    GVariant      *parameter,
+                    gpointer       user_data)
+{
+  EphyWindow *window = EPHY_WINDOW (user_data);
+  dismiss_page_popover (window);
+  ephy_find_toolbar_open_for_vim (EPHY_FIND_TOOLBAR (ephy_window_get_current_find_toolbar (window)));
+}
+
+void
 window_cmd_find_prev (GSimpleAction *action,
                       GVariant      *parameter,
                       gpointer       user_data)

@@ -9,6 +9,7 @@
     let enabled = false, selected = null, selectedEditable = false, selectedOpaque = false, newTab = false;
     let prefix = '', prefixAt = 0, hints = [], typed = '', overlay = null, root = null, frame = 0, selecting = false;
     let accent = '#3584e4';
+    let searchRange = null, searchPending = false;
     const action = name => send(JSON.stringify({kind:'vim-action', action:name}));
     const active = () => { let n=document.activeElement; while(n?.shadowRoot?.activeElement)n=n.shadowRoot.activeElement; return n; };
     const current = () => { const n=selected?.deref(); return n?.isConnected?n:null; };
@@ -32,36 +33,38 @@
         overlay.style.cssText='all:initial!important;position:fixed!important;inset:0!important;pointer-events:none!important;z-index:2147483647!important';
         root=overlay.attachShadow({mode:'closed'});
         const style=document.createElement('style');
-        style.textContent='.hint,.mode{position:fixed;box-sizing:border-box;font:700 13px system-ui;color:#fff;background:#383838;border:1px solid #555;border-radius:6px;padding:3px 6px;box-shadow:0 2px 6px #0005}.mode{bottom:18px;right:18px;font-weight:500;padding:10px 16px;border-radius:12px}.selection{position:fixed;box-sizing:border-box;border:2px solid '+accent+';border-radius:8px;box-shadow:0 0 0 2px #fff8,0 2px 8px #0005}';
+        style.textContent='.hint,.mode{position:fixed;box-sizing:border-box;font:600 12px system-ui;color:#fff;background:#303030;border-radius:4px;padding:3px 6px}.mode{bottom:12px;right:12px;font-size:11px;letter-spacing:.06em;padding:4px 8px}.selection{position:fixed;box-sizing:border-box;border:2px solid '+accent+';border-radius:3px}';
         root.append(style); document.documentElement.append(overlay);
     };
     const render = () => {
         frame=0; if(!enabled||hints.length)return;
         const n=current(); if(!field?.inserting&&(!n||!visible(n))){clearLayer();return;}
         layer();
-        if(!field?.inserting&&n){const r=n.getBoundingClientRect(),ring=document.createElement('div');ring.className='selection';Object.assign(ring.style,{left:r.left-3+'px',top:r.top-3+'px',width:r.width+6+'px',height:r.height+6+'px'});root.append(ring);}
-        const badge=document.createElement('span');badge.className='mode';badge.setAttribute('role','status');
-        badge.textContent=field?.inserting?'Field insert mode · Esc for normal':field?.active?'Field normal mode · i to type · Esc to leave':selectedEditable?'Page normal mode · Enter to enter field':'Page normal mode · Enter to activate';root.append(badge);
+        if(!field?.inserting&&n&&!searchRange){const r=n.getBoundingClientRect(),ring=document.createElement('div');ring.className='selection';Object.assign(ring.style,{left:r.left-2+'px',top:r.top-2+'px',width:r.width+4+'px',height:r.height+4+'px',borderRadius:getComputedStyle(n).borderRadius});root.append(ring);}
+        if(field?.active){const badge=document.createElement('span');badge.className='mode';badge.setAttribute('role','status');badge.textContent=field.inserting?'INSERT':'NORMAL';root.append(badge);}
     };
     const redraw = () => {if(!frame)frame=requestAnimationFrame(render);};
     const clearHints = () => {hints=[];typed='';clearLayer();};
-    const select = (n, tab=false, hiddenInput=false) => {
+    const select = (n, tab=false, hiddenInput=false, scroll=true, focus=true) => {
         if(!rendered(n))return;
+        searchRange=null;
         selected=new WeakRef(n);selectedOpaque=hiddenInput;selectedEditable=editable(n)||hiddenInput;newTab=tab;
         selecting=true;
-        if(selectedEditable){
+        if(!focus){ /* Native find already owns the DOM text selection. */ }
+        else if(selectedEditable){
             // Keep normal mode out of ordinary text fields. A closed shadow
             // host cannot refocus its hidden input, so retain that focus and
             // gate its keys/beforeinput until the user explicitly presses i.
             if(!hiddenInput)active()?.blur();
         }else n.focus({preventScroll:true});
         selecting=false;
-        n.scrollIntoView({block:'nearest',inline:'nearest',behavior:'instant'});redraw();
+        if(scroll)n.scrollIntoView({block:'nearest',inline:'nearest',behavior:'instant'});redraw();
     };
     const move = (key,count) => {
         const nodes=controls(false);if(!nodes.length)return;
         const rectangles=new Map(nodes.map(n=>[n,n.getBoundingClientRect()]));
-        let n=current();if(!n||!rectangles.has(n)){select(nodes.find(visible)||nodes[0]);return;}
+        let n=current();if(n&&searchRange)rectangles.set(n,searchRange.getBoundingClientRect());
+        if(!n||!rectangles.has(n)){select(nodes.find(visible)||nodes[0]);return;}
         for(let i=0;i<count;i++){
             const r=rectangles.get(n),x=r.left+r.width/2,y=r.top+r.height/2;let best=null,score=Infinity;
             for(const candidate of nodes){if(candidate===n)continue;const c=rectangles.get(candidate),dx=c.left+c.width/2-x,dy=c.top+c.height/2-y;
@@ -94,6 +97,29 @@
     const scroller = () => {
         let n=current();while(n instanceof Element&&n!==document.documentElement){const s=getComputedStyle(n);if(n.scrollHeight>n.clientHeight&&/(auto|scroll)/.test(s.overflowY))return n;n=n.parentElement||n.getRootNode()?.host;}return document.scrollingElement;
     };
+    const jump = bottom => {
+        const target=scroller();if(!target)return;
+        target.scrollTo({top:bottom?target.scrollHeight:0,behavior:'instant'});
+        // Pick a control at the destination without scrolling it into view:
+        // the last control can be far above the actual end of a document.
+        const nodes=controls(true).filter(n=>target===document.scrollingElement||target.contains(n));
+        selected=null;searchRange=null;active()?.blur();
+        const n=bottom?nodes.at(-1):nodes[0];if(n)select(n,false,false,false);else redraw();
+    };
+    const adoptSearchSelection = () => {
+        if(!enabled||!searchPending)return;
+        const selection=getSelection();if(!selection||selection.isCollapsed||!selection.rangeCount)return;
+        const range=selection.getRangeAt(0),anchor=range.startContainer;
+        let n=anchor instanceof Element?anchor:anchor.parentElement;
+        let control=n;
+        while(control&&!control.matches(selector))control=control.parentElement||control.getRootNode()?.host;
+        if(control)n=control;
+        if(!rendered(n))return;
+        field?.leave();clearHints();select(n,false,false,false,false);
+        if(!control)searchRange=range.cloneRange();
+        redraw();
+    };
+    addEventListener('selectionchange',adoptSearchSelection);
     const eat = event => {event.preventDefault();event.stopImmediatePropagation();};
     addEventListener('focusin',event=>{
         if(!enabled||selecting)return;
@@ -103,6 +129,7 @@
     },{capture:true});
     addEventListener('pointerdown',event=>{
         if(!enabled||!event.isTrusted)return;
+        searchPending=false;
         if(field?.active){if(event.composedPath().includes(field.target()))return;field.leave();}
         const n=event.composedPath().find(n=>n instanceof Element&&n.matches(selector));
         if(n&&usable(n)){select(n);if(editable(n))event.preventDefault();}
@@ -115,6 +142,7 @@
     addEventListener('pagehide',()=>{field?.leave();selected=null;prefix='';clearHints();});
     addEventListener('keydown',event=>{
         if(!enabled||!event.isTrusted)return;
+        searchPending=false;
         if(field?.active){if(field.key(event)){eat(event);return;}if(field.inserting||event.key!==':')return;}
         if(event.key==='Escape'){normal();eat(event);return;}
         if(event.ctrlKey||event.altKey||event.metaKey){prefix='';return;}
@@ -124,11 +152,11 @@
         const key=event.key,previous=prefix;
         if(/^[1-9]$/.test(key)||(key==='0'&&/^[1-9]/.test(prefix))){prefix=(prefix+key).slice(0,3);prefixAt=performance.now();eat(event);return;}
         const count=Math.min(999,parseInt(prefix,10)||1);prefix='';
-        const commands={':':'vim.commands','/':'win.find',n:'win.find-next',N:'win.find-prev',o:'win.location',t:'win.new-tab',H:'toolbar.navigation-back',L:'toolbar.navigation-forward',r:'toolbar.reload',x:'tab.close',J:'win.vim-tab-next',K:'win.vim-tab-previous'};
+        const commands={':':'vim.commands','/':'win.vim-find',n:'win.find-next',N:'win.find-prev',o:'win.location',t:'win.new-tab',H:'toolbar.navigation-back',L:'toolbar.navigation-forward',r:'toolbar.reload',x:'tab.close',J:'win.vim-tab-next',K:'win.vim-tab-previous'};
         if('hjkl'.includes(key))move(key,count);
         else if(key==='d'||key==='u'){const target=scroller();if(target)target.scrollBy({top:(target.clientHeight||innerHeight)/2*count*(key==='u'?-1:1),behavior:'instant'});}
-        else if(key==='g'){if(previous==='g'){const nodes=controls(false);if(nodes.length)select(nodes[0]);else scrollTo(0,0);}else{prefix='g';prefixAt=performance.now();}}
-        else if(key==='G'){const nodes=controls(false);if(nodes.length)select(nodes.at(-1));else scrollTo(0,document.scrollingElement.scrollHeight);}
+        else if(key==='g'){if(previous==='g')jump(false);else{prefix='g';prefixAt=performance.now();}}
+        else if(key==='G')jump(true);
         else if(key==='i'){if(previous==='g'){const n=controls(false).find(editable);if(n){select(n);field.enter(n);}}}
         else if(key==='f'||key==='F')showHints(key==='F');
         else if(key==='Tab')tabMove(event.shiftKey);
@@ -139,9 +167,12 @@
         eat(event);
     },{capture:true});
     field=globalThis.gnosisVimField.create({changed:()=>{send(JSON.stringify({kind:'vim-field',active:field?.active||false}));redraw();},send});
-    Object.defineProperty(globalThis,'gnosisVim',{value:Object.freeze({command:operation=>field.command(operation),setEnabled(value,color){
+    Object.defineProperty(globalThis,'gnosisVim',{value:Object.freeze({command:operation=>field.command(operation),adoptSearch(){
+        if(!enabled)return;searchPending=true;
+        requestAnimationFrame(()=>requestAnimationFrame(adoptSearchSelection));
+    },setEnabled(value,color){
         const was=enabled;enabled=value===true;if(typeof color==='string')accent=color;
-        if(!enabled){field?.leave();selected=null;prefix='';clearHints();}
+        if(!enabled){field?.leave();selected=null;searchRange=null;searchPending=false;prefix='';clearHints();}
         else if(!was){const n=active();if(usable(n)&&(n.matches(selector)||opaque(n)))select(n,false,opaque(n));}
         redraw();
     }}),configurable:false,writable:false});

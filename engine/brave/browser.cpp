@@ -1850,7 +1850,7 @@ void Page::handle(const std::string& method, JsonObject* params, bool frame_even
           const std::string action = text(value, "action");
           if (action == "vim.commands") { show_vim_commands(); return; }
           static const std::set<std::string> allowed = {
-            "win.find", "win.find-next", "win.find-prev", "win.location", "win.new-tab",
+            "win.vim-find", "win.find-next", "win.find-prev", "win.location", "win.new-tab",
             "win.vim-tab-next", "win.vim-tab-previous", "toolbar.reload",
             "toolbar.navigation-back", "toolbar.navigation-forward", "tab.close"};
           if (allowed.contains(action)) {

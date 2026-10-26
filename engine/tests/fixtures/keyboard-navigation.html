@@ -7,6 +7,7 @@
 <div id=shadow></div><div id=closed-shadow></div><div id=panel tabindex=0><div>Nested scroller</div></div></div>
 <iframe id=frame src="http://127.0.0.1:18473/keyboard-child.html"></iframe>
 <script>
+window.childActivated=false;addEventListener('message',e=>{if(e.origin==='http://127.0.0.1:18473'&&e.source===document.querySelector('#frame').contentWindow&&e.data?.fixtureChildActivated===true)childActivated=true;});
 window.childValue='';addEventListener('message',e=>{if(e.origin==='http://127.0.0.1:18473'&&e.source===document.querySelector('#frame').contentWindow&&['a','ab','other'].includes(e.data?.fixtureChildValue))childValue=e.data.fixtureChildValue;});
 window.childScroll=0;addEventListener('message',e=>{if(e.origin==='http://127.0.0.1:18473'&&e.source===document.querySelector('#frame').contentWindow&&typeof e.data?.fixtureChildScroll==='number')childScroll=e.data.fixtureChildScroll;});
 window.trustedInputs={};addEventListener('input',e=>{if(e.isTrusted&&e.target.id)trustedInputs[e.target.id]=e.target.value;});

@@ -131,6 +131,9 @@ void window_cmd_print                           (GSimpleAction *action,
 void window_cmd_find                            (GSimpleAction *action,
                                                  GVariant      *parameter,
                                                  gpointer       user_data);
+void window_cmd_vim_find                        (GSimpleAction *action,
+                                                 GVariant      *parameter,
+                                                 gpointer       user_data);
 void window_cmd_find_prev                       (GSimpleAction *action,
                                                  GVariant      *parameter,
                                                  gpointer       user_data);

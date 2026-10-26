@@ -1131,7 +1131,10 @@ All agents were stopped; integration, fixes and final validation continued solo.
   in General → Browsing and defaults off; native switch binding, scroll/counts,
   DOM-control selection, nested field normal/insert modes, native colon commands,
   Unicode-safe motions/deletion, field undo/redo, closed-shadow inputs and live
-  enable/disable are covered by the keyboard regression.
+  enable/disable are covered by the keyboard regression. Vim search retains the
+  actual renderer match and adopts its control, including OOPIFs; Enter confirms
+  search and returns to the page. Exact gg/G bounds in documents and nested scroll
+  areas pass. Selection uses one accent outline without the page instruction badge.
 - Native close preflight runs Chromium's real handlers and preserves all tabs
   until the complete close transaction is approved. GTK last-tab, two-tab window
   and two-window application-wide Keep Open/Leave,

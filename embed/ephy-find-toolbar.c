@@ -55,6 +55,9 @@ struct _EphyFindToolbar {
   char *last_find_string;
   gboolean case_sensitive;
   gboolean word_action;
+  gboolean vim_search;
+  gboolean close_on_result;
+  gboolean search_pending;
 };
 
 G_DEFINE_FINAL_TYPE (EphyFindToolbar, ephy_find_toolbar, ADW_TYPE_BIN)
@@ -143,6 +146,7 @@ real_find (EphyFindToolbar   *toolbar,
 
   if (!ephy_engine_find_controller_uses_native_results (toolbar->controller))
     ephy_engine_find_controller_count_matches (toolbar->controller, toolbar->find_string, options, G_MAXUINT);
+  toolbar->search_pending = ephy_engine_find_controller_uses_native_results (toolbar->controller);
   ephy_engine_find_controller_search (toolbar->controller, toolbar->find_string, options, G_MAXUINT);
 }
 
@@ -222,6 +226,21 @@ key_pressed_cb (EphyFindToolbar       *toolbar,
 {
   if (keyval == GDK_KEY_Escape) {
     ephy_find_toolbar_close (toolbar);
+    gtk_widget_grab_focus (GTK_WIDGET (toolbar->web_view));
+    return TRUE;
+  }
+
+  if (toolbar->vim_search && (keyval == GDK_KEY_Return || keyval == GDK_KEY_KP_Enter)) {
+    if (toolbar->find_source_id || toolbar->search_pending) {
+      toolbar->close_on_result = TRUE;
+      if (toolbar->find_source_id) {
+        g_clear_handle_id (&toolbar->find_source_id, g_source_remove);
+        real_find (toolbar, EPHY_FIND_DIRECTION_NEXT);
+      }
+    } else if (toolbar->num_matches) {
+      ephy_find_toolbar_close (toolbar);
+      gtk_widget_grab_focus (GTK_WIDGET (toolbar->web_view));
+    }
     return TRUE;
   }
 
@@ -351,8 +370,9 @@ ephy_find_toolbar_init (EphyFindToolbar *toolbar)
   gtk_search_bar_connect_entry (GTK_SEARCH_BAR (toolbar->search_bar),
                                 GTK_EDITABLE (toolbar->entry));
 
-  /* Event controller for Escape key */
+  /* Capture Vim's confirm before GtkText consumes Return as next-match. */
   event_controller = gtk_event_controller_key_new ();
+  gtk_event_controller_set_propagation_phase (event_controller, GTK_PHASE_CAPTURE);
   gtk_widget_add_controller (GTK_WIDGET (toolbar), event_controller);
   g_signal_connect_swapped (event_controller, "key-pressed",
                             G_CALLBACK (key_pressed_cb), toolbar);
@@ -480,7 +500,15 @@ native_search_result_cb (EphyEngineFind *controller,
 {
   toolbar->num_matches = count;
   toolbar->current_match = ordinal;
+  toolbar->search_pending = FALSE;
   update_entry_matches (toolbar);
+  if (toolbar->close_on_result) {
+    toolbar->close_on_result = FALSE;
+    if (count) {
+      ephy_find_toolbar_close (toolbar);
+      gtk_widget_grab_focus (GTK_WIDGET (toolbar->web_view));
+    }
+  }
 }
 
 static void
@@ -598,14 +626,29 @@ ephy_find_toolbar_open (EphyFindToolbar *toolbar)
 {
   g_assert (toolbar->web_view);
 
+  toolbar->vim_search = FALSE;
+
   ephy_engine_web_view_evaluate_javascript (toolbar->web_view, "window.getSelection().toString();", -1, NULL, NULL, toolbar->cancellable, ephy_find_toolbar_selection_async, toolbar);
 
   reveal_find_toolbar (toolbar);
 }
 
 void
+ephy_find_toolbar_open_for_vim (EphyFindToolbar *toolbar)
+{
+  g_assert (toolbar->web_view);
+
+  /* Vim / accepts a query; asynchronously seeding it from a field's normal
+   * mode character selection can overwrite what the user just typed. */
+  toolbar->vim_search = TRUE;
+  toolbar->close_on_result = FALSE;
+  reveal_find_toolbar (toolbar);
+}
+
+void
 ephy_find_toolbar_close (EphyFindToolbar *toolbar)
 {
+  toolbar->vim_search = toolbar->close_on_result = toolbar->search_pending = FALSE;
   gtk_search_bar_set_search_mode (GTK_SEARCH_BAR (toolbar->search_bar), FALSE);
 
   if (!toolbar->web_view) return;

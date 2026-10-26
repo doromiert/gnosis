@@ -1,14 +1,15 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later
  * Included inside Process. Only host-owned Page targets reach this channel. */
   void find_request(const std::string& target, const std::string& query,
-                    bool forward, bool sensitive, bool match, Reply callback, bool stop = false) {
+                    bool forward, bool sensitive, bool match, Reply callback, bool stop = false, bool keep = false) {
     if (native_fd < 0) { if (callback) callback(nullptr, _("Native find is unavailable")); return; }
     const auto id = ++native_sequence;
     const auto message = std::string("{\"kind\":") + quote(stop ? "find-stop" : "find") +
       ",\"id\":" + std::to_string(id) + ",\"target\":" + quote(target) +
       ",\"text\":" + quote(query) + ",\"forward\":" + (forward ? "true" : "false") +
       ",\"caseSensitive\":" + (sensitive ? "true" : "false") +
-      ",\"findMatch\":" + (match ? "true" : "false") + "}";
+      ",\"findMatch\":" + (match ? "true" : "false") +
+      ",\"keepSelection\":" + (keep ? "true" : "false") + "}";
     if (message.size() > 60000) { if (callback) callback(nullptr, _("Search text is too long")); return; }
     if (callback) {
       struct Timeout { std::weak_ptr<Process> process; gint64 id; };

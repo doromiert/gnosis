@@ -10,7 +10,7 @@ void Page::find(const std::string& query, bool forward, bool sensitive, bool mat
   const auto navigation = state_->navigation_generation;
   const auto owner = target;
   state_->process->find_request(owner, query, forward, sensitive, match,
-    [weak = weak_from_this(), generation, navigation, owner, callback = std::move(callback)](JsonObject* result, const std::string& error) {
+    [weak = weak_from_this(), generation, navigation, owner, match, callback = std::move(callback)](JsonObject* result, const std::string& error) {
       auto page = weak.lock();
       if (!page || page->is_closed() || page->target != owner ||
           page->state_->navigation_generation != navigation || page->state_->find_generation != generation) {
@@ -25,11 +25,24 @@ void Page::find(const std::string& query, bool forward, bool sensitive, bool mat
           json_node_get_int(ordinal) < 0 || json_node_get_int(ordinal) > json_node_get_int(count)) {
         callback(nullptr, _("Invalid native search result")); return;
       }
+      if (vim_mode && match && json_node_get_int(ordinal) > 0) {
+        // Retain Chromium's real match rather than running a second JS text
+        // search (which disagrees on hidden text, shadow roots and frames).
+        // StopFinding keeps that match selected; the isolated adapters adopt
+        // its enclosing control after the renderer's selection changes.
+        page->state_->process->find_request(owner, "", true, false, false, {}, true, true);
+        for (const auto& [context, unique] : page->state_->metadata_unique) {
+          auto source = page->state_->menu_sessions.find(context);
+          if (source == page->state_->menu_sessions.end()) continue;
+          page->state_->process->command("Runtime.evaluate", "{\"uniqueContextId\":" + quote(unique) +
+            ",\"expression\":" + quote("globalThis.gnosisVim?.adoptSearch()") + "}", source->second);
+        }
+      }
       callback(result, "");
     });
 }
 void Page::stop_find() {
   ++state_->find_generation;
   if (state_->process && !target.empty())
-    state_->process->find_request(target, "", true, false, false, {}, true);
+    state_->process->find_request(target, "", true, false, false, {}, true, vim_mode);
 }

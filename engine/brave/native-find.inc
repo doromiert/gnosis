@@ -124,7 +124,11 @@ static bool native_find_dispatch(JsonObject *message) {
     native_find_release(&owner); return true;
   }
   if (!strcmp(kind, "find-stop")) {
-    ((void (*)(void *, int))(image + UI_FIND_STOP_RVA))(owner.helper, 1); /* kClear */
+    /* find_in_page::SelectionAction: kKeep=0, kClear=1. Keep translates
+     * the actual renderer match into a DOM selection, including OOPIFs. */
+    const bool keep = json_object_get_boolean_member_with_default(message, "keepSelection", false);
+    ((void (*)(void *, int))(image + UI_FIND_STOP_RVA))(owner.helper, keep ? 0 : 1);
+    native_find_result(target, id, 0, 0, "");
     native_find_release(&owner); return true;
   }
   JsonNode *text = json_object_get_member(message, "text");

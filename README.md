@@ -14,10 +14,13 @@ Enable **Vim Mode** in **Preferences → General → Browsing** for keyboard nav
 It is off by default and takes effect immediately in open tabs.
 
 - `h/j/k/l` select nearby page controls; counts such as `3j` move several controls.
-  `d/u` scroll half a page, `gg`/`G` select the first/last control, and Tab cycles controls.
+  `d/u` scroll half a page, `gg`/`G` jump to the top/bottom of the current
+  scroll area, and Tab cycles controls.
 - `f` shows control hints; type a hint to select it. Enter activates selected
   buttons and links. `F` selects a link to open in a new tab when you press Enter.
-- `/` opens native find; `n`/`N` select the next/previous match.
+- `/` opens native find; Enter confirms the match and returns to page navigation.
+  The actual matched text stays selected, and Enter activates its enclosing
+  button or link. `n`/`N` select the next/previous match.
 - `H`/`L` go back/forward; `J`/`K` cycle tabs; `o` focuses the address bar;
   `t` opens a tab, `r` reloads and `x` closes through the normal close safeguards.
 - Enter on a selected input enters **field normal mode**. `i/a/I/A` enter
