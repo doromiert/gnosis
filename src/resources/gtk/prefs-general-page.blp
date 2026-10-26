@@ -187,6 +187,12 @@ template $PrefsGeneralPage: Adw.PreferencesPage {
   Adw.PreferencesGroup browsing_box {
     title: _("Browsing");
 
+    Adw.SwitchRow vim_mode_row {
+      title: _("_Vim Mode");
+      subtitle: _("Use h/j/k/l to scroll, f for link hints, / to find, and i to pass keys to websites until Escape");
+      use-underline: true;
+    }
+
     Adw.SwitchRow enable_mouse_gesture_row {
       title: _("Mouse _Gestures");
       use-underline: true;

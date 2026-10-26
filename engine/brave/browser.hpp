@@ -105,6 +105,7 @@ private:
   void dismiss_install_dialog(bool cancel);
   void theme_document(const std::string&, const std::string&);
   void update_web_theme();
+  void update_vim(int context);
   void request_favicon();
   void apply_zoom();
   void receive_zoom(double);

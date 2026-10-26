@@ -641,8 +641,9 @@ static void key(GtkEventControllerKey *controller, guint code, gboolean pressed,
   wlr_seat_keyboard_notify_modifiers(self->server->seat, &self->server->keyboard.modifiers);
   wlr_seat_keyboard_notify_key(self->server->seat, event.time_msec, event.keycode, event.state);
 }
-static gboolean host_shortcut(guint value, GdkModifierType modifiers) {
+gboolean jupiter_compositor_is_host_shortcut(guint value, GdkModifierType modifiers) {
   value = gdk_keyval_to_lower(value);
+  if (value == GDK_KEY_F3) return TRUE;
   if (modifiers & GDK_SUPER_MASK) return TRUE;
   if ((modifiers & GDK_ALT_MASK) && (value == GDK_KEY_Left || value == GDK_KEY_Right || value == GDK_KEY_Home)) return TRUE;
   if (!(modifiers & GDK_CONTROL_MASK)) return FALSE;
@@ -650,7 +651,7 @@ static gboolean host_shortcut(guint value, GdkModifierType modifiers) {
     case GDK_KEY_c: case GDK_KEY_x: case GDK_KEY_v: case GDK_KEY_a:
     case GDK_KEY_z: case GDK_KEY_y:
     case GDK_KEY_t: case GDK_KEY_n: case GDK_KEY_w: case GDK_KEY_l:
-    case GDK_KEY_f: case GDK_KEY_r: case GDK_KEY_s: case GDK_KEY_p:
+    case GDK_KEY_f: case GDK_KEY_g: case GDK_KEY_r: case GDK_KEY_s: case GDK_KEY_p:
     case GDK_KEY_h: case GDK_KEY_d: case GDK_KEY_o: case GDK_KEY_q:
     case GDK_KEY_Tab: case GDK_KEY_ISO_Left_Tab: case GDK_KEY_Page_Up: case GDK_KEY_Page_Down:
     case GDK_KEY_plus: case GDK_KEY_minus: case GDK_KEY_equal: case GDK_KEY_0:
@@ -668,12 +669,12 @@ static gboolean key_pressed(GtkEventControllerKey *controller, guint value, guin
     return TRUE;
   }
   if (value != GDK_KEY_Escape) self->capture_inhibited = FALSE;
-  if (host_shortcut(value, modifiers)) return FALSE;
+  if (jupiter_compositor_is_host_shortcut(value, modifiers)) return FALSE;
   key(controller, code, TRUE, self);
   return !(modifiers & (GDK_CONTROL_MASK | GDK_ALT_MASK | GDK_SUPER_MASK));
 }
 static void key_released(GtkEventControllerKey *controller, guint value, guint code, GdkModifierType modifiers, JupiterCompositorView *self) {
-  if (!host_shortcut(value, modifiers)) key(controller, code, FALSE, self);
+  if (!jupiter_compositor_is_host_shortcut(value, modifiers)) key(controller, code, FALSE, self);
 }
 static gboolean dispatch(gint fd, GIOCondition condition, gpointer data) {
   (void)fd; JupiterCompositor *self = data;

@@ -1,0 +1,15 @@
+<!doctype html><meta charset=utf-8><title>Gnosis keyboard navigation test</title>
+<style>body{font:16px system-ui;margin:20px;height:5000px;width:1800px}input,textarea,select,button{display:block;margin:12px}#panel{height:120px;width:240px;overflow:auto}#panel div{height:800px}</style>
+<h1>Keyboard navigation fixture</h1><p>alpha alpha alpha</p>
+<button id=hint-button>Hint action</button><input id=text aria-label="Test text"><textarea id=area></textarea>
+<div id=editor contenteditable=true>Editable text</div><select id=choice><option>One</option><option>Two</option></select>
+<div id=shadow></div><div id=closed-shadow></div><div id=panel tabindex=0><div>Nested scroller</div></div>
+<iframe id=frame src="http://127.0.0.1:18473/keyboard-child.html"></iframe>
+<script>
+window.childScroll=0;addEventListener('message',e=>{if(e.origin==='http://127.0.0.1:18473'&&e.source===document.querySelector('#frame').contentWindow&&typeof e.data?.fixtureChildScroll==='number')childScroll=e.data.fixtureChildScroll;});
+window.hintClicks=0;window.pageKeys=[];document.querySelector('#hint-button').onclick=()=>hintClicks++;
+addEventListener('keydown',e=>pageKeys.push(e.key));
+const root=document.querySelector('#shadow').attachShadow({mode:'open'});root.innerHTML='<input id=shadow-input aria-label="Shadow text">';
+const closed=document.querySelector('#closed-shadow').attachShadow({mode:'closed'});closed.innerHTML='<input aria-label="Closed shadow text">';
+window.focusClosed=()=>closed.querySelector('input').focus();window.closedValue=()=>closed.querySelector('input').value;
+</script>

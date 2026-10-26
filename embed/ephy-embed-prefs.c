@@ -558,6 +558,8 @@ ephy_embed_prefs_init (gpointer user_data)
     g_free (key);
   }
 
+  g_settings_bind (EPHY_SETTINGS_WEB, EPHY_PREFS_WEB_ENABLE_VIM_MODE,
+                   engine_settings, "enable-vim-mode", G_SETTINGS_BIND_GET);
   g_settings_bind (EPHY_SETTINGS_WEB, EPHY_PREFS_WEB_ENABLE_ADBLOCK,
                    engine_settings, "enable-adblock", G_SETTINGS_BIND_GET);
   g_settings_bind (EPHY_SETTINGS_WEB, EPHY_PREFS_WEB_ENABLE_POPUPS,

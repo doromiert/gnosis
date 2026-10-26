@@ -2,6 +2,8 @@
 #pragma once
 #include <gtk/gtk.h>
 G_BEGIN_DECLS
+
+gboolean jupiter_compositor_is_host_shortcut(guint keyval, GdkModifierType modifiers);
 #define JUPITER_TYPE_COMPOSITOR (jupiter_compositor_get_type())
 G_DECLARE_FINAL_TYPE(JupiterCompositor, jupiter_compositor, JUPITER, COMPOSITOR, GObject)
 JupiterCompositor *jupiter_compositor_new(GError **error);

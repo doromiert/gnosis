@@ -33,6 +33,7 @@ namespace JupiterBrave {
 namespace {
 std::string profile_root;
 bool automation_mode = false;
+bool vim_mode = false;
 const std::string popup_layout = R"CSS(
 html { inline-size: max-content !important; block-size: max-content !important;
   min-inline-size: 0 !important; min-block-size: 0 !important;
@@ -47,6 +48,16 @@ std::vector<std::shared_ptr<Process>> retiring_private_processes;
 std::string native_preferences = "{}", user_stylesheet, user_javascript;
 const char* text(JsonObject* o, const char* key) { return o ? json_object_get_string_member_with_default(o, key, "") : ""; }
 JsonObject* object(JsonObject* o, const char* key) { return o && json_object_has_member(o, key) ? json_object_get_object_member(o, key) : nullptr; }
+std::string document_adapter_source() {
+  std::string result;
+  for (const char* name : {"document-metadata.js", "vim-mode.js"}) {
+    g_autofree char* path = g_build_filename(JUPITER_NATIVE_INTEGRATION_DIR, name, nullptr);
+    g_autofree char* source = nullptr;
+    if (g_file_get_contents(path, &source, nullptr, nullptr)) result += std::string(source) + "\n";
+    else g_warning("The native document adapter could not be loaded: %s", name);
+  }
+  return result;
+}
 int ignore_x_error(Display*, XErrorEvent*) { return 0; }
 }
 bool enabled() { return g_strcmp0(g_getenv("JUPITER_ENGINE"), "brave") == 0; }
@@ -173,7 +184,7 @@ struct Page::State {
   gulong install_response = 0;
   gint64 install_id = 0;
   guint install_delay = 0;
-  std::map<int, std::string> menu_contexts, menu_frames, menu_sessions, metadata_contexts;
+  std::map<int, std::string> menu_contexts, menu_frames, menu_sessions, metadata_contexts, metadata_unique;
   std::string document_title_uri;
   std::string user_script_id, applied_user_script;
   guint64 user_content_generation = 0;
@@ -354,7 +365,7 @@ public:
         s.requested = page->uri;
         s.attached = s.protocol_ready = s.native_destroyed = false;
         s.window = s.native_tab = -1; s.child = 0;
-        s.main_frame.clear(); s.context_id = 0; s.context_unique.clear(); s.menu_contexts.clear(); s.menu_frames.clear(); s.menu_sessions.clear(); s.metadata_contexts.clear();
+        s.main_frame.clear(); s.context_id = 0; s.context_unique.clear(); s.menu_contexts.clear(); s.menu_frames.clear(); s.menu_sessions.clear(); s.metadata_contexts.clear(); s.metadata_unique.clear();
         s.zoom_busy = false; s.zoom_pending = true; ++s.zoom_revision;
         s.process = replacement;
         page->target.clear(); page->session.clear();
@@ -1159,7 +1170,14 @@ void shutdown() {
 }
 
 void update_preferences(const std::string& json) {
+  const bool previous = vim_mode;
+  g_autoptr(JsonParser) parser = json_parser_new();
+  if (json_parser_load_from_data(parser, json.c_str(), json.size(), nullptr) && JSON_NODE_HOLDS_OBJECT(json_parser_get_root(parser)))
+    vim_mode = json_object_get_boolean_member_with_default(json_node_get_object(json_parser_get_root(parser)), "vimMode", false);
   native_preferences = json;
+  if (previous != vim_mode)
+    for (auto& [mode, process] : processes)
+      for (auto& [token, weak] : process->pages) if (auto page = weak.lock()) page->update_preferences();
   for (auto& [mode, process] : processes) if (!process->closing) process->apply_preferences();
 }
 void set_user_content(const std::string& css, const std::string& script) {
@@ -1226,13 +1244,15 @@ Page::Page(GtkWidget* widget, bool ephemeral) : state_(std::make_unique<State>(w
   if (composited()) return;
   auto* keys = gtk_event_controller_key_new();
   gtk_event_controller_set_propagation_phase(keys, GTK_PHASE_BUBBLE);
-  g_signal_connect(keys, "key-pressed", G_CALLBACK(+[](GtkEventControllerKey* controller, guint, guint, GdkModifierType modifiers, Page* self) -> gboolean {
+  g_signal_connect(keys, "key-pressed", G_CALLBACK(+[](GtkEventControllerKey* controller, guint value, guint, GdkModifierType modifiers, Page* self) -> gboolean {
+    if (jupiter_compositor_is_host_shortcut(value, modifiers)) return FALSE;
     self->send_key(gtk_event_controller_get_current_event(GTK_EVENT_CONTROLLER(controller)));
     // Let GTK's window shortcuts continue through their normal propagation path.
     return !(modifiers & (GDK_CONTROL_MASK | GDK_ALT_MASK | GDK_SUPER_MASK));
   }), this);
-  g_signal_connect(keys, "key-released", G_CALLBACK(+[](GtkEventControllerKey* controller, guint, guint, GdkModifierType, Page* self) {
-    self->send_key(gtk_event_controller_get_current_event(GTK_EVENT_CONTROLLER(controller)));
+  g_signal_connect(keys, "key-released", G_CALLBACK(+[](GtkEventControllerKey* controller, guint value, guint, GdkModifierType modifiers, Page* self) {
+    if (!jupiter_compositor_is_host_shortcut(value, modifiers))
+      self->send_key(gtk_event_controller_get_current_event(GTK_EVENT_CONTROLLER(controller)));
   }), this);
   gtk_widget_add_controller(widget, keys);
   g_object_set_data(G_OBJECT(keys), "jupiter-page", this);
@@ -1503,10 +1523,7 @@ void Page::attach() {
     command("Page.addScriptToEvaluateOnNewDocument", "{\"worldName\":\"JupiterContextMenu\",\"source\":" + quote(menu_script) + "}");
   else g_warning("The native context-menu adapter could not be loaded");
   command("Runtime.addBinding", "{\"name\":\"__jupiterDocumentMetadata\",\"executionContextName\":\"JupiterDocumentMetadata\"}");
-  g_autofree char* metadata_path = g_build_filename(JUPITER_NATIVE_INTEGRATION_DIR, "document-metadata.js", nullptr);
-  g_autofree char* metadata_script = nullptr;
-  if (g_file_get_contents(metadata_path, &metadata_script, nullptr, nullptr))
-    command("Page.addScriptToEvaluateOnNewDocument", "{\"worldName\":\"JupiterDocumentMetadata\",\"source\":" + quote(metadata_script) + "}");
+  command("Page.addScriptToEvaluateOnNewDocument", "{\"worldName\":\"JupiterDocumentMetadata\",\"source\":" + quote(document_adapter_source()) + "}");
   if (state_->extension_popup) {
     g_autofree char* popup_path = g_build_filename(JUPITER_NATIVE_INTEGRATION_DIR, "popup-size.js", nullptr);
     g_autofree char* popup_script = nullptr;
@@ -1751,13 +1768,14 @@ void Page::handle(const std::string& method, JsonObject* params, bool frame_even
   } else if (method == "Fetch.requestPaused") {
     internal_request(params);
   } else if (method == "Runtime.executionContextsCleared") {
-    dismiss_context_menu(); state_->menu_contexts.clear(); state_->menu_frames.clear(); state_->menu_sessions.clear(); state_->metadata_contexts.clear();
+    dismiss_context_menu(); state_->menu_contexts.clear(); state_->menu_frames.clear(); state_->menu_sessions.clear(); state_->metadata_contexts.clear(); state_->metadata_unique.clear();
     state_->context_id = 0; state_->context_unique.clear();
   } else if (method == "Runtime.executionContextDestroyed") {
     state_->menu_contexts.erase(json_object_get_int_member_with_default(params, "executionContextId", 0));
     state_->menu_frames.erase(json_object_get_int_member_with_default(params, "executionContextId", 0));
     state_->menu_sessions.erase(json_object_get_int_member_with_default(params, "executionContextId", 0));
     state_->metadata_contexts.erase(json_object_get_int_member_with_default(params, "executionContextId", 0));
+    state_->metadata_unique.erase(json_object_get_int_member_with_default(params, "executionContextId", 0));
     if (json_object_get_int_member_with_default(params, "executionContextId", 0) == state_->context_id) {
       state_->context_id = 0; state_->context_unique.clear();
     }
@@ -1769,8 +1787,12 @@ void Page::handle(const std::string& method, JsonObject* params, bool frame_even
       state_->menu_frames[json_object_get_int_member(context, "id")] = text(aux, "frameId");
       if (!frame_event) state_->menu_sessions[json_object_get_int_member(context, "id")] = session;
     }
-    if (context && aux && std::string(text(context, "name")) == "JupiterDocumentMetadata")
-      state_->metadata_contexts[json_object_get_int_member(context, "id")] = text(aux, "frameId");
+    if (context && aux && std::string(text(context, "name")) == "JupiterDocumentMetadata" && *text(context, "uniqueId")) {
+      const int id = json_object_get_int_member(context, "id");
+      state_->metadata_contexts[id] = text(aux, "frameId");
+      state_->metadata_unique[id] = text(context, "uniqueId");
+      if (!frame_event) state_->menu_sessions[id] = session;
+    }
     if (context && aux && std::string(text(context, "origin")) == state_->internal_origin &&
         std::string(text(aux, "frameId")) == state_->main_frame && json_object_get_boolean_member_with_default(aux, "isDefault", false)) {
       state_->context_id = json_object_get_int_member(context, "id"); state_->context_unique = text(context, "uniqueId");
@@ -1785,6 +1807,28 @@ void Page::handle(const std::string& method, JsonObject* params, bool frame_even
         auto* value = json_node_get_object(json_parser_get_root(parser));
         if (std::string(text(value, "kind")) == "activity") {
           if (state_->close_approved || state_->close_callback) cancel_close();
+          return;
+        }
+        if (std::string(text(value, "kind")) == "vim-ready") {
+          update_vim(metadata_context->first);
+          return;
+        }
+        if (std::string(text(value, "kind")) == "vim-action") {
+          if (!vim_mode || state_->extension_popup || is_closed()) return;
+          auto* root = gtk_widget_get_root(widget());
+          auto* focus = root ? gtk_root_get_focus(root) : nullptr;
+          if (!focus || (focus != widget() && !gtk_widget_is_ancestor(focus, widget()))) return;
+          const std::string action = text(value, "action");
+          static const std::set<std::string> allowed = {
+            "win.find", "win.find-next", "win.find-prev", "win.location", "win.new-tab",
+            "win.vim-tab-next", "win.vim-tab-previous", "toolbar.reload",
+            "toolbar.navigation-back", "toolbar.navigation-forward", "tab.close"};
+          if (allowed.contains(action)) {
+            gtk_widget_activate_action(widget(), action.c_str(), nullptr);
+            // Vim n/N must leave focus in the page so repeated navigation
+            // does not start typing into the reopened search entry.
+            if (action == "win.find-next" || action == "win.find-prev") this->focus();
+          }
           return;
         }
         if (metadata_context->second != state_->main_frame) return;
@@ -2734,7 +2778,19 @@ void Page::show_password_manager() {
 }
 
 
-void Page::update_preferences() { update_web_theme(); }
+void Page::update_vim(int context) {
+  auto unique = state_->metadata_unique.find(context);
+  auto source = state_->menu_sessions.find(context);
+  if (is_closed() || unique == state_->metadata_unique.end() || source == state_->menu_sessions.end()) return;
+  const std::string expression = std::string("globalThis.gnosisVim?.setEnabled(") +
+    (vim_mode && !state_->extension_popup ? "true" : "false") + ")";
+  state_->process->command("Runtime.evaluate", "{\"uniqueContextId\":" + quote(unique->second) +
+    ",\"expression\":" + quote(expression) + "}", source->second);
+}
+void Page::update_preferences() {
+  update_web_theme();
+  for (const auto& [context, frame] : state_->metadata_contexts) update_vim(context);
+}
 void Page::update_user_content() {
   if (session.empty() || is_closed()) return;
   auto& state = *state_;

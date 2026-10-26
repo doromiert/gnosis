@@ -108,8 +108,8 @@ const struct {
   { "win.zoom-normal", { "<Primary>0", "<Primary>KP_0", NULL } },
   { "win.print", { "<Primary>P", NULL } },
   { "win.find", { "<Primary>F", NULL } },
-  { "win.find-prev", { "<shift><Primary>G", NULL } },
-  { "win.find-next", { "<Primary>G", NULL } },
+  { "win.find-prev", { "<shift><Primary>G", "<shift>F3", NULL } },
+  { "win.find-next", { "<Primary>G", "F3", NULL } },
   { "win.bookmark-page", { "<Primary>D", "AddFavorite", NULL } },
   { "win.add-search-engine", { NULL } },
   { "win.bookmarks", { "<alt><Primary>D", NULL } },
@@ -886,7 +886,26 @@ change_combined_stop_reload_state (GSimpleAction *action,
   g_simple_action_set_state (action, loading);
 }
 
+static void
+vim_cycle_tab (GSimpleAction *action,
+               GVariant      *parameter,
+               gpointer       user_data)
+{
+  EphyWindow *window = EPHY_WINDOW (user_data);
+  AdwTabView *tabs = ephy_tab_view_get_tab_view (window->tab_view);
+  int count = adw_tab_view_get_n_pages (tabs);
+  int index;
+
+  if (!count)
+    return;
+  index = adw_tab_view_get_page_position (tabs, adw_tab_view_get_selected_page (tabs));
+  index = (index + (g_str_equal (g_action_get_name (G_ACTION (action)), "vim-tab-next") ? 1 : count - 1)) % count;
+  adw_tab_view_set_selected_page (tabs, adw_tab_view_get_nth_page (tabs, index));
+}
+
 static const GActionEntry window_entries [] = {
+  { "vim-tab-next", vim_cycle_tab },
+  { "vim-tab-previous", vim_cycle_tab },
   { "page-menu", window_cmd_page_menu },
   { "new-tab", window_cmd_new_tab },
   { "open", window_cmd_open },

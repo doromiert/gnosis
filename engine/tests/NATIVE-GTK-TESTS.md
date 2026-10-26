@@ -46,6 +46,17 @@ The find probe checks counts/ordinals, next/previous, case sensitivity, hidden
 unsupported options, empty queries, reopening and Unicode. It saves only the
 GTK toolbar to `/tmp/gnosis-find-toolbar.png`.
 
+`keyboard-navigation-gtk-probe.cpp` uses actual XTest events through xdotool;
+set `GNOSIS_XDOTOOL` to its executable and run on an isolated X11 display with
+`keyboard-navigation.html` and `keyboard-child.html` served on localhost:18473.
+It dismisses only its disposable window's startup dialog so it cannot intercept
+the test's physical keys. It checks F3/Shift+F3 against native match ordinals and last-query retention,
+enables Vim through the real Preferences switch, and checks scroll/counts,
+native search, link hints, insert mode, live disabling, nested scrolling,
+editable fields and open/closed shadow-DOM fields. It also forces site isolation only in the test and verifies child-frame Vim
+scrolling and native find routing. Page-made keyboard events must not invoke
+privileged navigation, and the adapter's globals stay isolated.
+
 The close probe checks the real native beforeunload handler, last-tab Keep Open,
 two-tab transactional cancellation, Leave on both tabs and absence of duplicate
 form warnings. It waits for distinct dialogs so an exit animation cannot cause

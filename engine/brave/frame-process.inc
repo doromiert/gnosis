@@ -128,12 +128,8 @@
         if (g_file_get_contents(path,&script,nullptr,nullptr))
           command("Page.addScriptToEvaluateOnNewDocument","{\"worldName\":"+quote(item.first)+",\"source\":"+quote(script)+",\"runImmediately\":true}",child);
       }
-      g_autofree char* path = g_build_filename(JUPITER_NATIVE_INTEGRATION_DIR,"document-metadata.js",nullptr);
-      g_autofree char* script = nullptr;
-      if (g_file_get_contents(path,&script,nullptr,nullptr))
-        command("Page.addScriptToEvaluateOnNewDocument","{\"worldName\":\"JupiterDocumentMetadata\",\"source\":"+quote(script)+",\"runImmediately\":true}",child,
-          [weak=weak_from_this(),child](JsonObject*,const std::string&){if(auto process=weak.lock())process->resume_frame(child);});
-      else resume_frame(child);
+      command("Page.addScriptToEvaluateOnNewDocument","{\"worldName\":\"JupiterDocumentMetadata\",\"source\":"+quote(document_adapter_source())+",\"runImmediately\":true}",child,
+        [this,child](JsonObject*,const std::string&){resume_frame(child);});
       return true;
     }
     auto found = frame_sessions.find(source);
@@ -173,7 +169,7 @@
       }
       const int identifier=-(++frame_context_sequence);
       frame.contexts[runtime]=identifier;
-      if (name == "JupiterContextMenu") page->state_->menu_sessions[identifier]=source;
+      page->state_->menu_sessions[identifier]=source;
       json_object_set_int_member(context,"id",identifier);
       page->handle(method,params,true);
     } else if (method == "Runtime.executionContextDestroyed" || method == "Runtime.bindingCalled") {

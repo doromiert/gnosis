@@ -101,6 +101,7 @@ static const char * const ephy_prefs_state_schema[] = {
 #define EPHY_PREFS_WEB_ENABLE_WEBSITE_DATA_STORAGE  "enable-website-data-storage"
 #define EPHY_PREFS_WEB_DEFAULT_ZOOM_LEVEL           "default-zoom-level"
 #define EPHY_PREFS_WEB_ENABLE_AUTOSEARCH            "enable-autosearch"
+#define EPHY_PREFS_WEB_ENABLE_VIM_MODE              "enable-vim-mode"
 #define EPHY_PREFS_WEB_ENABLE_MOUSE_GESTURES        "enable-mouse-gestures"
 #define EPHY_PREFS_WEB_LAST_UPLOAD_DIRECTORY        "last-upload-directory"
 #define EPHY_PREFS_WEB_LAST_DOWNLOAD_DIRECTORY      "last-download-directory"

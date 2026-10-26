@@ -87,6 +87,7 @@ struct _PrefsGeneralPage {
   /* Browsing */
   GtkWidget *browsing_box;
   GtkWidget *enable_mouse_gesture_row;
+  GtkWidget *vim_mode_row;
   GtkWidget *enable_switch_to_new_tab;
   GtkWidget *tab_switcher_mru;
   GtkWidget *enable_navigation_gestures_row;
@@ -989,6 +990,7 @@ prefs_general_page_class_init (PrefsGeneralPageClass *klass)
   /* Browsing */
   gtk_widget_class_bind_template_child (widget_class, PrefsGeneralPage, browsing_box);
   gtk_widget_class_bind_template_child (widget_class, PrefsGeneralPage, enable_mouse_gesture_row);
+  gtk_widget_class_bind_template_child (widget_class, PrefsGeneralPage, vim_mode_row);
   gtk_widget_class_bind_template_child (widget_class, PrefsGeneralPage, enable_switch_to_new_tab);
   gtk_widget_class_bind_template_child (widget_class, PrefsGeneralPage, tab_switcher_mru);
   gtk_widget_class_bind_template_child (widget_class, PrefsGeneralPage, enable_navigation_gestures_row);
@@ -1289,6 +1291,9 @@ setup_general_page (PrefsGeneralPage *general_page)
   /* ======================================================================== */
   /* ========================== Browsing ==================================== */
   /* ======================================================================== */
+  g_settings_bind (web_settings, EPHY_PREFS_WEB_ENABLE_VIM_MODE,
+                   general_page->vim_mode_row, "active", G_SETTINGS_BIND_DEFAULT);
+
   g_settings_bind (web_settings,
                    EPHY_PREFS_WEB_ENABLE_MOUSE_GESTURES,
                    general_page->enable_mouse_gesture_row,

@@ -10,6 +10,21 @@ Run `nix run .` or `nix run .#gnosis`. The primary executable is `gnosis`;
 schemas, application identifiers and KeePassXC identity are retained so the
 rename preserves browsing data, settings and database pairing.
 
+Enable **Vim Mode** in **Preferences → General → Browsing** for keyboard navigation.
+It is off by default and takes effect immediately in open tabs.
+
+- `h/j/k/l` scroll, `d/u` move half a page, `gg`/`G` go to the top/bottom.
+  Prefix scrolling commands with a count, such as `3j`.
+- `f` shows link/control hints; type a hint to activate it. `F` opens a hinted
+  HTTP(S) link in a new tab. Escape cancels hints.
+- `/` opens native find; `n`/`N` select the next/previous match.
+- `H`/`L` go back/forward; `J`/`K` cycle tabs; `o` focuses the address bar;
+  `t` opens a tab, `r` reloads and `x` closes through the normal close safeguards.
+- `gi` focuses a text field. Fields, editors and composing text keep normal
+  input. `i` temporarily passes all keys to a website; Escape returns to normal mode.
+
+F3 and Shift+F3 use the native GTK find bar, including when Vim mode is off.
+
 The engine migration is **in progress**. Brave provides the active browser
 backend, extensions and native engine services. WebKitGTK/JavaScriptCore and the
 CEF compatibility layer remain linked for services still being migrated. See
