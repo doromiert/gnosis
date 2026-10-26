@@ -15,4 +15,5 @@ const char *jupiter_compositor_view_get_socket(JupiterCompositorView *self);
 gboolean jupiter_compositor_view_edit(JupiterCompositorView *self, const char *command);
 gboolean jupiter_compositor_view_context_position(JupiterCompositorView *self, double *x, double *y);
 void jupiter_compositor_view_release_buttons(JupiterCompositorView *self);
+void jupiter_compositor_drag_set_image(GdkDrag *drag, GdkTexture *image);
 G_END_DECLS

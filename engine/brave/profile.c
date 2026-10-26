@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 #include "profile.h"
+#include <glib/gstdio.h>
 #include <json-glib/json-glib.h>
 #include <errno.h>
 
@@ -12,9 +13,45 @@ static JsonObject *object_member(JsonObject *parent, const char *name, GError **
   g_set_error(error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA, "Brave Local State member %s is not an object", name);
   return NULL;
 }
+/* Disable automatic native translation offers. This leaves explicit translate
+ * commands available for the GTK controller, and preserves other prefs. */
+static gboolean prepare_translation_preferences(const char *directory, GError **error) {
+  g_autofree char *profile = g_build_filename(directory, "Default", NULL);
+  if (g_mkdir_with_parents(profile, 0700) < 0) {
+    g_set_error(error, G_IO_ERROR, g_io_error_from_errno(errno), "Cannot create Brave profile"); return FALSE;
+  }
+  g_autofree char *path = g_build_filename(profile, "Preferences", NULL);
+  g_autoptr(JsonParser) parser = json_parser_new();
+  g_autoptr(JsonNode) root = NULL;
+  if (g_file_test(path, G_FILE_TEST_EXISTS)) {
+    if (!json_parser_load_from_file(parser, path, error)) return FALSE;
+    root = json_node_copy(json_parser_get_root(parser));
+  } else {
+    root = json_node_new(JSON_NODE_OBJECT); json_node_take_object(root, json_object_new());
+  }
+  if (!JSON_NODE_HOLDS_OBJECT(root)) {
+    g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA, "Brave Preferences is not a JSON object"); return FALSE;
+  }
+  JsonObject *translate = object_member(json_node_get_object(root), "translate", error);
+  if (!translate) return FALSE;
+  json_object_set_boolean_member(translate, "enabled", FALSE);
+  /* KeePassXC owns Gnosis's credential UI. Keep existing native vault data,
+   * but stop Brave from offering a second password store after form submits. */
+  json_object_set_boolean_member(json_node_get_object(root), "credentials_enable_service", FALSE);
+  json_object_set_boolean_member(json_node_get_object(root), "credentials_enable_autosignin", FALSE);
+  // The bundled full uBlock Origin and validated local installations are real
+  // unpacked extensions. Chromium otherwise disables them on self-reload with
+  // DISABLE_UNSUPPORTED_DEVELOPER_EXTENSION, even after loadUnpacked succeeds.
+  JsonObject *extensions = object_member(json_node_get_object(root), "extensions", error);
+  JsonObject *ui = extensions ? object_member(extensions, "ui", error) : NULL;
+  if (!ui) return FALSE;
+  json_object_set_boolean_member(ui, "developer_mode", TRUE);
+  g_autofree char *json = json_to_string(root, TRUE);
+  return g_file_set_contents_full(path, json, -1, G_FILE_SET_CONTENTS_CONSISTENT, 0600, error);
+}
 gboolean jupiter_brave_profile_prepare(const char *directory, GError **error) {
   if (g_mkdir_with_parents(directory, 0700) < 0) {
-    g_set_error(error, G_IO_ERROR, g_io_error_from_errno(errno), "Cannot create Jupiter's Brave profile directory"); return FALSE;
+    g_set_error(error, G_IO_ERROR, g_io_error_from_errno(errno), "Cannot create Gnosis's Brave profile directory"); return FALSE;
   }
   char *path = g_build_filename(directory, "Local State", NULL);
   JsonParser *parser = json_parser_new(); JsonNode *root = NULL;
@@ -33,11 +70,52 @@ gboolean jupiter_brave_profile_prepare(const char *directory, GError **error) {
   JsonObject *p3a = brave ? object_member(brave, "p3a", error) : NULL;
   if (!p3a) { json_node_free(root); g_free(path); return FALSE; }
   // Brave v1.97.56's BraveConfirmP3AInfoBarDelegate checks these actual local-
-  // state preferences before creating its analytics infobar. Jupiter owns its
+  // state preferences before creating its analytics infobar. Gnosis owns its
   // UI and does not enable Brave's product analytics in its isolated profiles.
   json_object_set_boolean_member(p3a, "enabled", FALSE);
   json_object_set_boolean_member(p3a, "notice_acknowledged", TRUE);
   char *json = json_to_string(root, TRUE);
   gboolean result = g_file_set_contents_full(path, json, -1, G_FILE_SET_CONTENTS_CONSISTENT, 0600, error);
-  g_free(json); json_node_free(root); g_free(path); return result;
+  g_free(json); json_node_free(root); g_free(path); return result && prepare_translation_preferences(directory, error);
+}
+
+
+gboolean jupiter_brave_profile_prepare_keepassxc(const char *directory, GError **error) {
+  g_autofree char *proxy = g_find_program_in_path("keepassxc-proxy");
+  if (!proxy) {
+    g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_NOT_FOUND, "Install KeePassXC to connect its browser integration");
+    return FALSE;
+  }
+  g_autofree char *hosts = g_build_filename(directory, "native-config", "BraveSoftware", "Brave-Browser", "NativeMessagingHosts", NULL);
+  if (g_mkdir_with_parents(hosts, 0700) < 0) {
+    g_set_error_literal(error, G_IO_ERROR, g_io_error_from_errno(errno), "Cannot create Gnosis's native messaging directory");
+    return FALSE;
+  }
+  /* Native hosts use their own installed runtime, not Brave's Nix library
+   * search path. Restore the desktop config directory before executing the
+   * real proxy, so KeePassXC keeps using its own settings and database. */
+  g_autofree char *launcher = g_build_filename(hosts, "jupiter-keepassxc-proxy", NULL);
+  g_autofree char *quoted_proxy = g_shell_quote(proxy);
+  g_autofree char *quoted_config = g_shell_quote(g_get_user_config_dir());
+  g_autofree char *script = g_strdup_printf(
+    "#!/bin/sh\nunset LD_LIBRARY_PATH LD_PRELOAD GIO_EXTRA_MODULES GTK_PATH QT_PLUGIN_PATH QML2_IMPORT_PATH\n"
+    "export XDG_CONFIG_HOME=%s\nexec %s \"$@\"\n", quoted_config, quoted_proxy);
+  if (!g_file_set_contents_full(launcher, script, -1, G_FILE_SET_CONTENTS_CONSISTENT, 0700, error)) return FALSE;
+  if (g_chmod(launcher, 0700) < 0) {
+    g_set_error_literal(error, G_IO_ERROR, g_io_error_from_errno(errno), "Cannot prepare the KeePassXC proxy launcher");
+    return FALSE;
+  }
+  g_autoptr(JsonObject) host = json_object_new();
+  json_object_set_string_member(host, "name", "org.keepassxc.keepassxc_browser");
+  json_object_set_string_member(host, "description", "Gnosis KeePassXC integration");
+  json_object_set_string_member(host, "type", "stdio");
+  json_object_set_string_member(host, "path", launcher);
+  JsonArray *origins = json_array_new();
+  json_array_add_string_element(origins, "chrome-extension://giohadoodmdcadnkcpdmhmmdnaidnckm/");
+  json_object_set_array_member(host, "allowed_origins", origins);
+  g_autoptr(JsonNode) root = json_node_new(JSON_NODE_OBJECT);
+  json_node_set_object(root, host);
+  g_autofree char *json = json_to_string(root, TRUE);
+  g_autofree char *path = g_build_filename(hosts, "org.keepassxc.keepassxc_browser.json", NULL);
+  return g_file_set_contents_full(path, json, -1, G_FILE_SET_CONTENTS_CONSISTENT, 0600, error);
 }

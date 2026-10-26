@@ -183,6 +183,10 @@ struct _EphyWindow {
   guint64 uid;
   GtkWidget *toast_overlay;
   GtkWidget *content_overlay;
+  GtkWidget *zoom_osd;
+  GtkWidget *zoom_osd_label;
+  guint zoom_osd_timeout;
+  double zoom_osd_level;
   GtkWidget *download_feedback;
   GtkWidget *download_feedback_icon;
   guint download_feedback_tick;
@@ -1074,7 +1078,7 @@ sync_tab_address (EphyWebView *view,
   GAction *action;
   EphySecurityLevel security_level;
 
-  if (window->closing || ephy_embed_get_web_view (embed) != view)
+  if (window->closing || !embed || ephy_embed_get_web_view (embed) != view)
     return;
 
   address = ephy_web_view_get_display_address (view);
@@ -1125,6 +1129,30 @@ sync_tab_address (EphyWebView *view,
   g_free (location);
 }
 
+static gboolean
+hide_zoom_osd (gpointer data)
+{
+  EphyWindow *window = EPHY_WINDOW (data);
+
+  window->zoom_osd_timeout = 0;
+  gtk_revealer_set_reveal_child (GTK_REVEALER (window->zoom_osd), FALSE);
+  return G_SOURCE_REMOVE;
+}
+
+static void
+show_zoom_osd (EphyWindow *window,
+               double      zoom)
+{
+  g_autofree char *label = g_strdup_printf ("%.f%%", zoom * 100);
+
+  if (!window->zoom_osd || window->closing)
+    return;
+  gtk_label_set_label (GTK_LABEL (window->zoom_osd_label), label);
+  gtk_revealer_set_reveal_child (GTK_REVEALER (window->zoom_osd), TRUE);
+  g_clear_handle_id (&window->zoom_osd_timeout, g_source_remove);
+  window->zoom_osd_timeout = g_timeout_add (3000, hide_zoom_osd, window);
+}
+
 static void
 sync_tab_zoom (EphyEngineView *web_view,
                GParamSpec    *pspec,
@@ -1142,7 +1170,15 @@ sync_tab_zoom (EphyEngineView *web_view,
 
   zoom = ephy_engine_web_view_get_zoom_level (web_view);
   zoom_str = g_strdup_printf ("%.f%%", zoom * 100);
+  /* Tab switches call this with no pspec. Only live changes show feedback. */
+  if (pspec && ABS (zoom - window->zoom_osd_level) > 0.000001)
+    show_zoom_osd (window, zoom);
+  else if (!pspec && window->zoom_osd) {
+    g_clear_handle_id (&window->zoom_osd_timeout, g_source_remove);
+    gtk_revealer_set_reveal_child (GTK_REVEALER (window->zoom_osd), FALSE);
+  }
 
+  window->zoom_osd_level = zoom;
   title_widget = GTK_WIDGET (ephy_header_bar_get_title_widget (EPHY_HEADER_BAR (window->header_bar)));
   if (EPHY_IS_LOCATION_ENTRY (title_widget)) {
     ephy_location_entry_set_zoom_level (EPHY_LOCATION_ENTRY (title_widget), zoom_str);
@@ -2025,7 +2061,7 @@ webstore_install_blocked_cb (EphyEngineView *view,
 
   dialog = ADW_ALERT_DIALOG (adw_alert_dialog_new (
     _("Chrome Web Store Installation Unavailable"),
-    _("Chrome Web Store installation is not available in Jupiter yet. "
+    _("Chrome Web Store installation is not available in Gnosis yet. "
       "You can still install an unpacked extension from Preferences > Extensions > "
       "Install Unpacked Extension.")));
   adw_alert_dialog_set_body_use_markup (dialog, FALSE);
@@ -2795,6 +2831,13 @@ tab_view_page_detached_cb (AdwTabView *tab_view,
 
   g_assert (EPHY_IS_EMBED (content));
 
+  /* A transferred or closing last page can still receive engine events.
+   * Disconnect its active-tab handlers before clearing the window's pointer. */
+  if (window->active_embed == EPHY_EMBED (content)) {
+    ephy_window_disconnect_active_embed (window);
+    window->active_embed = NULL;
+  }
+
   g_signal_handlers_disconnect_by_func
     (ephy_embed_get_web_view (EPHY_EMBED (content)), G_CALLBACK (download_only_load_cb), window);
   g_signal_handlers_disconnect_by_func
@@ -2802,8 +2845,6 @@ tab_view_page_detached_cb (AdwTabView *tab_view,
   g_signal_handlers_disconnect_by_func
     (ephy_embed_get_web_view (EPHY_EMBED (content)), G_CALLBACK (reader_mode_cb), window);
 
-  if (ephy_tab_view_get_n_pages (window->tab_view) == 0)
-    window->active_embed = NULL;
 }
 
 static void
@@ -2894,29 +2935,38 @@ tab_has_modified_forms_data_free (TabHasModifiedFormsData *data)
 }
 
 static void
+finish_tab_close (TabHasModifiedFormsData *data,
+                  gboolean                 approve)
+{
+  if (data->window && !data->window->closing && data->embed && data->page) {
+    EphyWindow *window = data->window;
+    AdwTabView *tabs = ephy_tab_view_get_tab_view (window->tab_view);
+    EphyEngineView *view = EPHY_ENGINE_VIEW (ephy_embed_get_web_view (data->embed));
+    approve = approve && ephy_engine_web_view_close_is_approved (view);
+    if (approve) {
+      window->checking_tab_modified_forms = TRUE;
+      if (ephy_tab_view_get_selected_page (window->tab_view) != GTK_WIDGET (data->embed))
+        window->go_to_previous_tab = FALSE;
+      adw_tab_view_close_page_finish (tabs, data->page, TRUE);
+      if (data->window && !data->window->closing) {
+        data->window->checking_tab_modified_forms = FALSE;
+        ephy_window_close_tab (data->window, data->embed);
+      }
+    } else {
+      ephy_engine_web_view_cancel_close (view);
+      window->checking_tab_modified_forms = FALSE;
+      adw_tab_view_close_page_finish (tabs, data->page, FALSE);
+    }
+  }
+  tab_has_modified_forms_data_free (data);
+}
+
+static void
 tab_has_modified_forms_dialog_cb (AdwAlertDialog          *dialog,
                                   const char              *response,
                                   TabHasModifiedFormsData *data)
 {
-  AdwTabView *tab_view = ephy_tab_view_get_tab_view (data->window->tab_view);
-
-  if (strcmp (response, "accept") == 0) {
-    /* It's safe to close the tab immediately because we are only checking a
-     * single tab for modified forms here. There is an entirely separate
-     * codepath for checking modified forms when closing the whole window,
-     * see ephy_window_check_modified_forms().
-     */
-    if (ephy_tab_view_get_selected_page (data->window->tab_view) != GTK_WIDGET (data->embed))
-      data->window->go_to_previous_tab = FALSE;
-
-    adw_tab_view_close_page_finish (tab_view, data->page, TRUE);
-    data->window->checking_tab_modified_forms = FALSE;
-    ephy_window_close_tab (data->window, data->embed);
-  } else {
-    adw_tab_view_close_page_finish (tab_view, data->page, FALSE);
-  }
-
-  tab_has_modified_forms_data_free (data);
+  finish_tab_close (data, g_str_equal (response, "accept"));
 }
 
 static void
@@ -2924,39 +2974,54 @@ tab_has_modified_forms_cb (EphyWebView             *view,
                            GAsyncResult            *result,
                            TabHasModifiedFormsData *data)
 {
-  gboolean has_modified_forms;
-
-  data->window->checking_tab_modified_forms = TRUE;
-  has_modified_forms = ephy_web_view_has_modified_forms_finish (view, result, NULL);
-
-  if (data->window && data->embed && data->page) {
-    AdwTabView *tab_view = ephy_tab_view_get_tab_view (data->window->tab_view);
-
-    if (!has_modified_forms) {
-      if (ephy_tab_view_get_selected_page (data->window->tab_view) != GTK_WIDGET (data->embed))
-        data->window->previous_embed = FALSE;
-
-      adw_tab_view_close_page_finish (tab_view, data->page, TRUE);
-      data->window->checking_tab_modified_forms = FALSE;
-      ephy_window_close_tab (data->window, data->embed);
-    } else {
-      AdwDialog *dialog;
-
-      dialog = construct_confirm_close_dialog (data->window,
-                                               _("Leave Website?"),
-                                               _("A form was modified and has not been submitted"),
-                                               _("_Discard Form"));
-
-      g_signal_connect (dialog, "response",
-                        G_CALLBACK (tab_has_modified_forms_dialog_cb),
-                        data);
-      adw_dialog_present (dialog, GTK_WIDGET (data->window));
-
-      return;
-    }
+  AdwDialog *dialog;
+  gboolean modified = ephy_web_view_has_modified_forms_finish (view, result, NULL);
+  if (!modified || !data->window || data->window->closing || !data->page) {
+    finish_tab_close (data, !modified);
+    return;
   }
+  dialog = construct_confirm_close_dialog (data->window,
+    _("Leave Website?"), _("A form was modified and has not been submitted"), _("_Discard Form"));
+  g_signal_connect (dialog, "response", G_CALLBACK (tab_has_modified_forms_dialog_cb), data);
+  adw_dialog_present (dialog, GTK_WIDGET (data->window));
+}
 
-  tab_has_modified_forms_data_free (data);
+static void
+native_tab_close_checked (EphyEngineView         *view,
+                          GAsyncResult           *result,
+                          TabHasModifiedFormsData *data)
+{
+  g_autoptr (GError) error = NULL;
+  gboolean prompted = FALSE;
+  gboolean approve = ephy_engine_web_view_check_close_finish (view, result, &prompted, &error);
+  if (!approve || !data->window || data->window->closing || !data->page) {
+    if (error && data->window && !data->window->closing)
+      adw_toast_overlay_add_toast (ADW_TOAST_OVERLAY (data->window->toast_overlay),
+                                  adw_toast_new (_("Could not check whether this page can close")));
+    finish_tab_close (data, FALSE);
+    return;
+  }
+  if (!prompted && g_settings_get_boolean (EPHY_SETTINGS_MAIN, EPHY_PREFS_WARN_ON_CLOSE_UNSUBMITTED_DATA))
+    ephy_web_view_has_modified_forms (EPHY_WEB_VIEW (view), NULL,
+                                      (GAsyncReadyCallback)tab_has_modified_forms_cb, data);
+  else
+    finish_tab_close (data, TRUE);
+}
+
+static gboolean
+start_tab_close_check (gpointer pointer)
+{
+  TabHasModifiedFormsData *data = pointer;
+  EphyEngineView *view;
+  if (!data->window || data->window->closing || !data->page) {
+    finish_tab_close (data, FALSE);
+    return G_SOURCE_REMOVE;
+  }
+  view = EPHY_ENGINE_VIEW (ephy_embed_get_web_view (data->embed));
+  if (gtk_widget_get_root (GTK_WIDGET (view)) != GTK_ROOT (data->window)) return G_SOURCE_CONTINUE;
+  ephy_engine_web_view_check_close (view, data->window->cancellable,
+                                   (GAsyncReadyCallback)native_tab_close_checked, data);
+  return G_SOURCE_REMOVE;
 }
 
 static void
@@ -3001,6 +3066,7 @@ tab_view_close_page_cb (AdwTabView *tab_view,
                         EphyWindow *window)
 {
   EphyEmbed *embed = EPHY_EMBED (adw_tab_page_get_child (page));
+  TabHasModifiedFormsData *data;
 
   if (ephy_tab_view_get_n_pages (window->tab_view) == 1) {
     gboolean fullscreen_lockdown;
@@ -3028,27 +3094,10 @@ tab_view_close_page_cb (AdwTabView *tab_view,
     }
   }
 
-  if (g_settings_get_boolean (EPHY_SETTINGS_MAIN,
-                              EPHY_PREFS_WARN_ON_CLOSE_UNSUBMITTED_DATA)) {
-    TabHasModifiedFormsData *data;
-
-    /* The modified forms check runs in the web process, which is problematic
-     * because we don't want our codepath for closing a web view to depend on
-     * executing web process code, in case the web process has hung. (This can
-     * also be caused by a network process hang!) We'll assume the process has
-     * been hung if there's no response after one second.
-     */
-    data = tab_has_modified_forms_data_new (window, embed, page);
-    ephy_web_view_has_modified_forms (ephy_embed_get_web_view (embed),
-                                      NULL,
-                                      (GAsyncReadyCallback)tab_has_modified_forms_cb,
-                                      data);
-    return GDK_EVENT_STOP;
-  } else {
-    ephy_window_close_tab (window, embed);
-  }
-
-  return GDK_EVENT_PROPAGATE;
+  data = tab_has_modified_forms_data_new (window, embed, page);
+  ephy_tab_view_select_page (window->tab_view, GTK_WIDGET (embed));
+  g_timeout_add (25, start_tab_close_check, data);
+  return GDK_EVENT_STOP;
 }
 
 static AdwTabView *
@@ -3380,11 +3429,28 @@ setup_tab_switcher (EphyWindow *window)
   GtkWidget *overlay = gtk_overlay_new ();
   GtkEventController *keys = gtk_event_controller_key_new ();
   GtkGesture *outside = gtk_gesture_click_new ();
+  GtkWidget *zoom_box = gtk_box_new (GTK_ORIENTATION_HORIZONTAL, 12);
+
   window->content_overlay = overlay;
   window->tab_switcher_model = ephy_tab_switcher_model_new (ephy_tab_view_get_tab_view (window->tab_view), EPHY_SETTINGS_MAIN);
   window->tab_switcher = ephy_tab_switcher_new (window->tab_switcher_model);
   gtk_overlay_set_child (GTK_OVERLAY (overlay), GTK_WIDGET (window->tab_view));
   gtk_overlay_add_overlay (GTK_OVERLAY (overlay), window->tab_switcher);
+  window->zoom_osd = gtk_revealer_new ();
+  window->zoom_osd_label = gtk_label_new (NULL);
+  gtk_widget_add_css_class (zoom_box, "jupiter-zoom-osd");
+  gtk_widget_set_can_target (zoom_box, FALSE);
+  gtk_widget_add_css_class (window->zoom_osd_label, "numeric");
+  gtk_accessible_update_property (GTK_ACCESSIBLE (zoom_box), GTK_ACCESSIBLE_PROPERTY_LABEL, _("Page Zoom"), -1);
+  gtk_box_append (GTK_BOX (zoom_box), window->zoom_osd_label);
+  gtk_revealer_set_child (GTK_REVEALER (window->zoom_osd), zoom_box);
+  gtk_revealer_set_transition_type (GTK_REVEALER (window->zoom_osd), GTK_REVEALER_TRANSITION_TYPE_CROSSFADE);
+  gtk_revealer_set_transition_duration (GTK_REVEALER (window->zoom_osd), 150);
+  gtk_widget_set_halign (window->zoom_osd, GTK_ALIGN_CENTER);
+  gtk_widget_set_valign (window->zoom_osd, GTK_ALIGN_END);
+  gtk_widget_set_margin_bottom (window->zoom_osd, 56);
+  gtk_widget_set_can_target (window->zoom_osd, FALSE);
+  gtk_overlay_add_overlay (GTK_OVERLAY (overlay), window->zoom_osd);
   adw_toast_overlay_set_child (ADW_TOAST_OVERLAY (window->toast_overlay), overlay);
   g_signal_connect_object (window->tab_switcher_model, "closed", G_CALLBACK (tab_switcher_closed_cb), window, 0);
   gtk_event_controller_set_propagation_phase (keys, GTK_PHASE_CAPTURE);
@@ -3407,10 +3473,16 @@ ephy_window_dispose (GObject *object)
 
   LOG ("EphyWindow dispose %p", window);
   clear_download_feedback (window);
+  g_clear_handle_id (&window->zoom_osd_timeout, g_source_remove);
 
   /* Only do these once */
   if (!window->closing) {
     window->closing = TRUE;
+
+    if (window->active_embed) {
+      ephy_window_disconnect_active_embed (window);
+      window->active_embed = NULL;
+    }
 
     if (window->tab_switcher_model)
       ephy_tab_switcher_model_cancel (window->tab_switcher_model);
@@ -4750,31 +4822,58 @@ ephy_window_get_header_bar (EphyWindow *window)
 
 typedef struct {
   EphyWindow *window;
-
-  guint embeds_to_check;
-  GList *modified_embeds;
+  GList *embeds;
+  GList *cursor;
+  gboolean committed;
 } WindowHasModifiedFormsData;
 
 static void
 window_has_modified_forms_data_free (WindowHasModifiedFormsData *data)
 {
-  g_clear_list (&data->modified_embeds, NULL);
+  if (!data->committed)
+    for (GList *l = data->embeds; l; l = l->next)
+      ephy_engine_web_view_cancel_close (EPHY_ENGINE_VIEW (ephy_embed_get_web_view (l->data)));
+  g_clear_weak_pointer (&data->window);
+  g_list_free_full (data->embeds, g_object_unref);
   g_free (data);
+}
+
+gboolean
+ephy_window_can_commit_close (EphyWindow *window)
+{
+  GList *embeds = impl_get_children (EPHY_EMBED_CONTAINER (window));
+  gboolean approved = TRUE;
+  for (GList *l = embeds; l; l = l->next)
+    if (!ephy_engine_web_view_close_is_approved (EPHY_ENGINE_VIEW (ephy_embed_get_web_view (l->data)))) {
+      approved = FALSE;
+      break;
+    }
+  g_list_free (embeds);
+  return approved;
+}
+
+void
+ephy_window_cancel_close (EphyWindow *window)
+{
+  GList *embeds = impl_get_children (EPHY_EMBED_CONTAINER (window));
+  for (GList *l = embeds; l; l = l->next)
+    ephy_engine_web_view_cancel_close (EPHY_ENGINE_VIEW (ephy_embed_get_web_view (l->data)));
+  g_list_free (embeds);
+  window->has_modified_forms = FALSE;
 }
 
 void
 ephy_window_handle_quit_with_modified_forms (EphyWindow *window)
 {
   EphyShell *shell = ephy_shell_get_default ();
-
   if (!ephy_shell_get_checking_modified_forms (shell)) {
+    if (!ephy_window_can_commit_close (window)) return;
     window->force_close = TRUE;
     ephy_window_close (window);
     window->force_close = FALSE;
   } else {
-    int windows = ephy_shell_get_num_windows_with_modified_forms (shell);
-
-    ephy_shell_set_num_windows_with_modified_forms (shell, windows - 1);
+    ephy_shell_set_num_windows_with_modified_forms (shell,
+      ephy_shell_get_num_windows_with_modified_forms (shell) - 1);
   }
 }
 
@@ -4782,7 +4881,6 @@ guint
 ephy_window_get_has_modified_forms (EphyWindow *window)
 {
   g_assert (EPHY_IS_WINDOW (window));
-
   return window->has_modified_forms;
 }
 
@@ -4794,114 +4892,139 @@ force_close_window_cb (EphyWindow *window)
 }
 
 static void
-finish_window_close_after_modified_forms_check (WindowHasModifiedFormsData *data)
-{
-  /* Need to schedule future destruction of the EphyWindow to ensure its child
-   * AdwAlertDialog that's displaying the close confirmation warning gets
-   * destroyed first.
-   */
-  g_idle_add_once ((GSourceOnceFunc)force_close_window_cb, g_object_ref (data->window));
-  data->window->has_modified_forms = FALSE;
-  window_has_modified_forms_data_free (data);
-}
-
-static void
 stop_window_close_after_modified_forms_check (WindowHasModifiedFormsData *data)
 {
   EphyShell *shell = ephy_shell_get_default ();
-
-  data->window->has_modified_forms = FALSE;
-  ephy_shell_set_checking_modified_forms (shell, FALSE);
-  ephy_shell_set_num_windows_with_modified_forms (shell, 0);
+  if (data->window) {
+    data->window->checking_modified_forms = FALSE;
+    data->window->has_modified_forms = FALSE;
+  }
+  if (ephy_shell_get_checking_modified_forms (shell)) {
+    GList *windows = gtk_application_get_windows (GTK_APPLICATION (shell));
+    ephy_shell_set_checking_modified_forms (shell, FALSE);
+    ephy_shell_set_num_windows_with_modified_forms (shell, 0);
+    for (GList *l = windows; l; l = l->next)
+      ephy_window_cancel_close (EPHY_WINDOW (l->data));
+  }
   window_has_modified_forms_data_free (data);
 }
+
+static gboolean continue_window_close_check (gpointer pointer);
 
 static void
 continue_window_close_after_modified_forms_check (WindowHasModifiedFormsData *data)
 {
-  data->window->checking_modified_forms = FALSE;
-  g_clear_handle_id (&data->window->modified_forms_timeout_id, g_source_remove);
-
-  if (data->modified_embeds) {
-    AdwDialog *dialog;
-
-    /* Jump to the current tab with modified forms */
-    impl_set_active_child (EPHY_EMBED_CONTAINER (data->window),
-                           data->modified_embeds->data);
-
-    data->modified_embeds = data->modified_embeds->next;
-
-    dialog = construct_confirm_close_dialog (data->window,
-                                             _("Leave Website?"),
-                                             _("A form was modified and has not been submitted"),
-                                             _("_Discard Form"));
-    g_signal_connect_swapped (dialog, "response::accept",
-                              G_CALLBACK (continue_window_close_after_modified_forms_check),
-                              data);
-    g_signal_connect_swapped (dialog, "response::cancel",
-                              G_CALLBACK (stop_window_close_after_modified_forms_check),
-                              data);
-    adw_dialog_present (dialog, GTK_WIDGET (data->window));
-
-    return;
-  }
-
-  if (!check_and_run_downloads_in_background (data->window))
-    finish_window_close_after_modified_forms_check (data);
+  if (data->cursor) data->cursor = data->cursor->next;
+  g_idle_add_once ((GSourceOnceFunc)continue_window_close_check, data);
 }
 
 static void
-window_has_modified_forms_cb (EphyWebView                *view,
-                              GAsyncResult               *result,
+window_modified_form_checked (EphyWebView              *view,
+                              GAsyncResult             *result,
                               WindowHasModifiedFormsData *data)
 {
-  gboolean has_modified_forms;
-
-  data->embeds_to_check--;
-  has_modified_forms = ephy_web_view_has_modified_forms_finish (view, result, NULL);
-  if (has_modified_forms) {
-    data->modified_embeds = g_list_prepend (data->modified_embeds, EPHY_GET_EMBED_FROM_EPHY_WEB_VIEW (view));
-    data->window->has_modified_forms = TRUE;
-  }
-
-  if (data->embeds_to_check > 0)
+  AdwDialog *dialog;
+  gboolean modified = ephy_web_view_has_modified_forms_finish (view, result, NULL);
+  if (!data->window || data->window->closing) {
+    stop_window_close_after_modified_forms_check (data);
     return;
-
-  continue_window_close_after_modified_forms_check (data);
+  }
+  if (!modified) {
+    continue_window_close_after_modified_forms_check (data);
+    return;
+  }
+  data->window->has_modified_forms = TRUE;
+  dialog = construct_confirm_close_dialog (data->window,
+    _("Leave Website?"), _("A form was modified and has not been submitted"), _("_Discard Form"));
+  g_signal_connect_swapped (dialog, "response::accept",
+    G_CALLBACK (continue_window_close_after_modified_forms_check), data);
+  g_signal_connect_swapped (dialog, "response::cancel",
+    G_CALLBACK (stop_window_close_after_modified_forms_check), data);
+  adw_dialog_present (dialog, GTK_WIDGET (data->window));
 }
 
-/* This function checks an entire EphyWindow to see if it contains any tab with
- * modified forms. There is an entirely separate codepath for checking whether
- * a single tab has modified forms, see tab_view_close_page_cb().
- */
+static void
+native_window_close_checked (EphyEngineView             *view,
+                             GAsyncResult              *result,
+                             WindowHasModifiedFormsData *data)
+{
+  g_autoptr (GError) error = NULL;
+  gboolean prompted = FALSE;
+  gboolean approve = ephy_engine_web_view_check_close_finish (view, result, &prompted, &error);
+  if (!approve || !data->window || data->window->closing) {
+    if (error && data->window && !data->window->closing)
+      adw_toast_overlay_add_toast (ADW_TOAST_OVERLAY (data->window->toast_overlay),
+                                  adw_toast_new (_("Could not check whether this page can close")));
+    stop_window_close_after_modified_forms_check (data);
+    return;
+  }
+  if (!prompted && g_settings_get_boolean (EPHY_SETTINGS_MAIN, EPHY_PREFS_WARN_ON_CLOSE_UNSUBMITTED_DATA))
+    ephy_web_view_has_modified_forms (EPHY_WEB_VIEW (view), NULL,
+                                      (GAsyncReadyCallback)window_modified_form_checked, data);
+  else
+    continue_window_close_after_modified_forms_check (data);
+}
+
+static gboolean
+continue_window_close_check (gpointer pointer)
+{
+  WindowHasModifiedFormsData *data = pointer;
+  EphyWindow *window;
+  EphyEmbed *embed;
+  EphyEngineView *view;
+  gboolean attached = FALSE;
+  AdwTabView *tabs;
+  if (!data->window || data->window->closing) {
+    stop_window_close_after_modified_forms_check (data);
+    return G_SOURCE_REMOVE;
+  }
+  window = data->window;
+  if (!data->cursor) {
+    if (!ephy_window_can_commit_close (window)) {
+      stop_window_close_after_modified_forms_check (data);
+      return G_SOURCE_REMOVE;
+    }
+    window->checking_modified_forms = FALSE;
+    window->has_modified_forms = FALSE;
+    if (check_and_run_downloads_in_background (window)) {
+      stop_window_close_after_modified_forms_check (data);
+      return G_SOURCE_REMOVE;
+    }
+    data->committed = TRUE;
+    g_idle_add_once ((GSourceOnceFunc)force_close_window_cb, g_object_ref (window));
+    window_has_modified_forms_data_free (data);
+    return G_SOURCE_REMOVE;
+  }
+  embed = data->cursor->data;
+  tabs = ephy_tab_view_get_tab_view (window->tab_view);
+  for (int i = 0; i < adw_tab_view_get_n_pages (tabs); ++i)
+    if (adw_tab_page_get_child (adw_tab_view_get_nth_page (tabs, i)) == GTK_WIDGET (embed)) attached = TRUE;
+  if (!attached) {
+    stop_window_close_after_modified_forms_check (data);
+    return G_SOURCE_REMOVE;
+  }
+  impl_set_active_child (EPHY_EMBED_CONTAINER (window), embed);
+  view = EPHY_ENGINE_VIEW (ephy_embed_get_web_view (embed));
+  if (gtk_widget_get_root (GTK_WIDGET (view)) != GTK_ROOT (window)) {
+    g_timeout_add (25, continue_window_close_check, data);
+    return G_SOURCE_REMOVE;
+  }
+  ephy_engine_web_view_check_close (view, window->cancellable,
+                                   (GAsyncReadyCallback)native_window_close_checked, data);
+  return G_SOURCE_REMOVE;
+}
+
 static void
 ephy_window_check_modified_forms (EphyWindow *window)
 {
-  GList *tabs, *l;
-  WindowHasModifiedFormsData *data;
-
-  data = g_new0 (WindowHasModifiedFormsData, 1);
+  WindowHasModifiedFormsData *data = g_new0 (WindowHasModifiedFormsData, 1);
   data->window = window;
-  data->embeds_to_check = ephy_tab_view_get_n_pages (window->tab_view);
-
-  tabs = impl_get_children (EPHY_EMBED_CONTAINER (window));
-  if (!tabs) {
-    window_has_modified_forms_data_free (data);
-    return;
-  }
-
+  g_object_add_weak_pointer (G_OBJECT (window), (gpointer *)&data->window);
+  data->embeds = impl_get_children (EPHY_EMBED_CONTAINER (window));
+  for (GList *l = data->embeds; l; l = l->next) g_object_ref (l->data);
+  data->cursor = data->embeds;
   window->checking_modified_forms = TRUE;
-
-  for (l = tabs; l; l = l->next) {
-    EphyEmbed *embed = (EphyEmbed *)l->data;
-
-    ephy_web_view_has_modified_forms (ephy_embed_get_web_view (embed),
-                                      NULL,
-                                      (GAsyncReadyCallback)window_has_modified_forms_cb,
-                                      data);
-  }
-
-  g_list_free (tabs);
+  g_idle_add_once ((GSourceOnceFunc)continue_window_close_check, data);
 }
 
 static void
@@ -4930,10 +5053,7 @@ ephy_window_can_close (EphyWindow *window)
     return FALSE;
   }
 
-  if (!window->force_close &&
-      g_settings_get_boolean (EPHY_SETTINGS_MAIN,
-                              EPHY_PREFS_WARN_ON_CLOSE_UNSUBMITTED_DATA) &&
-      ephy_tab_view_get_n_pages (window->tab_view) > 0) {
+  if (!window->force_close && ephy_tab_view_get_n_pages (window->tab_view) > 0) {
     ephy_window_check_modified_forms (window);
     /* stop window close */
     return FALSE;

@@ -27,6 +27,7 @@
 #include "ephy-bookmarks-manager.h"
 #include "ephy-debug.h"
 #include "ephy-embed.h"
+#include "ephy-engine-view.h"
 #include "ephy-shell.h"
 #include "ephy-web-view.h"
 #include "ephy-window.h"
@@ -38,6 +39,7 @@ struct _EphySiteMenuButton {
   GMenuModel *items_section;
   GtkWidget *popover_menu;
   GtkWidget *zoom_level;
+  GtkWidget *translation_controls;
   GtkSvg *svg;
 
   char *description;
@@ -112,6 +114,21 @@ on_clicked (GtkWidget *button,
 {
   EphySiteMenuButton *self = EPHY_SITE_MENU_BUTTON (user_data);
 
+  GtkWidget *window = gtk_widget_get_ancestor (GTK_WIDGET (self), EPHY_TYPE_WINDOW);
+  EphyEmbed *embed = ephy_window_get_active_embed (EPHY_WINDOW (window));
+
+  if (self->translation_controls) {
+    gtk_popover_menu_remove_child (GTK_POPOVER_MENU (self->popover_menu), self->translation_controls);
+    self->translation_controls = NULL;
+  }
+  if (embed) {
+    self->translation_controls = ephy_engine_web_view_create_translation_controls
+      (EPHY_ENGINE_VIEW (ephy_embed_get_web_view (embed)));
+    if (self->translation_controls)
+      gtk_popover_menu_add_child (GTK_POPOVER_MENU (self->popover_menu),
+                                 self->translation_controls, "translation-controls");
+  }
+  g_object_set (self->popover_menu, "visible-submenu", "main", NULL);
   gtk_popover_popup (GTK_POPOVER (self->popover_menu));
 }
 

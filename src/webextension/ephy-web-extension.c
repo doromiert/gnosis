@@ -171,6 +171,16 @@ ephy_web_extension_native_is_restart_required (EphyWebExtension *self)
 }
 
 void
+ephy_web_extension_native_update_metadata (EphyWebExtension *self,
+                                           JsonObject       *metadata)
+{
+  g_return_if_fail (self->native_metadata != NULL);
+  json_object_unref (self->native_metadata);
+  self->native_metadata = json_object_ref (metadata);
+  g_signal_emit_by_name (self, "native-state-changed");
+}
+
+void
 ephy_web_extension_native_set_state (EphyWebExtension *self,
                                      gboolean enabled,
                                      gboolean available,

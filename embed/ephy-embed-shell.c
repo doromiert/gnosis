@@ -1113,13 +1113,29 @@ ephy_embed_shell_create_network_session_if_needed (EphyEmbedShell *shell)
 {
   EphyEmbedShellPrivate *priv = ephy_embed_shell_get_instance_private (shell);
 
-  if (priv->mode == EPHY_EMBED_SHELL_MODE_AUTOMATION || priv->mode == EPHY_EMBED_SHELL_MODE_INCOGNITO) {
+  if (priv->network_session)
+    return;
+
+  if (priv->mode == EPHY_EMBED_SHELL_MODE_AUTOMATION || priv->mode == EPHY_EMBED_SHELL_MODE_INCOGNITO)
     priv->network_session = ephy_engine_session_new (TRUE);
-    priv->legacy_network_session = webkit_network_session_new_ephemeral ();
-  } else {
+  else
     priv->network_session = g_object_ref (ephy_engine_session_get_default ());
+}
+
+static void
+ephy_embed_shell_create_legacy_network_session_if_needed (EphyEmbedShell *shell)
+{
+  EphyEmbedShellPrivate *priv = ephy_embed_shell_get_instance_private (shell);
+
+  if (priv->legacy_network_session)
+    return;
+
+  /* Only the remaining WebKit website-data/ITP UI needs this session. Creating
+   * it during ordinary Brave startup opens an unrelated engine's data stores. */
+  if (priv->mode == EPHY_EMBED_SHELL_MODE_AUTOMATION || priv->mode == EPHY_EMBED_SHELL_MODE_INCOGNITO)
+    priv->legacy_network_session = webkit_network_session_new_ephemeral ();
+  else
     priv->legacy_network_session = webkit_network_session_new (ephy_profile_dir (), ephy_cache_dir ());
-  }
   webkit_network_session_set_persistent_credential_storage_enabled (priv->legacy_network_session, FALSE);
   webkit_network_session_set_itp_enabled (priv->legacy_network_session,
                                           g_settings_get_boolean (EPHY_SETTINGS_WEB, EPHY_PREFS_WEB_ENABLE_ITP));
@@ -1159,9 +1175,10 @@ enable_itp_setting_changed_cb (GSettings      *settings,
 {
   EphyEmbedShellPrivate *priv = ephy_embed_shell_get_instance_private (shell);
 
-  webkit_network_session_set_itp_enabled (priv->legacy_network_session,
-                                          g_settings_get_boolean (EPHY_SETTINGS_WEB,
-                                                                  EPHY_PREFS_WEB_ENABLE_ITP));
+  if (priv->legacy_network_session)
+    webkit_network_session_set_itp_enabled (priv->legacy_network_session,
+                                            g_settings_get_boolean (EPHY_SETTINGS_WEB,
+                                                                    EPHY_PREFS_WEB_ENABLE_ITP));
 }
 
 static void
@@ -1687,6 +1704,8 @@ WebKitWebsiteDataManager *
 ephy_embed_shell_get_website_data_manager (EphyEmbedShell *shell)
 {
   EphyEmbedShellPrivate *priv = ephy_embed_shell_get_instance_private (shell);
+
+  ephy_embed_shell_create_legacy_network_session_if_needed (shell);
   return webkit_network_session_get_website_data_manager (priv->legacy_network_session);
 }
 

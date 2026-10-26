@@ -242,7 +242,7 @@ epiphany_sources = [
   readability_resources
 ]
 
-epiphany = executable('jupiter',
+epiphany = executable('gnosis',
   epiphany_sources,
   include_directories: include_directories(get_option('cef_root')),
   dependencies: [cef_dep, ephymain_dep],

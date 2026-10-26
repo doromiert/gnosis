@@ -15,6 +15,114 @@ builds. Earlier per-build /tmp profiles made history appear to disappear. Their
 databases remain intact; the default history had 43 saved URLs when checked.
 Use a fresh isolated profile only for a specific isolation test, not each build.
 
+## Native find, close protection and runtime updates — 2026-10-26
+
+Native Ctrl+F now calls the pinned FindTabHelper and consumes merged renderer
+results through a private inherited channel. It retains actual matching and
+highlights across same-process and cross-process frames. The GTK toolbar uses
+actual count/ordinal results and hides unsupported whole-word matching. Tests
+cover wrapping, case, Unicode, hidden text, query replacement/stop, independent
+and closed targets, bounded requests and the actual GTK menu/counter lifecycle.
+Closing targets can remain resolvable without ever replying; those requests are
+retired rather than retaining stale helper identities indefinitely.
+
+Native beforeunload preflight dispatches real frame handlers, then suppresses
+only the subsequent unload for its own armed check. Tabs/windows remain intact
+until the complete GTK close transaction is approved. Cancel, navigation and
+trusted document activity invalidate approvals; a final validation precedes
+window/application destruction. Real GTK last-tab Keep Open, two-tab window and
+application-wide two-window Cancel/Leave, form heuristics and actual DevTools
+activation pass. A missing
+reply defaults to Keep Open and offers explicit Close Anyway; actual GTK fault
+injection verifies both choices. Cross-process-frame interaction invalidation
+and broader live-editor coverage remain follow-up work.
+
+Default browsing no longer passes --disable-frame-rate-limit. Composited Brave
+uses WaylandExternalBeginFrameSource; explicit JUPITER_UNCAP_FRAMES=1 remains a
+diagnostic override. Steady-state packaged checks measured 59.79 fps at 60 Hz
+and 119.55 fps at 120 Hz, versus 1698.37 fps in the earlier uncapped 60 Hz sample.
+Startup/fullscreen monitor transitions affected one earlier sample; mixed
+monitors and the separate GPU SIGTRAP are not declared fixed.
+
+Nix uses cef_runtime=linked, preserving SDK file modes, sandbox helper, ICU,
+locales and actual ELF loading while avoiding repeated CEF copying/stripping.
+Portable installations retain copy mode. WebKitNetworkSession is lazy; normal
+and incognito GTK checks verify identity, ITP changes and disabled credential
+storage. CEF remains required by real CefValue/JSON and other compatibility APIs,
+and WebKit/JSC still serve remaining consumers. This is not full engine removal.
+
+Bundled full uBlock refresh uses the stable profile-owned directory, validates
+ownership/identity, atomically swaps a complete tree and keeps a rollback until
+native reload/version/enabled-state verification. Existing storage is retained;
+newer installed versions are never downgraded automatically. External providers
+are respected. Filesystem recovery tests, actual same-path native reload/storage
+checks, full MV2/network/main-and-frame cosmetic/scriptlet checks and actual GTK
+GSettings disable/re-enable filtering pass.
+
+Private profiles now have explicit owned leases spanning intentional restart,
+browser exit and background extension filesystem work. Last private tab and
+application shutdown stop writers before unlinking owned data. Cleanup does not
+follow symlinks or remove a replaced root. Actual incognito cleanup passed; an
+abrupt host crash can still leave a temporary directory.
+
+Media context menus operate on the actual trusted captured video/audio element
+and reject stale documents or detached elements. Real Brave audio and JS checks
+pass. PiP is not advertised while it would open an unhosted Chromium window.
+Cross-process iframe menus, native downloads and Inspect Element are still open.
+PIN/account/GPM/conditional-passkey and tab-sharing GTK adapters also remain open;
+the source/ABI audit did not enable unverified native model offsets.
+
+See engine/tests/NATIVE-GTK-TESTS.md for repeatable probe commands. Earlier dated
+investigation notes below are historical where this milestone supersedes them.
+
+## Custom tabs archived on 2026-10-25
+
+The Select custom tab strip, overview and group implementation is preserved on
+`archive/select-custom-tabs`. The active shell uses its previous AdwTabBar and
+AdwTabOverview. Independent restored-title, native favicon and active-tab signal
+cleanup fixes remain in the active tree, along with the earlier settings work.
+
+## Settings bridge verified on 2026-10-25
+
+Font preferences use the privileged fontSettings API; popup/storage policy uses
+contentSettings. Custom CSS joins the native document stylesheet, and custom JS
+uses removable Page scripts gated to HTTP(S)/file pages. Reader font changes and
+per-site/default zoom stay in the existing shell policy. Disabling JS removes
+future-document scripts; already executed script effects require a page reload.
+
+Cookies use Storage/Network CDP methods within the matching normal/private
+process. Site-storage clearing uses browsingData with extension storage excluded.
+Website Data shows supported global storage categories and actual cookie domains;
+WebKit HSTS/ITP/device-ID categories are hidden in Brave mode.
+
+The advertisement switch controls actual full uBlock Origin through management.
+If absent, enabling it loads the official packaged build from a stable profile-local
+path. Chromium developer mode is enabled for the bundled/validated unpacked
+extensions, avoiding DISABLE_UNSUPPORTED_DEVELOPER_EXTENSION on uBlock self-reload.
+Brave's independent global ad/cosmetic filters are handed off through its pinned
+settings WebUI handlers, in an unembedded transient target. Other Shields settings
+are retained. The bundled copy's automatic version refresh remains follow-up work.
+
+Target.openDevTools supplies real DevTools in a transient GTK compositor view.
+Inspector windows do not join GtkApplication's browser-window list, and close with
+the inspected tab. F12, Ctrl+Shift+I and the main-menu action share this path.
+
+Native GTK checks covered custom homepage, fonts/CSS/JS enable/disable, reader
+font changes, default zoom, DevTools, cookie path/domain deletion, private cookie
+isolation, Website Data categories and Ctrl+Tab contrast. The online-store submenu
+and actual new-tab activation passed; the Chrome store may redirect to Google consent.
+Full official uBlock passed network, main/frame cosmetic, scriptlet and toggling
+checks. The store submenu opens Chrome Web Store and Microsoft Edge Add-ons;
+Edge-catalog installation has not been independently verified.
+
+Ordinary browsing keeps Blink's native webdriver getter false through
+AutomationControlled's runtime feature setting; explicit automation mode retains
+the automation marker. The private CDP pipe and Chromium sandbox remain enabled.
+The user confirmed Google sign-in now proceeds. The exact-binary overlay suppresses the shared infobar presentation through
+its preferred-size calculation. Underlying flags, native delegates and sandbox
+settings are unchanged. The CAPTCHA screenshot reports unusual network traffic and does not
+establish the cause of an individual challenge.
+
 ## Current work
 
 - [o] Replace the native-child X11 rendering boundary with an embedding Wayland
@@ -317,3 +425,315 @@ proof. Validate the exact binary digest and original bytes before experimenting
 on a private copy; never patch the Nix store/system Brave in place. Relevant
 zoom symbols are not exported, so simple LD_PRELOAD symbol interposition is
 insufficient. Preserve actual page zoom and the sandbox.
+
+
+Zoom binary overlay implemented after the checkpoint: `engine/brave/native-ui.nix`
+creates a runtime package from the stock pinned Brave; only its ELF and launcher
+scripts are copied, resources remain links. `patch-brave-binary.py` requires the
+full input hash, original hook prefix and final output hash from
+`patches/binary-native-ui.json`. The one-byte `ret` at the verified Show entry
+suppresses native zoom feedback without changing real zoom upstream. A temporary
+graphical diagnostic stub logged two Show calls; the final one-byte patch passed
+native 125% zoom/DPR, reset, events and sibling isolation checks. No sandbox
+relaxation or Chromium compilation. Default flake selects the overlay; permission
+and extension native UI are still unmodified. Earlier source-build requirements
+above describe the alternative source patch, not this binary path.
+
+User confirmed the binary-overlay build no longer shows the native zoom popup.
+
+JavaScript dialogs are being moved to native GTK via authenticated Page session
+`javascriptDialogOpening`/`javascriptDialogClosed` events and real
+`handleJavaScriptDialog` replies. The pinned native delegate's
+`GetJavaScriptDialogManager` at VA 0x0b540040 (file 0x0b53f040) is a verified
+3-byte xor-eax/eax/ret hook: graphical protocol checks report hasBrowserHandler
+false for alert, confirm and prompt; actual JavaScript results still resolve.
+GTK owns the dialog lifecycle, origin label and prompt input; tab hide/close,
+navigation, renderer failure and protocol closure retire the pending dialog.
+Full GTK verification is pending. This does not yet fix close-tab beforeunload.
+Extension inventory and toggles now use Brave's actual `chrome.management`
+API through the fixed-key packaged worker, reached only over its private CDP
+session. GTK reconciles installs, removals, updates and enabled state, including
+real Web Store installs; it no longer inserts the old bundled uBlock catalog.
+Unpacked installations use the existing validated profile-store copy followed
+by real Brave loading. Normal-profile management rejects ephemeral sessions;
+extensions still execute with Chromium's native host permissions. Extension
+readiness is independent of renderer readiness and cannot blank page rendering.
+The fixed-key integration worker is excluded from the visible list. Native
+uBlock network blocking, main/frame cosmetics, scriptlets and toggles passed.
+
+The existing GTK popup view is not yet a genuine Brave ExtensionViewHost with
+complete native action/activeTab semantics. Do not call that port complete.
+`Extensions.triggerAction` on the native app-window tab target previously
+crashed an isolated browser; do not reintroduce it as an untested shortcut.
+
+Uninstall confirmation now has a version/hash-checked native model bridge.
+Only the exact ExtensionUninstallDialog call site is selected, while the
+original DialogModel, hidden host and accept/cancel callbacks retain ownership.
+GTK uses its localized title, Remove label and optional Report abuse checkbox;
+Cancel uses GTK's locale when Chromium delegates the default label to its host.
+The host may show asynchronously, so model tracking lasts until its destructor.
+Cancellation preserves installation; accepting invokes the real upstream
+uninstaller. This is separate from the GTK installation-confirmation bridge.
+
+Automatic full-page translation offers are disabled using the native
+`translate.enabled` preference, preserving explicit translation for a future
+GTK controller. The requested site-menu Translate Page action is still pending.
+Reader URLs now use the existing private resource transport without granting
+the native settings-page message bridge. Reader HTML retains Epiphany's
+script-blocking CSP.
+
+A reported freeze at 15:05:12 on 2026-10-25 coincided with Brave's GPU process
+exiting with status 133/SIGTRAP. No core was generated. GNOME shell errors also
+occurred nearby; these observations do not establish the underlying GPU cause.
+Separately, external shell tools inherited the native shim and failed loading
+the newer GLib against the desktop's older glibc. The browser now clears
+LD_PRELOAD after loading the shim, keeping the shim mapped only where needed.
+The GPU crash must not be described as conclusively fixed by that change.
+
+JavaScript GTK verification completed: scoped accessibility actions on the new
+Jupiter process accepted the native alert, rejected confirm, entered Unicode
+prompt text and cancelled a second prompt. The fixture webpage received exactly
+false / "GTK response ✓" / null. Navigation beforeunload and tab-close handling
+remain separate pending checks/work. The native shell was built/launched with
+nix run; zoom suppression is retained in the same exact-input binary overlay.
+
+Extension runtime findings from a separate temporary graphical profile: full
+uBlock Origin 1.75.0 loads through Extensions.loadUnpacked (ID
+nnhhoihpllkifklelcdmchjjmefldpad at its pinned package path), and
+Extensions.getExtensions returns real enabled state. Extensions.triggerAction
+rejects a page target ("Action can only be triggered on a tab target"). Explicit
+Target.getTargets filter [{type:"tab",exclude:false}] exposes native tab targets;
+triggering uBlock on one of those in the current --app setup terminates Brave.
+The probe's private pipe closes; crashpad reports a snapshot, but no native stack
+or exact cause has been recovered. Do not route production GTK action clicks to
+this API until app-window popup hosting is fixed. Main Jupiter stayed running.
+Probe script: /tmp/jupiter-brave-extension-native-probe.py; source inputs remain
+pinned to 1.97.56 / 155.0.8059.40. No extension UI change shipped in this step.
+
+
+Extension install confirmation now has a small prebuilt-runtime adapter rather
+than a Chromium rebuild. It replaces only native dialog presentation, exports
+Brave's actual permission warnings, and routes GTK responses to the original
+native install/cancel callbacks. Both callbacks pass isolated beginInstall-only
+probes; user confirmed the GTK dialog displays after fixing routing to require
+an actually mapped widget (restored hidden tabs can retain mapped state flags).
+The private inherited decision channel is separate from the CDP pipe. Closing,
+hiding or navigating its GTK owner cancels the confirmation; native destruction
+closes GTK. The 500 ms acceptance delay and Cancel default are retained.
+Enterprise justification/withholding checkbox variants still fall back to native
+UI. Site permission prompts, extension action popups and full extension catalog
+management remain separate work.
+
+
+GTK printing now branches to the live Brave Page instead of requiring a CEF
+browser. GtkPrintDialog still owns setup, printer selection and spooling; native
+Page.printToPDF renders the selected paper/orientation/margins into a private
+0600 temporary PDF. Cancellation and document-generation checks reject output
+from a hidden/closed or explicitly navigated tab. The earlier CEF print branch
+remains during migration. A windowed native --app probe verified real A4 portrait
+and landscape dimensions, readable fixture text and print-media CSS exclusion.
+User confirmed Ctrl+P opens the packaged GTK print dialog. Saving through that
+dialog and physical-printer validation remain pending.
+
+Native find-in-page investigation: pinned Chromium 155.0.8059.40 source places
+FindTabHelper in components/find_in_page, not chrome/browser/ui/find_bar. It owns
+real asynchronous frame results and the native find session. CDP resource/DOM
+search and window.find are not equivalent adapters. No native search UI change
+has shipped. Native DevToolsAgentHost::GetForId is a candidate target ownership
+bridge (static disassembly points to RVA 0x04bcec90, forwarding 0x04bceca0;
+refcount at +8 and native deleting destructor vtable +0xe8). These addresses are
+research evidence only, not validated runtime hooks. Existing binutils were used;
+no REA tools were connected and no REA configuration was changed.
+
+
+Permission dialog update: the native ShowWidget entry exports the real accessible
+origin/permission title. GTK replies invoke the actual native virtual permission
+button callback, including one-time grants; closing/cancelling invokes native
+Dismiss. A destructor hook retires requests on navigation. Isolated permission.site
+Block and Allow returned denied/granted; a temporary Notification fired show.
+A full GTK shell probe clicking permission.site's actual Notifications button
+reported success/granted and navigator.storage.persist() returned true. The user
+confirmed the prompt works, while delivery remains a separate user check.
+USB/Serial/HID chooser and initial screen-source picker remain Chromium UI.
+PipeWire already invokes XDG ScreenCast CreateSession/SelectSources/Start, so
+portal usage alone is insufficient to claim the source picker is native GTK.
+
+The reported browser closure was identified as Widevine's explicit relaunch:
+WidevinePermissionRequest::PermissionDecided posts chrome::AttemptRelaunch after
+its restart permission is allowed on Linux. An exact-binary hook now delegates
+that request to Process::restart. GTK keeps its Page objects/callbacks and tabs;
+only the Brave process, its private pipes and compositor surfaces are replaced
+after confirmed launcher exit. Private restarts reuse the same private profile.
+A probe-only call through the canonical native relaunch callback was intercepted;
+a two-tab GTK probe preserved its process/window and reconnected both Page tokens
+with fresh targets after the engine restarted. No full Chromium rebuild is used.
+Actual module-download and private-context restart validation remain pending.
+
+
+Further corrections: the file/directory picker failure is primarily missing
+APIs, not evidence of an offscreen portal dialog. BraveContentRendererClient
+explicitly disables FileSystemAccessLocal while FileSystemAccessAPI is disabled.
+The pinned base feature is off by default. Enabling it exposes the native methods
+and a real request reaches XDG FileChooser.OpenFile. BraveWebBluetoothAPI is
+similarly default-disabled; the launch configuration enables both while retaining
+the Nix package's video acceleration features. Packaged picker validation remains.
+
+The notification transport now rewrites only this browser's freedesktop Notify
+application identity from Brave to Jupiter, including desktop-entry and the
+packaged icon. The original connection, IDs, website content and action callbacks
+are preserved. A narrowly filtered live D-Bus capture and notification show event
+verified the new identity. Context-menu actions now copy their invocation before
+closing/unparenting the popover can destroy its action group and captured closure;
+this fixes a use-after-free path affecting Copy and other menu actions.
+
+
+Copy follow-up: direct GTK copy actions now publish the captured selection or
+address before the popover closes, retaining the real activation/Wayland serial.
+Editable Copy also uses the captured text rather than sending Ctrl+C after an
+input's selection may have lost focus. Other native edit chords retain deferred
+focus/grab release. Packaged physical right-click validation remains pending.
+On Linux, enabling BraveWebBluetoothAPI alone did not expose navigator.bluetooth;
+the narrowly scoped WebBluetooth Blink runtime gate is also required. A real
+permission.site native probe now reports functions for showOpenFilePicker,
+showDirectoryPicker, navigator.bluetooth.requestDevice and registerProtocolHandler.
+API availability does not establish chooser/backend permission completion.
+
+Webpage selection and scrollbar styling now use browser-owned per-document CSS
+stylesheets, with GTK accent/contrast notifications and navigation/session guards.
+They work under strict site CSP without adding a page-world binding or bypassing
+CSP. A hash-pinned, class-local CustomScrollbar vtable relocation plus native
+OverlayScrollbar mode makes CSS-styled bars overlay the page instead of reserving
+layout width. The scrollbar, track, track-piece and corner backgrounds are cleared;
+native wheel and thumb dragging remain upstream. Root and nested zero-gutter
+checks and the reported site's transparent track pass. Out-of-process frame
+coverage and packaged visual acceptance remain separate follow-ups.
+
+## Translation submenu and KeePassXC (2026-10-25)
+
+Translate Page is a submenu of the existing GTK site menu, with a searchable
+language dropdown, native progress/error feedback and Show Original. Brave's
+per-tab TranslateManager performs translation and reversion; the exact-binary
+shim suppresses only its Views bubble. Real native and packaged GTK translation
+and reversion probes pass, including stale-page rejection and navigation cleanup.
+
+The official KeePassXC-Browser 1.10.4.1 is now bundled under a separate stable
+identity, loaded only in the normal profile. A profile-owned native host and
+sanitized launcher connect it to the installed keepassxc-proxy without modifying
+another browser's configuration. Actual host connection / KeePassXC availability
+and upstream TOTP/passkey initialization pass. Password/TOTP/passkey functionality
+uses upstream encrypted browser integration and still requires first-use database
+pairing. The added unlock adapter requests KeePassXC's own prompt on a real user
+gesture in a detected login field; its gesture/frame/cooldown/coalescing test
+passes. No database password is handled by Jupiter. See
+`engine/data/keepassxc/README.md` for maintenance and remaining live validation.
+
+KeePassXC UI follow-up: the upstream provider is now an invisible internal
+backend, not a user-facing extension. The hamburger-menu KeePassXC action opens
+native libadwaita database, association, login-selection, TOTP and settings
+controls. A fresh-profile packaged GTK test verifies the real service, settings
+persistence and navigation cleanup. The existing-profile worker-cache issue is
+handled by installing only the trusted adapter in the verified private worker;
+no user caches/storage are wiped. Page overlays retain upstream closed Shadow
+DOM/input handlers but use GTK palette/font variables, libadwaita popover/list
+metrics and GNOME symbolic icons. A visibly open fixture overlay verifies the
+palette, shape and zero layout shift. Full native uBlock passes alongside this
+backend. The user confirmed a GitHub passkey round trip; the Discord failure has
+not been attributed.
+
+Follow-up checks: extension action popups now report intrinsic size from a
+browser-owned isolated world, grow/shrink within GTK window limits, and give full
+uBlock its actual owning tab ID. Real uBlock More/Less changes GTK allocation;
+the full native network/cosmetic/scriptlet and settings-toggle checks pass.
+
+KeePassXC's integration revision is now 1.10.4.104. Its native panel includes
+Redetect Login Fields. A trusted focus on a newly introduced password field also
+rescans upstream combinations once. When an integration loads after the page,
+the adapter can inject only its own manifest-declared content scripts into that
+tab's top frame, honoring match exclusions and Chromium host grants. This needs
+the scripting permission. Unit checks and packaged native redetection checks
+pass, including a form introduced after initial load. Brave's separate password
+saving and automatic sign-in preferences are disabled without deleting its vault.
+
+The native WebAuthn view/model adapter now presents GTK mechanism choices,
+phone/tablet pairing QR, USB instructions, progress and supported error sheets.
+Each request is bound to its actual WebContents via its private CDP target;
+revision checks, native input protection and original native callbacks remain.
+A real local WebAuthn request reaches the GTK QR sheet and Cancel rejects the
+original promise. QR material stays on the inherited private socket and is
+rendered in memory. Account choices now use native GTK rows and the original
+Chromium selection callbacks. Real virtual-CTAP credentials produce a verified
+ECDSA assertion for the chosen account, with user verification and counter
+checks. A phone/tablet row appears only when the native request offers hybrid
+transport; it restarts discovery through the original delegate before invoking
+that mechanism. Real QR presentation and cancellation pass. Each sheet is
+measured again when its contents change, and actions stay outside the scroller.
+PIN entry and GPM sheets retain native
+fallbacks. The separate conditional passkey/autofill suggestion still needs its
+own GTK adapter; this is not an exhaustive replacement of Chromium auth UI.
+
+Translate Page now gives the language label additional inset and omits the
+service-notice footer, as requested.
+
+Overview profiling found one surface commit invalidated every tab's compositor
+view (74 of 111 queued redraws targeted hidden views in a three-tab run). Commit
+invalidation now follows the actual root/popup parent to the owning view. The
+follow-up run queued 10 redraws, but frame intervals varied with monitor placement
+and load; these runs do not establish a general animation-latency improvement.
+The reported intermittent severe stall remains unconfirmed. The immediate-close
+popup-reopen failure in the probe was a synthetic timing artifact: activating a
+row before the reopened menu received its first layout. A test that lets GTK
+map/layout the menu before selecting the actual row passes reopen and More/Less.
+
+
+## Gnosis branding and desktop transfers (2026-10-25)
+
+The product name, launcher, About UI, notifications and primary executable now
+use Gnosis. The supplied root `gnosis.svg` is packaged unchanged for the normal,
+development and Canary application icons; the symbolic icon follows its globe
+geometry. The existing application/schema/profile identifiers and internal
+KeePassXC identity remain compatibility identities. The old `jupiter` command
+and Nix package selector remain aliases, so current launch scripts and data work.
+
+The context menu now offers Copy Image. It reads the original resource through
+the owning frame's Brave cache/network context, decodes asynchronously, then
+publishes a GTK texture during the real menu activation. Native pointer/clipboard
+checks compare original RGBA pixels, dimensions and transparency for cross-origin
+images, data/blob URLs and a same-process subframe. Context-menu teardown now
+waits until GtkModelButton has activated its action; immediately unparenting on
+closed destroyed action resolution. Out-of-process iframe context menus remain
+an existing gap and were not fixed by this image-copy change.
+
+The compositor now bridges actual GTK desktop drags and native Wayland data
+offers in both directions, preserving MIME streams, native DOM drop events and
+Chromium file access. Incoming desktop files use copy actions. A real desktop
+GTK file-list drag reaches a trusted DOM drop and exposes the exact fixture file
+contents; a webpage link drag reaches a separate GTK destination. Escape-cancel
+followed by a real webpage click passes. Host unmapping/disposal cancels transfers.
+The automated peer runs under X11 with a real nested Wayland browser; a human
+check with Nautilus on the outer Wayland desktop remains useful.
+
+Drag previews now use the offered image bytes, center-cropped into a rounded
+80-pixel square, a clipped text square, both for mixed selections, or a compact
+link icon. Mixed HTML can retrieve an already-loaded image from the owning
+page's resource cache; preview payloads cannot initiate arbitrary network or
+filesystem reads. Bounded asynchronous reads cancel with the drag. Real GTK
+pointer drags verify all four previews, their square bounds, desktop transfers,
+and Escape/input recovery. The About/AppStream developer is Negative Zero team.
+
+The page menu no longer inherits a hardcoded translation-pane width. Its native
+GtkPopoverMenu sizing keeps both pages compact without clipping; packaged
+open/translate/back navigation and measured bounds pass.
+
+## Small fixes before shutdown (2026-10-26)
+
+The existing edited-form warning now evaluates self-contained default/value
+comparisons in the private world. The retired WebKit Ephy helper was absent.
+Nine real-browser form cases and GTK last-tab Cancel/Discard pass. Readonly and
+disabled fields are ignored; pristine/reset forms and a single short search do
+not prompt. This is a heuristic, not a complete native beforeunload bridge.
+Tab-close callback lifetime guards and previous-tab weak-pointer cleanup are
+also repaired. A multi-tab switching probe remains a follow-up.
+
+Native context menus now open the actual GTK-hosted Developer Tools window.
+Actual menu activation and full native uBlock regressions pass. See the dated
+handoff in JUPITER-TODO.md for the next session and persistent test artifacts.

@@ -110,8 +110,14 @@ ephy_engine_find_controller_count_matches       (EphyEngineFind *find_controller
                                             guint32               find_options,
                                             guint                 max_match_count);
 
+gboolean ephy_engine_find_controller_uses_native_results (EphyEngineFind *controller);
+gboolean ephy_engine_find_controller_supports_word_starts (EphyEngineFind *controller);
+
 guint32
 ephy_engine_find_controller_get_options         (EphyEngineFind *find_controller);
+
+gboolean
+ephy_engine_web_inspector_is_open             (EphyEngineInspector *inspector);
 
 void
 ephy_engine_web_inspector_show                (EphyEngineInspector *inspector);
@@ -142,6 +148,18 @@ ephy_engine_web_view_is_controlled_by_automation          (EphyEngineView       
 
 void
 ephy_engine_web_view_try_close                            (EphyEngineView             *web_view);
+
+/* Run the native beforeunload handlers without destroying the document. */
+void ephy_engine_web_view_check_close (EphyEngineView *web_view,
+                                      GCancellable *cancellable,
+                                      GAsyncReadyCallback callback,
+                                      gpointer user_data);
+gboolean ephy_engine_web_view_check_close_finish (EphyEngineView *web_view,
+                                                 GAsyncResult *result,
+                                                 gboolean *prompted,
+                                                 GError **error);
+gboolean ephy_engine_web_view_close_is_approved (EphyEngineView *web_view);
+void ephy_engine_web_view_cancel_close (EphyEngineView *web_view);
 
 void
 ephy_engine_web_view_load_uri                             (EphyEngineView             *web_view,
@@ -233,6 +251,13 @@ ephy_engine_web_view_set_custom_charset                   (EphyEngineView       
 
 const EphyEnginePopupProperties *
 ephy_engine_web_view_get_popup_properties                (EphyEngineView             *web_view);
+
+void ephy_engine_set_user_stylesheet (const char *source);
+void ephy_engine_set_user_javascript (const char *source);
+
+gboolean ephy_engine_web_view_show_password_manager (EphyEngineView *web_view);
+
+GtkWidget *ephy_engine_web_view_create_translation_controls (EphyEngineView *web_view);
 
 void
 ephy_engine_web_view_set_zoom_level                       (EphyEngineView             *web_view,
@@ -355,6 +380,7 @@ void ephy_engine_web_view_set_user_agent_override(EphyEngineView *, const char *
  * Browser execution returns -1; preparation failure returns an exit status. */
 int ephy_engine_execute_process(int argc, char** argv);
 gboolean ephy_engine_initialize(int argc, char** argv, const char* profile, gboolean self_test);
+void ephy_engine_set_automation_mode(gboolean enabled);
 gboolean ephy_engine_prepare_shutdown(void);
 void ephy_engine_shutdown(void);
 void ephy_engine_web_view_print(EphyEngineView*, GtkPageSetup*, GtkPrintSettings*, GAsyncReadyCallback, gpointer);

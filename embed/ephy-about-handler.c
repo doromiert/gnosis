@@ -294,16 +294,16 @@ ephy_about_handler_handle_about (EphyAboutHandler       *handler,
   g_autofree char *engine_version_html = NULL;
 
   if (g_str_equal (PROFILE, "Canary")) {
-    application_name = _("Jupiter Canary");
-    about_title = _("About Jupiter Canary");
+    application_name = _("Gnosis Canary");
+    about_title = _("About Gnosis Canary");
 #if TECH_PREVIEW
   } else {
-    application_name = _("Jupiter Technology Preview");
-    about_title = _("About Jupiter Technology Preview");
+    application_name = _("Gnosis Technology Preview");
+    about_title = _("About Gnosis Technology Preview");
 #else
   } else {
-    application_name = _("Jupiter");
-    about_title = _("About Jupiter");
+    application_name = _("Gnosis");
+    about_title = _("About Gnosis");
 #endif
   }
 

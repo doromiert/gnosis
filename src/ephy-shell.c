@@ -1398,6 +1398,17 @@ finish_closing_after_modified_forms_check (EphyShell *shell)
   GList *windows = gtk_application_get_windows (GTK_APPLICATION (shell));
   EphySession *session = ephy_shell_get_session (shell);
 
+  /* Validate every approval before destroying any window. A page can navigate
+   * while another window is asking its beforeunload question. */
+  for (GList *l = windows; l; l = l->next) {
+    if (!ephy_window_can_commit_close (EPHY_WINDOW (l->data))) {
+      shell->checking_modified_forms = FALSE;
+      shell->num_windows_with_modified_forms = 0;
+      for (GList *reset = windows; reset; reset = reset->next)
+        ephy_window_cancel_close (EPHY_WINDOW (reset->data));
+      return;
+    }
+  }
   if (session)
     ephy_session_close (session);
 

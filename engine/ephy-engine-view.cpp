@@ -179,7 +179,7 @@ static void ephy_engine_history_class_init(EphyEngineHistoryClass* klass) {
     G_TYPE_NONE, 2, G_TYPE_POINTER, G_TYPE_POINTER);
 }
 static void ephy_engine_history_init(EphyEngineHistory* h) { h->items = new std::vector<EphyEngineHistoryItem*>; h->current = -1; }
-struct _EphyEngineFind { GObject parent; ViewData* view; char* text; guint options; };
+struct _EphyEngineFind { GObject parent; ViewData* view; char* text; guint options; guint64 generation; };
 typedef struct _EphyEngineFindClass { GObjectClass parent; } EphyEngineFindClass;
 G_DEFINE_TYPE(EphyEngineFind, ephy_engine_find, G_TYPE_OBJECT)
 static void ephy_engine_find_class_init(EphyEngineFindClass* klass) {
@@ -190,6 +190,8 @@ static void ephy_engine_find_class_init(EphyEngineFindClass* klass) {
   for (auto* name : {"found-text", "counted-matches"})
     g_signal_new(name, G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST, 0, nullptr, nullptr, nullptr, G_TYPE_NONE, 1, G_TYPE_UINT);
   g_signal_new("failed-to-find-text", G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST, 0, nullptr, nullptr, nullptr, G_TYPE_NONE, 0);
+  g_signal_new("search-result", G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST, 0, nullptr, nullptr, nullptr,
+    G_TYPE_NONE, 2, G_TYPE_UINT, G_TYPE_UINT);
 }
 static void ephy_engine_find_init(EphyEngineFind*) {}
 struct _EphyEngineInspector { GObject parent; ViewData* view; };
@@ -263,6 +265,15 @@ struct ViewData {
     resource = new_resource(view, "about:blank");
     ucm = webkit_user_content_manager_new();
     browser->on_changed = [this] { changed(); };
+    browser->on_popup_size = [this](int width, int height) {
+      if (disposed || detached || !browser->is_extension_popup) return;
+      auto* root = gtk_widget_get_root(GTK_WIDGET(self));
+      if (!root) return;
+      const int max_width = std::max(100, std::min(800, gtk_widget_get_width(GTK_WIDGET(root)) - 32));
+      const int max_height = std::max(100, std::min(600, gtk_widget_get_height(GTK_WIDGET(root)) - 100));
+      gtk_widget_set_size_request(GTK_WIDGET(self), std::clamp(width, 25, max_width),
+                                  std::clamp(height, 25, max_height));
+    };
     browser->on_security_changed = [this] { if (!disposed) g_signal_emit_by_name(self, "tls-info-changed"); };
     browser->on_fullscreen_changed = [this](bool value) {
       if (disposed) return;
@@ -850,6 +861,7 @@ char* ephy_engine_dup_version_info() {
     version.chrome_version_build, version.chrome_version_patch);
 }
 JsonArray *ephy_engine_extensions_dup_installed(void) {
+  if (JupiterBrave::enabled()) return ephy_engine_extensions_dup_native_snapshot();
   auto *catalog = json_array_new();
   if (!runtime) return catalog;
   for (const auto& extension : runtime->extensions.installed) {
@@ -923,8 +935,9 @@ JsonArray *ephy_engine_extensions_dup_installed(void) {
 gint ephy_engine_web_view_get_extension_tab_id(EphyEngineView *view) {
   g_return_val_if_fail(EPHY_IS_ENGINE_VIEW(view), -1);
   auto *d = data(view);
-  return d->disposed || d->host.private_mode || d->browser->is_extension_popup || d->browser->closing
-    ? -1 : d->browser->native_tab_id;
+  if (d->disposed || d->host.private_mode || d->browser->is_extension_popup || d->browser->closing) return -1;
+  if (auto page = d->browser->brave_page()) return page->native_tab_id();
+  return d->browser->native_tab_id;
 }
 gboolean ephy_engine_web_view_set_extension_popup(EphyEngineView *popup, EphyEngineView *owner) {
   g_return_val_if_fail(EPHY_IS_ENGINE_VIEW(popup), false);
@@ -967,7 +980,14 @@ gboolean ephy_engine_initialize(int argc, char** argv, const char* profile, gboo
   catch (const std::exception& error) { g_printerr("Extensions: %s\n", error.what()); return false; }
   runtime->gtk_app = g_application_get_default();
   runtime->render_test = self_test;
-  if (JupiterBrave::enabled()) { JupiterBrave::initialize(profile); return true; }
+  if (JupiterBrave::enabled()) {
+    JupiterBrave::initialize(profile);
+    ephy_engine_extensions_initialize_brave(&runtime->extensions);
+    JupiterBrave::initialize_extensions([] {
+      g_signal_emit_by_name(ephy_engine_session_get_default(), "extensions-changed");
+    });
+    return true;
+  }
   engine->extension_paths = runtime->extensions.load_paths();
   for (const auto& ext : runtime->extensions.installed) if (ext.enabled) {
     runtime->extension_host->extension_ids.insert(ext.id);
@@ -1113,10 +1133,12 @@ gboolean ephy_engine_initialize(int argc, char** argv, const char* profile, gboo
   json_array_unref(catalog);
   return true;
 }
+void ephy_engine_set_automation_mode(gboolean enabled) { JupiterBrave::set_automation_mode(enabled); }
 gboolean ephy_engine_prepare_shutdown() {
   if (!runtime) return true;
   if (JupiterBrave::enabled()) {
     for (auto* view : views) view->browser->shutdown();
+    ephy_engine_extensions_close();
     JupiterBrave::shutdown();
     return true;
   }
@@ -1176,6 +1198,60 @@ const gchar* ephy_engine_back_forward_list_item_get_original_uri(EphyEngineHisto
 const gchar* ephy_engine_back_forward_list_item_get_title(EphyEngineHistoryItem* i) { return i->title; }
 gboolean ephy_engine_web_view_is_controlled_by_automation(EphyEngineView*) { return false; }
 void ephy_engine_web_view_try_close(EphyEngineView* v) { data(v)->browser->close(); }
+namespace {
+struct NativeCloseCall {
+  GTask* task;
+  std::weak_ptr<JupiterBrave::Page> page;
+  gulong cancel_handler = 0;
+  bool complete = false;
+  ~NativeCloseCall() { g_object_unref(task); }
+};
+}
+void ephy_engine_web_view_check_close(EphyEngineView* view, GCancellable* cancel,
+                                     GAsyncReadyCallback callback, gpointer user) {
+  g_return_if_fail(EPHY_IS_ENGINE_VIEW(view));
+  auto call = std::make_shared<NativeCloseCall>();
+  call->task = g_task_new(view, cancel, callback, user);
+  g_task_set_source_tag(call->task, reinterpret_cast<gpointer>(ephy_engine_web_view_check_close));
+  if (g_task_return_error_if_cancelled(call->task)) return;
+  auto page = data(view)->browser->brave_page();
+  if (!page) { g_task_return_int(call->task, 1); return; }
+  call->page = page;
+  if (cancel) call->cancel_handler = g_cancellable_connect(cancel, G_CALLBACK(+[](GCancellable*, gpointer data) {
+    auto weak = *static_cast<std::weak_ptr<NativeCloseCall>*>(data);
+    g_idle_add_full(G_PRIORITY_DEFAULT, +[](gpointer data) -> gboolean {
+      if (auto call = static_cast<std::weak_ptr<NativeCloseCall>*>(data)->lock(); call && !call->complete)
+        if (auto page = call->page.lock()) page->cancel_close();
+      return G_SOURCE_REMOVE;
+    }, new std::weak_ptr<NativeCloseCall>(weak), +[](gpointer data) { delete static_cast<std::weak_ptr<NativeCloseCall>*>(data); });
+  }), new std::weak_ptr<NativeCloseCall>(call), +[](gpointer data) { delete static_cast<std::weak_ptr<NativeCloseCall>*>(data); });
+  page->request_close([call](bool approved, bool prompted, const std::string& error) {
+    call->complete = true;
+    if (call->cancel_handler) {
+      g_cancellable_disconnect(g_task_get_cancellable(call->task), call->cancel_handler);
+      call->cancel_handler = 0;
+    }
+    if (g_task_return_error_if_cancelled(call->task)) return;
+    if (!error.empty()) g_task_return_new_error(call->task, G_IO_ERROR, G_IO_ERROR_FAILED, "%s", error.c_str());
+    else g_task_return_int(call->task, (approved ? 1 : 0) | (prompted ? 2 : 0));
+  });
+}
+gboolean ephy_engine_web_view_check_close_finish(EphyEngineView* view, GAsyncResult* result,
+                                                 gboolean* prompted, GError** error) {
+  g_return_val_if_fail(g_task_is_valid(result, view), FALSE);
+  const auto flags = g_task_propagate_int(G_TASK(result), error);
+  if (prompted) *prompted = flags >= 0 && (flags & 2);
+  return flags >= 0 && (flags & 1);
+}
+gboolean ephy_engine_web_view_close_is_approved(EphyEngineView* view) {
+  g_return_val_if_fail(EPHY_IS_ENGINE_VIEW(view), FALSE);
+  if (auto page = data(view)->browser->brave_page()) return page->close_is_approved();
+  return TRUE;
+}
+void ephy_engine_web_view_cancel_close(EphyEngineView* view) {
+  g_return_if_fail(EPHY_IS_ENGINE_VIEW(view));
+  if (auto page = data(view)->browser->brave_page()) page->cancel_close();
+}
 void ephy_engine_web_view_load_uri(EphyEngineView* v, const gchar* uri) {
   auto *view = data(v);
   view->cancel_external_uri();
@@ -1218,16 +1294,38 @@ gboolean ephy_engine_web_view_send_page_message(EphyEngineView* view, const char
   return json && PageMessages::send(*d->browser, uri, name, json);
 }
 void ephy_engine_web_view_load_alternate_html(EphyEngineView* v, const gchar* content, const gchar* content_uri, const gchar*) {
-  char* encoded = g_base64_encode(reinterpret_cast<const guchar*>(content), strlen(content));
-  std::string url = "data:text/html;charset=utf-8;base64," + std::string(encoded); g_free(encoded);
+  // CDP frameNavigated splits URL fragments into a separate field. Keep the
+  // unique document token inside the opaque payload so every event has the
+  // same lookup key and session saving never sees the data-URL transport.
   g_autofree char *id = g_uuid_string_random();
-  url += std::string("#jupiter-alternate-") + id;
+  const std::string document = "<!--jupiter-alternate-" + std::string(id) + "-->\n" + content;
+  char* encoded = g_base64_encode(reinterpret_cast<const guchar*>(document.data()), document.size());
+  std::string url = "data:text/html;charset=utf-8;base64," + std::string(encoded); g_free(encoded);
   auto *d = data(v);
   d->cancel_external_uri();
   // Keep the opaque data origin, but expose and save the intended page address.
   d->alternate_uris[url] = content_uri ? content_uri : "about:blank";
   d->browser->navigate(url);
   d->changed();
+  if (!d->host.private_mode && content_uri && *content_uri) {
+    struct CachedIcon { GWeakRef view; std::string uri; };
+    auto* pending = new CachedIcon; g_weak_ref_init(&pending->view, v); pending->uri = content_uri;
+    ephy_engine_favicon_database_get_favicon(ephy_engine_favicon_database_get_default(), content_uri, nullptr,
+      +[](GObject* database, GAsyncResult* result, gpointer data) {
+        std::unique_ptr<CachedIcon> pending(static_cast<CachedIcon*>(data));
+        auto* view = EPHY_ENGINE_VIEW(g_weak_ref_get(&pending->view)); g_weak_ref_clear(&pending->view);
+        g_autoptr(GError) error = nullptr;
+        auto* icon = ephy_engine_favicon_database_get_favicon_finish(EPHY_ENGINE_FAVICON_DATABASE(database), result, &error);
+        if (view) {
+          auto* d = ViewData::data(view);
+          if (!d->disposed && !d->host.private_mode && !d->favicon && d->visible_uri(d->browser->url) == pending->uri && icon) {
+            g_set_object(&d->favicon, icon); g_object_notify(G_OBJECT(view), "favicon");
+          }
+          g_object_unref(view);
+        }
+        g_clear_object(&icon);
+      }, pending);
+  }
 }
 void ephy_engine_web_view_stop_loading(EphyEngineView* v) { if (auto page = data(v)->browser->brave_page()) { page->stop(); return; } if (auto b=data(v)->browser->cef_browser()) b->StopLoad(); }
 gboolean ephy_engine_web_view_is_loading(EphyEngineView* v) { return data(v)->loading; }
@@ -1266,6 +1364,23 @@ void ephy_engine_web_view_set_custom_charset(EphyEngineView* v, const gchar* cha
   g_warning("Chromium does not expose a per-tab encoding override");
 }
 const EphyEnginePopupProperties* ephy_engine_web_view_get_popup_properties(EphyEngineView* v) { return &data(v)->popup_properties; }
+namespace { std::string native_user_css, native_user_js; }
+void ephy_engine_set_user_stylesheet(const char* source) {
+  native_user_css = source ? source : "";
+  JupiterBrave::set_user_content(native_user_css, native_user_js);
+}
+void ephy_engine_set_user_javascript(const char* source) {
+  native_user_js = source ? source : "";
+  JupiterBrave::set_user_content(native_user_css, native_user_js);
+}
+gboolean ephy_engine_web_view_show_password_manager(EphyEngineView* view) {
+  if (auto page = data(view)->browser->brave_page()) { page->show_password_manager(); return true; }
+  return false;
+}
+GtkWidget* ephy_engine_web_view_create_translation_controls(EphyEngineView* view) {
+  if (auto page = data(view)->browser->brave_page()) return page->create_translation_controls();
+  return nullptr;
+}
 void ephy_engine_web_view_set_zoom_level(EphyEngineView* v, gdouble zoom) {
   g_return_if_fail(std::isfinite(zoom));
   auto* d=data(v); d->zoom=std::clamp(zoom,.1,10.);
@@ -1288,19 +1403,85 @@ void ephy_engine_web_view_execute_editing_command(EphyEngineView* v, const gchar
   else if(!g_ascii_strcasecmp(command,"Redo"))frame->Redo();
 }
 EphyEngineFind* ephy_engine_web_view_get_find_controller(EphyEngineView* v) { return data(v)->find; }
-void ephy_engine_find_controller_search(EphyEngineFind* f,const gchar* text,guint32 options,guint) {
+namespace {
+struct NativeFindReply {
+  GWeakRef controller, view;
+  guint64 generation, document;
+  guint limit;
+  bool count_only, update_count;
+  NativeFindReply(EphyEngineFind* find, guint maximum, bool count, bool update)
+    : generation(find->generation), document(find->view->protocol->document_epoch),
+      limit(maximum), count_only(count), update_count(update) {
+    g_weak_ref_init(&controller, find); g_weak_ref_init(&view, find->view->self);
+  }
+  ~NativeFindReply() { g_weak_ref_clear(&controller); g_weak_ref_clear(&view); }
+};
+void native_find(EphyEngineFind* find, bool forward, bool count_only, bool update_count, guint limit) {
+  auto page = find->view->browser->brave_page();
+  if (!page) return;
+  auto reply = std::make_shared<NativeFindReply>(find, limit, count_only, update_count);
+  page->find(find->text ? find->text : "", forward,
+    !(find->options & WEBKIT_FIND_OPTIONS_CASE_INSENSITIVE), !count_only,
+    [reply](JsonObject* result, const std::string& error) {
+      auto* view = EPHY_ENGINE_VIEW(g_weak_ref_get(&reply->view));
+      auto* find = reinterpret_cast<EphyEngineFind*>(g_weak_ref_get(&reply->controller));
+      if (!view || !find) { g_clear_object(&view); g_clear_object(&find); return; }
+      auto* current = data(view);
+      if (!current->disposed && !current->detached && current->find == find &&
+          find->generation == reply->generation && current->protocol->document_epoch == reply->document) {
+        const auto total = result && error.empty() ? json_object_get_int_member_with_default(result, "count", 0) : 0;
+        const auto active = result && error.empty() ? json_object_get_int_member_with_default(result, "ordinal", 0) : 0;
+        const auto count = static_cast<guint>(std::clamp<gint64>(total, 0, reply->limit ? reply->limit : G_MAXUINT));
+        const auto ordinal = static_cast<guint>(std::clamp<gint64>(active, 0, count));
+        if (reply->count_only || reply->update_count) g_signal_emit_by_name(find, "counted-matches", count);
+        if (!reply->count_only) {
+          g_signal_emit_by_name(find, "search-result", count, ordinal);
+          if (count) g_signal_emit_by_name(find, "found-text", count);
+          else g_signal_emit_by_name(find, "failed-to-find-text");
+        }
+      }
+      g_object_unref(find); g_object_unref(view);
+    });
+}
+}
+void ephy_engine_find_controller_search(EphyEngineFind* f,const gchar* text,guint32 options,guint limit) {
   g_free(f->text); f->text=g_strdup(text); f->options=options;
+  ++f->generation;
+  if(f->view->browser->brave_page()) { native_find(f, !(options&WEBKIT_FIND_OPTIONS_BACKWARDS), false, true, limit); return; }
   if(auto b=f->view->browser->cef_browser())b->GetHost()->Find(text,!(options&WEBKIT_FIND_OPTIONS_BACKWARDS),!(options&WEBKIT_FIND_OPTIONS_CASE_INSENSITIVE),false);
 }
-void ephy_engine_find_controller_search_finish(EphyEngineFind* f) { if(auto b=f->view->browser->cef_browser())b->GetHost()->StopFinding(true); }
-void ephy_engine_find_controller_search_next(EphyEngineFind* f) { if(auto b=f->view->browser->cef_browser())b->GetHost()->Find(f->text?f->text:"",true,!(f->options&WEBKIT_FIND_OPTIONS_CASE_INSENSITIVE),true); }
-void ephy_engine_find_controller_search_previous(EphyEngineFind* f) { if(auto b=f->view->browser->cef_browser())b->GetHost()->Find(f->text?f->text:"",false,!(f->options&WEBKIT_FIND_OPTIONS_CASE_INSENSITIVE),true); }
-void ephy_engine_find_controller_count_matches(EphyEngineFind* f,const gchar* text,guint32 options,guint limit) { ephy_engine_find_controller_search(f,text,options,limit); }
+void ephy_engine_find_controller_search_finish(EphyEngineFind* f) {
+  ++f->generation;
+  if(auto page=f->view->browser->brave_page()) { page->stop_find(); return; }
+  if(auto b=f->view->browser->cef_browser())b->GetHost()->StopFinding(true);
+}
+void ephy_engine_find_controller_search_next(EphyEngineFind* f) {
+  ++f->generation;
+  if(f->view->browser->brave_page()) { native_find(f, true, false, false, G_MAXUINT); return; }
+  if(auto b=f->view->browser->cef_browser())b->GetHost()->Find(f->text?f->text:"",true,!(f->options&WEBKIT_FIND_OPTIONS_CASE_INSENSITIVE),true);
+}
+void ephy_engine_find_controller_search_previous(EphyEngineFind* f) {
+  ++f->generation;
+  if(f->view->browser->brave_page()) { native_find(f, false, false, false, G_MAXUINT); return; }
+  if(auto b=f->view->browser->cef_browser())b->GetHost()->Find(f->text?f->text:"",false,!(f->options&WEBKIT_FIND_OPTIONS_CASE_INSENSITIVE),true);
+}
+void ephy_engine_find_controller_count_matches(EphyEngineFind* f,const gchar* text,guint32 options,guint limit) {
+  if(!f->view->browser->brave_page()) { ephy_engine_find_controller_search(f,text,options,limit); return; }
+  g_free(f->text); f->text=g_strdup(text); f->options=options; ++f->generation;
+  native_find(f, !(options&WEBKIT_FIND_OPTIONS_BACKWARDS), true, false, limit);
+}
+gboolean ephy_engine_find_controller_uses_native_results(EphyEngineFind* f) { return JupiterBrave::enabled() || bool(f->view->browser->brave_page()); }
+gboolean ephy_engine_find_controller_supports_word_starts(EphyEngineFind* f) { return !ephy_engine_find_controller_uses_native_results(f); }
 guint32 ephy_engine_find_controller_get_options(EphyEngineFind* f) { return f->options; }
+gboolean ephy_engine_web_inspector_is_open(EphyEngineInspector* i) {
+  if (auto page = i->view->browser->brave_page()) return page->devtools_open();
+  auto browser = i->view->browser->cef_browser(); return browser && browser->GetHost()->HasDevTools();
+}
 void ephy_engine_web_inspector_show(EphyEngineInspector* i) {
+  if (auto page = i->view->browser->brave_page()) { page->show_devtools(); return; }
   if(auto b=i->view->browser->cef_browser()) { CefWindowInfo info; CefBrowserSettings settings; b->GetHost()->ShowDevTools(info,nullptr,settings,CefPoint()); }
 }
-void ephy_engine_web_inspector_close(EphyEngineInspector* i) { if(auto b=i->view->browser->cef_browser())b->GetHost()->CloseDevTools(); }
+void ephy_engine_web_inspector_close(EphyEngineInspector* i) { if (auto page = i->view->browser->brave_page()) { page->close_devtools(); return; } if(auto b=i->view->browser->cef_browser())b->GetHost()->CloseDevTools(); }
 namespace {
 class ScriptEvaluation final : public std::enable_shared_from_this<ScriptEvaluation> {
 public:
@@ -1584,3 +1765,5 @@ EphyEngineView* ephy_engine_view_for_browser(int id) {
 }
 
 CefRefPtr<CefBrowser> ephy_engine_view_browser(EphyEngineView* view) {return data(view)->browser->cef_browser();}
+
+std::shared_ptr<JupiterBrave::Page> ephy_engine_view_brave_page(EphyEngineView* view) { return data(view)->browser->brave_page(); }

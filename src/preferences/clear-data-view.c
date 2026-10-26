@@ -96,6 +96,12 @@ get_website_data_manager (void)
   return ephy_embed_shell_get_website_data_manager (ephy_embed_shell_get_default ());
 }
 
+static gboolean
+uses_brave (void)
+{
+  return ephy_engine_session_uses_brave (ephy_embed_shell_get_network_session (ephy_embed_shell_get_default ()));
+}
+
 G_GNUC_BEGIN_IGNORE_DEPRECATIONS
 static gboolean any_item_checked (ClearDataView *self);
 
@@ -132,7 +138,23 @@ populate_website_data (ClearDataView *clear_data_view,
   for (guint i = 0; i < G_N_ELEMENTS (data_entries); i++) {
     GtkTreeIter parent_iter;
     gboolean is_cache = data_entries[i].type == WEBKIT_WEBSITE_DATA_DISK_CACHE;
-    gboolean empty = !is_cache;
+    gboolean native = uses_brave ();
+    gboolean empty = !is_cache && !native;
+    const char *native_name = NULL;
+
+    if (native) {
+      switch (data_entries[i].type) {
+        case WEBKIT_WEBSITE_DATA_LOCAL_STORAGE: native_name = _("Local storage (all websites)"); break;
+        case WEBKIT_WEBSITE_DATA_INDEXEDDB_DATABASES: native_name = _("IndexedDB databases (all websites)"); break;
+        case WEBKIT_WEBSITE_DATA_SERVICE_WORKER_REGISTRATIONS: native_name = _("Service workers (all websites)"); break;
+        case WEBKIT_WEBSITE_DATA_DOM_CACHE: native_name = _("CacheStorage (all websites)"); break;
+        default: break;
+      }
+    }
+    if (native && !(data_entries[i].type & (WEBKIT_WEBSITE_DATA_COOKIES | WEBKIT_WEBSITE_DATA_DISK_CACHE |
+        WEBKIT_WEBSITE_DATA_LOCAL_STORAGE | WEBKIT_WEBSITE_DATA_INDEXEDDB_DATABASES |
+        WEBKIT_WEBSITE_DATA_SERVICE_WORKER_REGISTRATIONS | WEBKIT_WEBSITE_DATA_DOM_CACHE)))
+      continue;
 
     if (data_entries[i].type == WEBKIT_WEBSITE_DATA_COOKIES)
       continue;
@@ -144,7 +166,7 @@ populate_website_data (ClearDataView *clear_data_view,
     gtk_tree_store_insert_with_values (treestore, &parent_iter, NULL, -1,
                                        TYPE_COLUMN, data_entries[i].type,
                                        ACTIVE_COLUMN, active_items & data_entries[i].id,
-                                       NAME_COLUMN, _(data_entries[i].name),
+                                       NAME_COLUMN, native_name ? native_name : _(data_entries[i].name),
                                        DATA_COLUMN, NULL,
                                        SENSITIVE_COLUMN, TRUE,
                                        -1);
@@ -298,7 +320,9 @@ clear_operation_done (ClearOperation *operation,
       adw_toast_overlay_add_toast (ephy_data_view_get_toast_overlay (EPHY_DATA_VIEW (view)), toast);
       ephy_data_view_set_is_loading (EPHY_DATA_VIEW (view), operation->reload_sites);
       ephy_data_view_set_can_clear (EPHY_DATA_VIEW (view), !operation->reload_sites && any_item_checked (view));
-      if (operation->reload_sites)
+      if (operation->reload_sites && uses_brave ())
+        populate_website_data (view, NULL);
+      else if (operation->reload_sites)
         webkit_website_data_manager_fetch (get_website_data_manager (), PERSISTENT_DATA_TYPES,
                                            view->cancellable, (GAsyncReadyCallback)website_data_fetched_cb, weak_view_new (view));
       if (operation->reload_cookies)
@@ -329,6 +353,16 @@ cache_cleared_cb (EphyEngineSession *session,
 {
   GError *error = NULL;
   ephy_engine_session_clear_cache_finish (session, result, &error);
+  clear_operation_done (operation, error);
+}
+
+static void
+native_storage_cleared_cb (EphyEngineSession *session,
+                          GAsyncResult *result,
+                          ClearOperation *operation)
+{
+  GError *error = NULL;
+  ephy_engine_session_clear_website_storage_finish (session, result, &error);
   clear_operation_done (operation, error);
 }
 
@@ -454,7 +488,17 @@ on_clear_button_clicked (ClearDataView *clear_data_view)
     }
   }
   g_list_free_full (cookie_domains, g_free);
-  if (types_to_clear) {
+  if (types_to_clear && uses_brave ()) {
+    const char *types[5] = { NULL };
+    guint count = 0;
+    if (types_to_clear & WEBKIT_WEBSITE_DATA_LOCAL_STORAGE) types[count++] = "localStorage";
+    if (types_to_clear & WEBKIT_WEBSITE_DATA_INDEXEDDB_DATABASES) types[count++] = "indexedDB";
+    if (types_to_clear & WEBKIT_WEBSITE_DATA_SERVICE_WORKER_REGISTRATIONS) types[count++] = "serviceWorkers";
+    if (types_to_clear & WEBKIT_WEBSITE_DATA_DOM_CACHE) types[count++] = "cacheStorage";
+    operation->pending++;
+    ephy_engine_session_clear_website_storage (ephy_embed_shell_get_network_session (ephy_embed_shell_get_default ()),
+      types, clear_data_view->cancellable, (GAsyncReadyCallback)native_storage_cleared_cb, operation);
+  } else if (types_to_clear) {
     operation->pending++;
     webkit_website_data_manager_clear (get_website_data_manager (),
                                        types_to_clear, 0,
@@ -706,7 +750,8 @@ clear_data_view_init (ClearDataView *clear_data_view)
   clear_data_view->cancellable = g_cancellable_new ();
   fetch_cookies (clear_data_view);
 
-  webkit_website_data_manager_fetch (get_website_data_manager (),
+  if (!uses_brave ())
+    webkit_website_data_manager_fetch (get_website_data_manager (),
                                      PERSISTENT_DATA_TYPES,
                                      clear_data_view->cancellable,
                                      (GAsyncReadyCallback)website_data_fetched_cb,

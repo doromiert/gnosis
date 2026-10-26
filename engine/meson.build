@@ -4,16 +4,26 @@ ublock_dir = get_option('ublock_dir')
 if cef_root == '' or ublock_dir == ''
   error('Set cef_root to the pinned CEF SDK and ublock_dir to official full uBlock Origin; nix develop supplies both.')
 endif
+if get_option('cef_runtime') == 'linked' and not fs.is_absolute(cef_root)
+  error('Linked CEF runtime requires an absolute, immutable SDK location.')
+endif
 # ICU is located relative to the loaded libcef.so, including development builds.
-foreach name : ['libcef.so', 'libEGL.so', 'libGLESv2.so', 'libvulkan.so.1', 'libvk_swiftshader.so', 'vk_swiftshader_icd.json', 'snapshot_blob.bin', 'v8_context_snapshot.bin', 'chrome-sandbox']
-  if fs.exists(cef_root / 'Release' / name)
-    run_command('ln', '-sfn', cef_root / 'Release' / name, meson.current_build_dir() / name, check: true)
-  endif
-endforeach
-foreach name : ['icudtl.dat', 'chrome_100_percent.pak', 'chrome_200_percent.pak', 'resources.pak', 'locales']
-  if fs.exists(cef_root / 'Resources' / name)
-    run_command('ln', '-sfn', cef_root / 'Resources' / name, meson.current_build_dir() / name, check: true)
-  endif
+# Immutable SDKs can be referenced directly instead of recopying/stripping CEF
+# in every application output. Portable installers keep the default copy mode.
+cef_runtime = {
+  'Release': ['libcef.so', 'libEGL.so', 'libGLESv2.so', 'libvulkan.so.1', 'libvk_swiftshader.so', 'vk_swiftshader_icd.json', 'snapshot_blob.bin', 'v8_context_snapshot.bin', 'chrome-sandbox'],
+  'Resources': ['icudtl.dat', 'chrome_100_percent.pak', 'chrome_200_percent.pak', 'resources.pak', 'locales'],
+}
+foreach directory, names : cef_runtime
+  foreach name : names
+    source = cef_root / directory / name
+    if fs.exists(source)
+      run_command('ln', '-sfn', source, meson.current_build_dir() / name, check: true)
+      if get_option('cef_runtime') == 'linked'
+        install_symlink(name, pointing_to: source, install_dir: pkglibdir / 'cef')
+      endif
+    endif
+  endforeach
 endforeach
 cpp = meson.get_compiler('cpp')
 cef_dep = cpp.find_library('cef', dirs: meson.current_build_dir())
@@ -46,7 +56,7 @@ foreach item : [
 ]
   compositor_protocols += custom_target(item[1], input: protocol_dir / item[0], output: item[1], command: [scanner, item[2], '@INPUT@', '@OUTPUT@'])
 endforeach
-compositor_deps = [gtk_dep, json_glib_dep, dependency('gio-unix-2.0'), dependency('wlroots-0.19'), dependency('wayland-server'), dependency('wayland-client'), dependency('xkbcommon'), dependency('libdrm'), dependency('glesv2'), dependency('pixman-1')]
+compositor_deps = [gtk_dep, json_glib_dep, libxml_dep, dependency('gio-unix-2.0'), dependency('wlroots-0.19'), dependency('wayland-server'), dependency('wayland-client'), dependency('xkbcommon'), dependency('libdrm'), dependency('glesv2'), dependency('pixman-1')]
 compositor_lib = static_library('jupiter-compositor', ['brave/compositor.c', 'brave/outer-pointer.c', 'brave/clipboard-bridge.c', 'brave/profile.c', compositor_protocols],
   dependencies: compositor_deps, c_args: ['-Wno-declaration-after-statement'], pic: true)
 compositor_dep = declare_dependency(link_with: compositor_lib, dependencies: compositor_deps)
@@ -54,21 +64,30 @@ engine = static_library('jupiter-engine',
   ['brave/browser.cpp', 'ephy-engine-download.cpp', 'ephy-engine-authentication.cpp', 'ephy-engine-client-certificate.cpp', 'ephy-engine-extensions.cpp', 'ephy-engine-permission.cpp', 'ephy-engine-session.cpp', 'ephy-engine-response.cpp', 'ephy-engine-settings.cpp', 'ephy-engine-origin.cpp', 'ephy-engine-certificate.cpp', 'ephy-engine-favicon.c', 'ephy-engine-view.cpp', 'ephy-engine-scheme.cpp', 'ephy-engine-print.cpp', 'select/application.cpp', 'select/browser.cpp', 'select/file-dialog.cpp', 'select/page-messages.cpp', 'select/webstore-guard.cpp', 'select/clipboard.cpp',
    'select/cursor.cpp', 'select/policy.cpp', 'select/extensions.cpp', 'select/extension-host.cpp', engine_resource],
   include_directories: engine_includes,
-  dependencies: [gtk_dep, libadwaita_dep, json_glib_dep, libsoup_dep, webkitgtk_dep, dependency('epoxy'), dependency('x11'), compositor_dep, cef_dep, wrapper_dep],
+  dependencies: [gtk_dep, libadwaita_dep, json_glib_dep, libsoup_dep, webkitgtk_dep, dependency('epoxy'), dependency('x11'), dependency('libqrencode'), compositor_dep, cef_dep, wrapper_dep],
   cpp_args: ['-DCEF_RESOURCE_DIR="' + cef_root / 'Resources' + '"',
     '-DJUPITER_UBLOCK_DIR="' + ublock_dir + '"',
     '-DJUPITER_BRIDGE_DIR="' + bridge_dir + '"',
     '-DJUPITER_MANAGER_DIR="' + manager_dir + '"',
+    '-DJUPITER_KEEPASSXC_DIR="' + get_option('keepassxc_dir') + '"',
     '-DJUPITER_NATIVE_INTEGRATION_DIR="' + integration_dir + '"'],
   pic: true)
 ephyengine_dep = declare_dependency(link_with: engine, include_directories: include_directories('.'), dependencies: [cef_dep, wrapper_dep, json_glib_dep])
-install_subdir(cef_root / 'Resources', install_dir: pkglibdir / 'cef', strip_directory: true)
-install_subdir(cef_root / 'Release', install_dir: pkglibdir / 'cef', strip_directory: true)
+if get_option('cef_runtime') == 'copy'
+  install_subdir(cef_root / 'Resources', install_dir: pkglibdir / 'cef', strip_directory: true)
+  install_subdir(cef_root / 'Release', install_dir: pkglibdir / 'cef', strip_directory: true)
+endif
 install_subdir('data/tab-bridge', install_dir: pkgdatadir)
 install_subdir('data/extension-manager', install_dir: pkgdatadir)
 install_subdir('data/native-integration', install_dir: pkgdatadir)
 install_data(cef_root / 'LICENSE.txt', cef_root / 'CREDITS.html', install_dir: datadir / 'licenses/jupiter-cef')
 if get_option('unit_tests').enabled()
+  private_profile_test = executable('brave-private-profile-test', 'tests/private-profile-test.cpp',
+    dependencies: [glib_dep], include_directories: include_directories('.'), cpp_args: ['-UNDEBUG'])
+  test('Brave private profile ownership', private_profile_test)
+  bundled_extension_test = executable('brave-bundled-extension-test', 'tests/bundled-extension-test.cpp',
+    dependencies: [glib_dep, json_glib_dep], include_directories: include_directories('.'), cpp_args: ['-UNDEBUG'])
+  test('Brave bundled extension updates', bundled_extension_test)
   extension_probe = executable('extension-probe', 'tests/extension-probe.cpp',
     dependencies: [ephyengine_dep, gtk_dep, libadwaita_dep, webkitgtk_dep],
     include_directories: engine_includes)

@@ -20,6 +20,7 @@ embed/ephy-web-view.c
 embed/web-process-extension/ephy-web-process-extension.c
 embed/web-process-extension/resources/js/ephy.js
 embed/web-process-extension/resources/js/overview.js
+engine/brave/browser.cpp
 lib/contrib/gnome-languages.c
 lib/ephy-file-dialog-utils.c
 lib/ephy-file-helpers.c

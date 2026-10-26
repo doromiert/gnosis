@@ -4,7 +4,7 @@ pkgs.stdenv.mkDerivation {
   version = "0.0.1";
   src = ./.;
   nativeBuildInputs = [ pkgs.pkg-config pkgs.wrapGAppsHook4 pkgs.wayland-scanner ];
-  buildInputs = [ pkgs.gtk4 pkgs.libadwaita pkgs.json-glib pkgs.wlroots_0_19 pkgs.wayland pkgs.wayland-protocols pkgs.libxkbcommon pkgs.libdrm pkgs.pixman pkgs.libglvnd ];
+  buildInputs = [ pkgs.gtk4 pkgs.libadwaita pkgs.json-glib pkgs.libxml2 pkgs.wlroots_0_19 pkgs.wayland pkgs.wayland-protocols pkgs.libxkbcommon pkgs.libdrm pkgs.pixman pkgs.libglvnd ];
   dontConfigure = true;
   buildPhase = ''
     wayland-scanner server-header ${pkgs.wayland-protocols}/share/wayland-protocols/stable/xdg-shell/xdg-shell.xml xdg-shell-protocol.h
@@ -15,7 +15,7 @@ pkgs.stdenv.mkDerivation {
     wayland-scanner client-header ${pkgs.wayland-protocols}/share/wayland-protocols/unstable/relative-pointer/relative-pointer-unstable-v1.xml relative-pointer-client.h
     wayland-scanner private-code ${pkgs.wayland-protocols}/share/wayland-protocols/unstable/relative-pointer/relative-pointer-unstable-v1.xml relative-pointer-code.c
     $CC -std=gnu11 -O2 -Wall -Wextra -I. compositor.c outer-pointer.c clipboard-bridge.c profile.c compositor-probe.c pointer-constraints-code.c relative-pointer-code.c -o jupiter-compositor-probe \
-      $(pkg-config --cflags --libs gtk4-wayland libadwaita-1 json-glib-1.0 gio-unix-2.0 wlroots-0.19 wayland-server wayland-client xkbcommon libdrm pixman-1)
+      $(pkg-config --cflags --libs gtk4-wayland libadwaita-1 json-glib-1.0 gio-unix-2.0 libxml-2.0 wlroots-0.19 wayland-server wayland-client xkbcommon libdrm pixman-1)
   '';
   installPhase = ''
     mkdir -p $out/bin

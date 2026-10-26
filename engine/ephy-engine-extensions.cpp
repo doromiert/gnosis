@@ -1,6 +1,8 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 #include "ephy-engine-extensions.h"
 #include "select/devtools.hpp"
+#include "brave/browser.hpp"
+#include <filesystem>
 #include "select/extensions.hpp"
 #include "include/cef_browser.h"
 #include "include/cef_client.h"
@@ -16,6 +18,163 @@
 #include <vector>
 
 namespace {
+// Brave inventory is queried through the packaged worker's private CDP session.
+// Private sessions cannot query or mutate the regular profile's extensions.
+Extensions* native_store = nullptr;
+JsonArray* native_snapshot = nullptr;
+
+struct NativeRequest {
+  GTask* task;
+  std::string method, arguments;
+  gint64 deadline = g_get_monotonic_time() + 30 * G_USEC_PER_SEC;
+  bool sent = false, completed = false;
+  ~NativeRequest() { g_object_unref(task); }
+};
+
+JsonArray* native_inventory(JsonObject* result) {
+  auto* remote = result && json_object_has_member(result, "result") ? json_object_get_object_member(result, "result") : nullptr;
+  auto* value = remote ? json_object_get_member(remote, "value") : nullptr;
+  if (!value || !JSON_NODE_HOLDS_ARRAY(value)) return nullptr;
+  const std::string profile = json_object_get_string_member_with_default(result, "profile", "");
+  g_autoptr(JsonParser) prefs = json_parser_new();
+  JsonObject* settings = nullptr;
+  if (json_parser_load_from_file(prefs, (profile + "/Default/Preferences").c_str(), nullptr) &&
+      JSON_NODE_HOLDS_OBJECT(json_parser_get_root(prefs))) {
+    auto* root = json_node_get_object(json_parser_get_root(prefs));
+    auto* extensions = json_object_has_member(root, "extensions") ? json_object_get_object_member(root, "extensions") : nullptr;
+    settings = extensions && json_object_has_member(extensions, "settings") ? json_object_get_object_member(extensions, "settings") : nullptr;
+  }
+  auto* output = json_array_new();
+  auto* input = json_node_get_array(value);
+  for (guint i = 0; i < json_array_get_length(input); ++i) {
+    auto* actual = json_array_get_object_element(input, i);
+    const std::string id = json_object_get_string_member_with_default(actual, "id", "");
+    if (id == "giohadoodmdcadnkcpdmhmmdnaidnckm") continue; // Internal KeePassXC service, owned by the GTK shell.
+    if (id.size() != 32 || !std::all_of(id.begin(), id.end(), [](char c) { return c >= 'a' && c <= 'p'; })) continue;
+    auto* item = json_object_new();
+    for (const auto& [to, from] : {std::pair{"id", "id"}, {"name", "name"}, {"version", "version"},
+         {"description", "description"}, {"homepage", "homepageUrl"}})
+      json_object_set_string_member(item, to, json_object_get_string_member_with_default(actual, from, ""));
+    for (const char* key : {"path", "popup", "options", "author", "icon"}) json_object_set_string_member(item, key, "");
+    json_object_set_boolean_member(item, "enabled", json_object_get_boolean_member_with_default(actual, "enabled", false));
+    for (const char* key : {"available", "loaded"}) json_object_set_boolean_member(item, key, true);
+    json_object_set_boolean_member(item, "restart_required", false);
+    json_object_set_boolean_member(item, "has_action", false);
+    json_object_set_boolean_member(item, "builtin", false);
+    json_object_set_int_member(item, "manifest_version", 0);
+    // Read only the registered extension's manifest. If preferences have not
+    // flushed yet, locate its exact native version under the profile store.
+    std::string path;
+    auto* registration = settings && json_object_has_member(settings, id.c_str()) ? json_object_get_object_member(settings, id.c_str()) : nullptr;
+    if (registration) path = json_object_get_string_member_with_default(registration, "path", "");
+    if (!path.empty() && !g_path_is_absolute(path.c_str())) path = profile + "/Default/Extensions/" + path;
+    // management reports a fresh unpacked install before Brave flushes its
+    // Preferences file. Use our validated install record for manifest metadata;
+    // enabled/installed authority still comes exclusively from management.
+    if (path.empty() && native_store)
+      for (const auto& installed : native_store->installed)
+        if (installed.id == id) { path = installed.path; break; }
+    if (path.empty()) {
+      try {
+        auto builtin = Extensions::read_manifest(profile + "/builtin-ublock");
+        if (builtin.id == id) path = builtin.path;
+      } catch (const std::exception&) { /* No packaged provider installed. */ }
+    }
+    if (path.empty()) {
+      std::error_code error;
+      for (std::filesystem::directory_iterator directories(profile + "/Default/Extensions/" + id, error), end;
+           !error && directories != end; directories.increment(error)) {
+        if (directories->path().filename().string().starts_with(std::string(json_object_get_string_member_with_default(actual, "version", "")) + "_")) {
+          path = directories->path().string(); break;
+        }
+      }
+    }
+    if (id == "giohadoodmdcadnkcpdmhmmdnaidnckm" && *JUPITER_KEEPASSXC_DIR) {
+      path = JUPITER_KEEPASSXC_DIR;
+      json_object_set_boolean_member(item, "builtin", true);
+    }
+    g_autoptr(JsonParser) manifest_parser = json_parser_new();
+    if (!path.empty() && json_parser_load_from_file(manifest_parser, (path + "/manifest.json").c_str(), nullptr) &&
+        JSON_NODE_HOLDS_OBJECT(json_parser_get_root(manifest_parser))) {
+      auto* manifest = json_node_get_object(json_parser_get_root(manifest_parser));
+      json_object_set_string_member(item, "path", path.c_str());
+      json_object_set_string_member(item, "author", json_object_get_string_member_with_default(manifest, "author", ""));
+      json_object_set_int_member(item, "manifest_version", json_object_get_int_member_with_default(manifest, "manifest_version", 0));
+      for (const char* key : {"action", "browser_action", "page_action"}) {
+        auto* node = json_object_get_member(manifest, key);
+        if (!node || !JSON_NODE_HOLDS_OBJECT(node)) continue;
+        json_object_set_boolean_member(item, "has_action", true);
+        json_object_set_string_member(item, "popup", json_object_get_string_member_with_default(json_node_get_object(node), "default_popup", ""));
+      }
+      std::string options = json_object_get_string_member_with_default(manifest, "options_page", "");
+      auto* ui = json_object_get_member(manifest, "options_ui");
+      if (ui && JSON_NODE_HOLDS_OBJECT(ui)) options = json_object_get_string_member_with_default(json_node_get_object(ui), "page", options.c_str());
+      json_object_set_string_member(item, "options", options.c_str());
+      auto* icons = json_object_get_member(manifest, "icons");
+      if (icons && JSON_NODE_HOLDS_OBJECT(icons)) {
+        auto* values = json_node_get_object(icons);
+        g_autoptr(GList) keys = json_object_get_members(values);
+        int distance = G_MAXINT;
+        for (auto* key = keys; key; key = key->next) {
+          const char* size = static_cast<const char*>(key->data);
+          auto* icon = json_object_get_member(values, size);
+          if (!JSON_NODE_HOLDS_VALUE(icon) || json_node_get_value_type(icon) != G_TYPE_STRING) continue;
+          int candidate = std::abs(g_ascii_strtoll(size, nullptr, 10) - 48);
+          if (candidate >= distance) continue;
+          std::error_code error;
+          auto base = std::filesystem::weakly_canonical(path, error).string();
+          auto file = std::filesystem::weakly_canonical(std::filesystem::path(path) / json_node_get_string(icon), error).string();
+          if (!error && file.starts_with(base + "/") && g_file_test(file.c_str(), G_FILE_TEST_IS_REGULAR)) {
+            json_object_set_string_member(item, "icon", file.c_str()); distance = candidate;
+          }
+        }
+      }
+    }
+    json_array_add_object_element(output, item);
+  }
+  return output;
+}
+
+void native_request(EphyEngineSession* session, GCancellable* cancellable, GAsyncReadyCallback callback,
+                    gpointer user_data, gpointer tag, const std::string& method, const std::string& arguments) {
+  auto request = std::make_shared<NativeRequest>();
+  request->task = g_task_new(session, cancellable, callback, user_data);
+  g_task_set_source_tag(request->task, tag);
+  request->method = method; request->arguments = arguments;
+  if (ephy_engine_session_is_ephemeral(session)) {
+    g_task_return_new_error(request->task, G_IO_ERROR, G_IO_ERROR_PERMISSION_DENIED,
+                           "Extensions are managed only in the regular profile");
+    return;
+  }
+  g_timeout_add_full(G_PRIORITY_DEFAULT, 50, +[](gpointer data) -> gboolean {
+    auto request = *static_cast<std::shared_ptr<NativeRequest>*>(data);
+    if (request->completed) return G_SOURCE_REMOVE;
+    if (g_task_return_error_if_cancelled(request->task)) {
+      request->completed = true; return G_SOURCE_REMOVE;
+    }
+    if (g_get_monotonic_time() >= request->deadline) {
+      request->completed = true;
+      g_task_return_new_error(request->task, G_IO_ERROR, G_IO_ERROR_TIMED_OUT, "Brave's extension manager did not respond");
+      return G_SOURCE_REMOVE;
+    }
+    if (!request->sent) request->sent = JupiterBrave::extensions_call(request->method, request->arguments,
+      [request](JsonObject* result, const std::string& error) {
+        if (request->completed) return;
+        request->completed = true;
+        if (g_task_return_error_if_cancelled(request->task)) return;
+        auto* inventory = native_inventory(result);
+        if (!inventory) g_task_return_new_error(request->task, G_IO_ERROR, G_IO_ERROR_FAILED,
+          "%s", error.empty() ? "Brave returned an invalid extension inventory" : error.c_str());
+        else {
+          g_clear_pointer(&native_snapshot, json_array_unref);
+          native_snapshot = json_array_ref(inventory);
+          g_task_return_pointer(request->task, inventory, reinterpret_cast<GDestroyNotify>(json_array_unref));
+        }
+      });
+    return G_SOURCE_CONTINUE;
+  }, new std::shared_ptr<NativeRequest>(request), +[](gpointer data) { delete static_cast<std::shared_ptr<NativeRequest>*>(data); });
+}
+
 std::string quote(const std::string &text) {
   auto value = CefValue::Create();
   value->SetString(text);
@@ -529,7 +688,11 @@ void ephy_engine_extensions_initialize(JsonArray *owned, CefRefPtr<CefRequestCon
   }
 }
 
-void ephy_engine_extensions_close() { if (service) service->close(); }
+JsonArray* ephy_engine_extensions_dup_native_snapshot(void) {
+  return native_snapshot ? json_array_ref(native_snapshot) : json_array_new();
+}
+void ephy_engine_extensions_initialize_brave(Extensions* store) { native_store = store; }
+void ephy_engine_extensions_close() { native_store = nullptr; g_clear_pointer(&native_snapshot, json_array_unref); if (service) service->close(); }
 bool ephy_engine_extensions_is_closed() { return !service || service->closed; }
 void ephy_engine_extensions_shutdown() {
   if (!service) return;
@@ -539,6 +702,11 @@ void ephy_engine_extensions_shutdown() {
 
 void ephy_engine_extensions_query_async(EphyEngineSession *session, GCancellable *cancellable,
                                         GAsyncReadyCallback callback, gpointer user_data) {
+  if (JupiterBrave::enabled()) {
+    native_request(session, cancellable, callback, user_data,
+      reinterpret_cast<gpointer>(ephy_engine_extensions_query_async), "inventory", "");
+    return;
+  }
   begin(session, make_request(session, cancellable, callback, user_data,
                               reinterpret_cast<gpointer>(ephy_engine_extensions_query_async)));
 }
@@ -553,6 +721,13 @@ JsonArray *ephy_engine_extensions_query_finish(EphyEngineSession *session, GAsyn
 }
 void ephy_engine_extensions_set_enabled_async(EphyEngineSession *session, const char *id, gboolean enabled,
                                               GCancellable *cancellable, GAsyncReadyCallback callback, gpointer user_data) {
+  if (JupiterBrave::enabled()) {
+    const std::string target = id ? id : "";
+    native_request(session, cancellable, callback, user_data,
+      reinterpret_cast<gpointer>(ephy_engine_extensions_set_enabled_async), "setEnabled",
+      JupiterBrave::quote(target) + (enabled ? ",true" : ",false"));
+    return;
+  }
   auto request = make_request(session, cancellable, callback, user_data,
                                reinterpret_cast<gpointer>(ephy_engine_extensions_set_enabled_async));
   request->mutate = true; request->enabled = enabled; request->id = id ? id : "";
@@ -585,6 +760,76 @@ JsonObject *installation_metadata(const Extension &extension) {
   json_object_set_boolean_member(item, "loaded", false);
   json_object_set_boolean_member(item, "restart_required", true);
   return item;
+}
+
+void native_install(EphyEngineSession* session, GFile* directory, GCancellable* cancellable,
+                    GAsyncReadyCallback callback, gpointer user_data) {
+  auto* task = g_task_new(session, cancellable, callback, user_data);
+  g_task_set_source_tag(task, reinterpret_cast<gpointer>(ephy_engine_extensions_install_unpacked_async));
+  // Once published, report the real install result even if its preferences closes.
+  g_task_set_check_cancellable(task, false);
+  g_autofree char* path = G_IS_FILE(directory) ? g_file_get_path(directory) : nullptr;
+  if (!native_store || ephy_engine_session_is_ephemeral(session) || !path || !*path) {
+    g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_PERMISSION_DENIED,
+      "Choose a local unpacked extension in the regular profile");
+    g_object_unref(task); return;
+  }
+  struct Pending {
+    Extensions* store;
+    std::string source, destination;
+    GTask* task;
+    ~Pending() { g_object_unref(task); }
+  };
+  auto* pending = new Pending{native_store, path, native_store->directory(), task};
+  auto* worker = g_task_new(session, cancellable, +[](GObject*, GAsyncResult* result, gpointer) {
+    auto* pending = static_cast<Pending*>(g_task_get_task_data(G_TASK(result)));
+    GError* error = nullptr;
+    std::unique_ptr<Extensions::PendingInstall> installation(static_cast<Extensions::PendingInstall*>(
+      g_task_propagate_pointer(G_TASK(result), &error)));
+    if (!installation) { g_task_return_error(pending->task, error); return; }
+    if (!native_store || native_store != pending->store) {
+      g_task_return_new_error(pending->task, G_IO_ERROR, G_IO_ERROR_CLOSED, "The extension manager is closed"); return;
+    }
+    if (g_task_return_error_if_cancelled(pending->task)) return;
+    try {
+      // Reject duplicate IDs before publication, including fixed-key packages.
+      for (const auto& existing : native_store->installed) if (existing.id == installation->extension.id) {
+        g_task_return_new_error(pending->task, G_IO_ERROR, G_IO_ERROR_EXISTS, "An extension with this ID is already installed"); return;
+      }
+      native_store->commit_install(*installation);
+      auto* metadata = installation_metadata(installation->extension);
+      auto task = std::shared_ptr<GTask>(G_TASK(g_object_ref(pending->task)), g_object_unref);
+      if (!JupiterBrave::extensions_load(installation->extension.path, [task, metadata](JsonObject* result, const std::string& error) {
+        if (result) {
+          json_object_set_string_member(metadata, "id", json_object_get_string_member_with_default(result, "id", ""));
+          for (const char* key : {"loaded", "available", "enabled"}) json_object_set_boolean_member(metadata, key, true);
+          json_object_set_boolean_member(metadata, "restart_required", false);
+          g_signal_emit_by_name(g_task_get_source_object(task.get()), "extensions-changed");
+          g_task_return_pointer(task.get(), metadata, reinterpret_cast<GDestroyNotify>(json_object_unref));
+        } else {
+          json_object_unref(metadata);
+          g_task_return_new_error(task.get(), G_IO_ERROR, G_IO_ERROR_FAILED, "Brave could not load the saved extension: %s", error.c_str());
+        }
+      })) {
+        json_object_unref(metadata);
+        g_task_return_new_error(task.get(), G_IO_ERROR, G_IO_ERROR_NOT_CONNECTED,
+          "Extension saved; restart Jupiter to load it when Brave is available");
+      }
+    } catch (const std::exception& error) {
+      g_task_return_new_error(pending->task, G_IO_ERROR, G_IO_ERROR_FAILED, "%s", error.what());
+    }
+  }, nullptr);
+  g_task_set_task_data(worker, pending, +[](gpointer data) { delete static_cast<Pending*>(data); });
+  g_task_run_in_thread(worker, +[](GTask* task, gpointer, gpointer data, GCancellable* token) {
+    auto* pending = static_cast<Pending*>(data);
+    try {
+      auto install = Extensions::prepare_install(pending->source, pending->destination, token);
+      g_task_return_pointer(task, install.release(), +[](gpointer data) { delete static_cast<Extensions::PendingInstall*>(data); });
+    } catch (const std::exception& error) {
+      g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_INVALID_DATA, "%s", error.what());
+    }
+  });
+  g_object_unref(worker);
 }
 
 void installation_prepared(GObject *source, GAsyncResult *result, gpointer user_data) {
@@ -633,6 +878,7 @@ void ephy_engine_extensions_install_unpacked_async(EphyEngineSession *session, G
                                                   GCancellable *cancellable, GAsyncReadyCallback callback,
                                                   gpointer user_data) {
   g_return_if_fail(EPHY_IS_ENGINE_SESSION(session));
+  if (JupiterBrave::enabled()) { native_install(session, directory, cancellable, callback, user_data); return; }
   auto *task = g_task_new(session, cancellable, callback, user_data);
   g_task_set_source_tag(task, reinterpret_cast<gpointer>(ephy_engine_extensions_install_unpacked_async));
   g_task_set_check_cancellable(task, false);

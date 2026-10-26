@@ -2661,7 +2661,20 @@ ephy_web_view_has_modified_forms (EphyWebView         *view,
   g_task_set_task_data (task, GINT_TO_POINTER (id), NULL);
 
   ephy_engine_web_view_evaluate_javascript (EPHY_ENGINE_VIEW (view),
-                                       "Ephy.hasModifiedForms();", -1,
+                                       /* This isolated world does not contain WebKit's Ephy helper.
+                                        * Compare form defaults directly, preserving the small-search
+                                        * heuristic without relying on a retired web extension. */
+                                       "(() => { let changedInputs = 0; "
+                                       "for (const element of document.querySelectorAll('input,textarea')) { "
+                                       "if (element.disabled || element.readOnly) continue; "
+                                       "if (element instanceof HTMLTextAreaElement) { "
+                                       "if (element.value !== element.defaultValue) return true; "
+                                       "} else if (/^(checkbox|radio)$/.test(element.type)) { "
+                                       "if (element.checked !== element.defaultChecked) return true; "
+                                       "} else if (/^(text|search|url|email|tel|password|number)$/.test(element.type) "
+                                       "&& element.value !== element.defaultValue) { "
+                                       "if (element.value.length > 50 || ++changedInputs > 1) return true; "
+                                       "} } return false; })()", -1,
                                        ephy_embed_shell_get_guid (ephy_embed_shell_get_default ()),
                                        NULL,
                                        cancellable,
@@ -3074,7 +3087,7 @@ ephy_web_view_load_homepage (EphyWebView *view)
   } else {
     ephy_web_view_freeze_history (view);
     ephy_web_view_set_visit_type (view, EPHY_PAGE_VISIT_HOMEPAGE);
-    ephy_web_view_load_url (view, home);
+    ephy_web_view_load_url (view, g_str_equal (home, "about:newtab") ? "about:blank" : home);
   }
   g_free (home);
 }
@@ -3096,8 +3109,10 @@ ephy_web_view_load_new_tab_page (EphyWebView *view)
     ephy_web_view_load_url (view, "about:incognito");
   else if (mode == EPHY_EMBED_SHELL_MODE_AUTOMATION)
     ephy_web_view_load_url (view, "about:blank");
-  else
-    ephy_web_view_load_url (view, "about:overview");
+  else {
+    g_autofree char *home = g_settings_get_string (EPHY_SETTINGS_MAIN, EPHY_PREFS_HOMEPAGE_URL);
+    ephy_web_view_load_url (view, !home || !*home ? "about:overview" : g_str_equal (home, "about:newtab") ? "about:blank" : home);
+  }
 }
 
 /**

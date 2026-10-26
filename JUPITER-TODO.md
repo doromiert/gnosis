@@ -1,6 +1,6 @@
-# Jupiter progress
+# Gnosis progress
 
-Updated: 2026-10-25. The active migration embeds Brave in Epiphany's GTK shell;
+Updated: 2026-10-26. The active migration embeds Brave in Epiphany's GTK shell;
 current implementation details and remaining gaps are in `BRAVE-MIGRATION.md`.
 The CEF entries below preserve earlier work and do not establish Brave coverage.
 Checked items describe verified behavior,
@@ -8,6 +8,48 @@ not complete coverage of the surrounding feature. Development checkpoints live
 on `main`; nothing here implies a published release.
 
 Status: `[ ]` planned, `[o]` in progress, `[x]` verified complete.
+
+- [x] Read the GTK extension inventory and toggles from real Brave management,
+  including live native install/remove events and actual Web Store installs.
+  Exclude the packaged integration worker and stop seeding fake/stale uBlock
+  rows from CEF's bundled catalog. Full native uBlock regression passed.
+- [x] Load validated unpacked installations into Brave immediately; reject
+  regular-profile extension management from ephemeral sessions.
+- [x] Replace extension uninstall confirmation with the native-model GTK bridge;
+  native and actual GTK Cancel/Remove/report-checkbox checks pass.
+- [x] Add the GTK zoom OSD: current percentage, three-second timeout refreshed
+  by further zoom changes, native GTK overlay instead of the Chromium bubble.
+- [x] Verify reader-mode transport and automatic translation-offer suppression.
+- [x] Add Translate Page as a GTK site-menu submenu using native full-page
+  translation, language selection, progress/errors and native Show Original.
+  Actual GTK submenu translate/revert/navigation and native stale-page checks pass.
+- [o] Investigate the 2026-10-25 15:05:12 GPU-process SIGTRAP freeze. Fix the
+  separately confirmed LD_PRELOAD leak into external tools without claiming
+  that this alone fixes the GPU crash.
+
+Custom tab experiment is archived on `archive/select-custom-tabs`. The active
+shell uses the original AdwTabBar and AdwTabOverview again. Restored-title and
+favicon fixes, unrelated settings work and active-tab callback cleanup remain.
+
+Current settings repair (2026-10-25):
+- [x] Wire ad-blocking to full uBlock Origin, disable Brave's independent ad /
+  cosmetic filtering, and keep unpacked extensions enabled through self-reload.
+  Actual GTK GSettings off/on and real network/cosmetic/scriptlet checks passed.
+- [x] Honor custom/blank homepages for new tabs; preserve private-mode defaults.
+- [x] Give Ctrl+Tab an opaque native surface and contrasting selection/text.
+- [x] Expose real Chrome DevTools in a transient GTK window, with F12 / Ctrl+Shift+I
+  and a hamburger-menu entry. Keep inspector windows out of the shell tab list.
+- [x] Move cookies/cache/site-data management to Brave. Cookie path/domain deletion,
+  native Website Data UI, storage clearing and private/normal isolation passed.
+- [x] Apply custom fonts, reader style, custom CSS/JS and default zoom to Brave.
+  Actual GTK preference enable/disable, reader-style and default-zoom checks pass.
+- [x] Add the online extension-store submenu for Chrome Web Store and Microsoft
+  Edge Add-ons. Actual GTK activation opens a new store tab; the Chrome catalog
+  may redirect to Google consent. Edge installation itself is not verified.
+- [x] Keep the native webdriver getter false in ordinary browsing, while retaining
+  explicit automation mode, the private pipe and Chromium sandbox. The user
+  confirmed Google sign-in proceeds. Suppress native infobar presentation
+  at the container layout boundary. CAPTCHA frequency has not been attributed or independently fixed.
 
 Current focus: reliable restored-tab allocation, then native GTK context menus,
 permission prompts and the remaining browser dialogs. WebKit and CEF removal
@@ -20,20 +62,167 @@ Keep Chromium memory core dumps disabled.
 
 ## Current work
 
+- [x] USB, HID and Serial device choosers use GTK with native device models,
+  revision checks and native grant/cancel callbacks. Fixed the GTK list callback
+  lifetime crash; full GTK USB selection passed and the user confirmed all three
+  work. Bluetooth adapter/rescan UI still needs separate coverage.
+- [o] Replace the post-directory-selection file-access confirmation separately
+  from the portal chooser. Native DialogModel bridge is packaged; verify the
+  directory/path text and accept/cancel results in the running app.
+- [x] Route ordinary Wayland screen/window sharing directly through XDG
+  ScreenCast without Chromium's extra picker. The portal offers both screens
+  and windows when both are allowed by the native source lists. User confirmed
+  window selection completes. A separate web-modal creation hook prevents the
+  Chromium picker appearing underneath; user confirmed the packaged fix works.
+  Runtime logs verify portal-only creation and explicit-selection completion.
+  Preserve native source models and callbacks;
+  wait for explicit portal selection plus enumeration before accepting.
+- [ ] Port browser-tab-only/prefer-browser capture selection to GTK. It currently
+  retains the native picker; the portal screen/window bridge does not cover it.
+
+- [o] Fix right-click Copy: retain the action callback across popover dismissal
+  and publish text/link/image addresses during the real GTK activation, before
+  destroying the popup's Wayland surface/input serial. Native edit chords still
+  wait for the keyboard grab to release. Packaged user check pending.
+- [x] Rebrand native desktop notifications as Jupiter using the freedesktop
+  Notify transport, retaining native IDs/actions and website content. Actual
+  delivery and Jupiter app name/desktop-entry are verified; the packaged icon
+  points to Jupiter's SVG. User confirmed delivery before this branding change.
+- [o] Enable real file/directory pickers: pinned Brave disables
+  FileSystemAccessAPI by default, so the methods were absent. Enable that base
+  feature; a windowed native probe then invoked XDG FileChooser.OpenFile.
+  Packaged file/directory result and cancellation checks remain pending.
+- [o] Enable BraveWebBluetoothAPI and Linux's WebBluetooth Blink runtime gate.
+  Native requestDevice is now exposed, alongside the real file/directory APIs.
+  Verify chooser behavior/hardware; bridge its UI alongside USB/Serial/HID.
+- [ ] Diagnose protocol-handler registration on permission.site. An absent
+  visible dialog does not establish that registration failed; inspect native
+  pending-handler approval and connect that approval to GTK.
+
+- [o] Handle Widevine-requested relaunches inside the GTK shell: intercept the
+  native relaunch callback, restart only Brave with fresh private pipes, and
+  reconnect the existing GTK tabs. Isolated native callback and full two-tab
+  GTK reconnection passed; module-download/private-context coverage pending.
+- [o] Replace the native site-permission bubble with GTK using its actual title,
+  allow/allow-once/block/dismiss callbacks. permission.site native Block/Allow,
+  notification delivery, navigation retirement and stale-response checks pass.
+  Full GTK permission.site Notifications button became success/granted in a
+  disposable profile; user also confirmed the prompt works. USB/Serial/HID and
+  screen-sharing chooser dialogs remain separate and still use Chromium UI.
+- [ ] Replace Brave's translation bubble, including the leak into reader mode,
+  with GTK controls connected to its real translation backend.
+- [o] Route screen/window sharing through the XDG ScreenCast portal and remove
+  Chromium's initial/final source picker. Real portal CreateSession, SelectSources
+  and Start are verified; this does not prove the Chromium picker is removed.
+
+- [o] Match webpage text selection to the live libadwaita accent and replace
+  Chromium scrollbar appearance with libadwaita styling/behavior.
+  Browser-owned per-document styles now follow GTK accent/contrast changes,
+  including strict-CSP pages. The pinned CustomScrollbar overlay classification
+  and native OverlayScrollbar mode remove the root/nested layout gutter while
+  preserving wheel and thumb dragging. Track, track-piece and corner backgrounds
+  are transparent, including on doromiert.neg-zero.com. Native integration checks
+  pass; packaged visual acceptance and out-of-process frame coverage remain.
+  Follow-up state adapter runs in an isolated world without native bindings or
+  scroll interception: 200ms hover/leave/press interpolation and a hover-only
+  10% track (25% in high contrast). Root/nested independent state, reduced motion
+  and native dragging pass. Blink's incompatible overlay fade timer is disabled;
+  idle indicator auto-hide and out-of-process frames remain follow-ups.
+  User testing exposed a missing viewport style-source update: Blink prefers
+  body when it has custom scrollbar rules, while the adapter updated only html.
+  The adapter now mirrors viewport state to both sources, and initializes once
+  per isolated context. Actual GTK-rendered captures show the expanded thumb
+  and hover track on Chrome Web Store; computed CSS alone was insufficient.
+  A native scrollbar can emit pointerout(null) without leaving its viewport hit
+  area. Keep hover when its coordinates remain inside that area rather than
+  collapsing beneath the pointer. Boundary-event, native drag, nested scroller
+  and reduced-motion checks pass; a GTK seat probe holds an 8px painted thumb
+  and visible track for 20 seconds, returning to 3px on actual leave.
+  Follow-up appearance preserves libadwaita's actual alpha instead of blending
+  it onto a solid GTK view background: white 10% track and 20/40/60% normal,
+  hovered and pressed thumb in dark mode. The earlier solid gray palette was
+  an incorrect interpretation of reference pixels composited on Nautilus's
+  background. Track geometry now shares the thumb's animation progress, growing
+  from 3px to 8px instead of fading in at full width. 9px end margins, the outline,
+  and the user's white collapsed indicator/7px inset are retained. White alpha,
+  intermediate track growth, native drag, independent axes, nested scrollers,
+  boundary events and reduced motion pass. User visual recheck remains pending.
+- [x] Keep Web Store installer downloads out of GTK's ordinary-download manager.
+  Filter the native DownloadSource::EXTENSION_INSTALLER before its DevTools event
+  and observer registration; GTK must not move a CRX before native verification.
+  Real Google Translate installation reports enabled/Remove from Brave in an
+  isolated profile. Ordinary TXT and manually downloaded CRX transfers still
+  emit events and preserve exact bytes. Packaged user recheck remains.
+- [x] Suppress native infobar banners at the shared preferred-size boundary;
+  no per-flag workaround, underlying flag change or empty content gutter.
+  Actual GTK/webpage viewport comparison passes.
+- [x] Bridge desktop/GTK file drops into native webpages and webpage links out
+  to GTK destinations. Real file contents, trusted DOM events, link payloads,
+  Escape cancellation and input recovery pass. Outer Wayland/Nautilus human
+  testing remains pending.
+  Source-derived image/text/mixed/link previews pass real desktop drag checks;
+  image and text cards remain compact squares with rounded corners.
+- [x] Add Copy Image with original RGBA pixels and transparency on the clipboard.
+  Cross-origin images, data/blob URLs and same-process subframes pass. The
+  preexisting out-of-process iframe context-menu gap remains follow-up work.
+- [x] Rebrand the product and executable as Gnosis using the supplied SVG;
+  retain stored profile/schema/application IDs and old command/package aliases.
+  About and AppStream credit the Negative Zero team.
+- [x] Remove the translation controls' forced width from the page menu;
+  native sizing, unclipped submenu contents and back navigation pass.
+
 - [x] Add a maintainable native Brave patch series and upgrade gate: one stable
   component file, opt-in switch, pinned release/source/patch hashes, zero-fuzz
   application and exact reversal. Source checks pass for Brave 1.97.56 /
   Chromium 155.0.8059.40 and candidate Brave 1.100.31 / Chromium 156.0.8078.48.
   Run `nix run .#check-brave-patches`; compilation/runtime are separate gates.
-- [o] Suppress Brave's native zoom bubble. GTK controls perform real zoom and
-  user confirmed they work, but extension allowlisting did not hide automatic
-  feedback. The native opt-in source patch is prepared and source-checked;
-  stock Brave ignores the switch. User prefers a version/hash-checked binary
-  patch or native shim rather than a full Chromium build. Investigation has
-  identified a candidate native popup function; no binary patch has been applied
-  or runtime-verified yet. Resume there; avoid a full source build.
-- [ ] Port find-in-page to the Brave backend, including native match counts
-  and frame handling; the existing controller still calls CEF.
+- [x] Suppress Brave's native zoom bubble using a private, prebuilt binary
+  overlay. Exact executable SHA-256, original bytes and patched digest are gated;
+  one byte makes ZoomBubbleCoordinator::Show return before widget creation.
+  A diagnostic graphical probe confirmed the hook is reached. Final patched
+  graphical checks preserve real 125% zoom/DPR, reset, zoom events and sibling
+  isolation. Default `nix run` selects this overlay; user confirmed the native
+  popup is gone.
+  Site permission popup replacements are separate future work.
+- [x] Route JavaScript alerts, confirmations and text prompts through GTK.
+  A second exact-hash binary hook returns no native dialog manager while CDP
+  retains real decisions. Isolated graphical checks verify the native manager
+  is absent. Full-shell accessibility actions verified alert continuation,
+  confirm rejection, Unicode prompt input and prompt cancellation against
+  actual webpage JavaScript results.
+- [x] Native beforeunload preflight now protects tab/window close. Real handlers
+  and Keep Open/Leave decisions run without destroying earlier approved tabs.
+  Actual GTK last-tab, two-tab window and two-window application-wide Cancel/Leave tests pass. Missing
+  native replies offer explicit Keep Open/Close Anyway, verified by fault injection.
+  Existing form-warning Cancel/Discard and nine edited-form cases still pass.
+  Navigation/interaction invalidate prior approval; broader live-editor coverage
+  and interactions inside cross-process frames remain follow-up validation.
+- [o] Replace Brave's extension install confirmation with GTK while preserving
+  its actual permission model and install/cancel callbacks. A small exact-binary
+  adapter exports the native title and warnings over an inherited private socket;
+  the GTK dialog defaults to Cancel and delays acceptance. Both original callback
+  results pass isolated Web Store beginInstall probes (no completeInstall or
+  extension installation). User confirmed the GTK dialog works after routing
+  was limited to an actually mapped tab. Enterprise justification and permission
+  withholding checkbox variants still use native UI; broader coverage is pending.
+- [o] Port the extension menu and popup host to Brave's actual extension backend.
+  Current GTK menu management still queries CEF, and Brave startup does not load
+  the installed Jupiter catalog. Preserve real ExtensionViewHost popup semantics,
+  activeTab grants and full uBlock Origin; do not substitute an ordinary tab.
+  Isolated Brave successfully loads full uBlock 1.75.0 and reports its native
+  inventory. Extensions.triggerAction requires a `tab` target, not a `page`
+  target; targeting an actual tab inside the current --app window crashes the
+  isolated Brave process. Resolve native app-window popup hosting before wiring
+  the GTK action row. Main Jupiter was not involved in that crash.
+- [x] Port find-in-page to Brave's actual FindTabHelper, with native counts,
+  ordinals, wrapping, case/Unicode matching and same/cross-process frame search.
+  Native and real GTK toolbar tests pass; unsupported whole-word matching is
+  hidden. Replaced, stopped, navigated and closed-target requests are retired.
+- [o] Connect GTK printing to Brave's native PDF renderer. The GTK printer setup
+  now drives paper size, orientation and margins; tab hide/close cancels the job.
+  Windowed Brave renders valid portrait/landscape A4 PDFs and applies print CSS
+  (screen-only content excluded). User confirmed Ctrl+P opens the packaged GTK
+  print dialog. Saving through that dialog and physical spooling remain pending.
 
 - [ ] Match sliders to libadwaita styling and behavior instead of Chromium's
   defaults, including webpage range inputs. Cover track/thumb appearance,
@@ -846,7 +1035,8 @@ These are not implemented in the Epiphany-based fork yet. Shell work can start
 before every service migration is finished, with the engine work still tracked
 above.
 
-- [ ] Add tab groups using native Epiphany/libadwaita tab behavior and styling.
+- [ ] Add tab groups. The Select-style custom-widget experiment is preserved on
+  `archive/select-custom-tabs` for possible future work.
 - [o] Port Select Ctrl+Tab with a thumbnail grid showing only tab names as text.
   Developer and packaged GUI verify grid, strip/MRU order, reverse, Escape and
   Control-release commit. Remaining lifetime/pointer/private cases still pending.
@@ -854,9 +1044,26 @@ above.
   Home where applicable.
 - [ ] Check tab insertion animation and overflow against vanilla libadwaita;
   keep single-tab visibility and group navigation consistent with the requested UI.
-- [ ] Replace the temporary GNOME icon when the user's Jupiter artwork is ready.
-- [ ] Add built-in KeePassXC integration for saving and filling credentials,
-  using KeePassXC's browser integration protocol and database authorization.
+- [x] Package the supplied Gnosis SVG and matching symbolic artwork.
+- [o] Add built-in KeePassXC integration for saving/filling passwords, TOTP and
+  passkeys, using KeePassXC's supported browser integration and database authorization.
+  Official 1.10.4.1 runs as an invisible internal backend with a stable identity.
+  Native libadwaita controls live in the hamburger menu; no toolbar extension UI.
+  Real native proxy/worker and packaged GTK panel/settings/navigation tests pass.
+  User-gesture unlock requests remain in KeePassXC. Pairing uses Connect Database.
+  Native-style closed-shadow overlays and full uBlock coexistence checks pass.
+  The user confirmed passkeys work on GitHub; Discord's issue is unconfirmed.
+  Complete TOTP/save/fill coverage still needs live connected-database checks.
+  Native Redetect Login Fields and late-loaded content-script recovery pass
+  packaged tests, including staged password forms. Disable Brave's competing
+  password-saving and automatic-sign-in prefs without deleting saved vault data.
+- [o] Replace Chromium WebAuthn presentation with native GTK model-driven sheets.
+  Local real-request QR/cancel and ownership checks pass. Mechanism, hybrid/USB,
+  progress and basic errors are covered. GTK account selection returns a real,
+  cryptographically verified assertion; account/phone-QR cancellation and
+  switching to native phone discovery pass. Dialog height follows each sheet,
+  with actions outside the scroller. Native PIN/GPM fallbacks and
+  conditional passkey suggestions remain follow-up work.
 - [ ] Build a proper native Jupiter MCP server: control real tabs and groups,
   navigate and interact with pages, inspect the DOM, capture screenshots, and
   expose console/network tools through Jupiter's existing CEF sessions. Preserve
@@ -867,3 +1074,96 @@ above.
 Keep this file updated at each meaningful milestone. Do not mark the engine
 replacement complete while WebKit/JSC remain required, or call extension/portal
 support complete based only on the passing subsets above.
+
+## Next-session handoff — 2026-10-26
+
+The user requested only low-hanging fixes tonight, then PC shutdown. Resume the
+larger work in the next session; no background task/automation was created.
+
+Completed tonight:
+- Restore the existing GTK edited-form warning without the unavailable WebKit
+  `Ephy.hasModifiedForms` helper. Query input/textarea defaults in the isolated
+  world; keep the short single-search-input heuristic, include changed checkboxes,
+  ignore readonly/disabled fields, and recognize reset/pristine forms.
+- Guard asynchronous tab-close callbacks after window/page destruction, clear
+  checking state on Cancel, and clear the previous-tab weak pointer correctly.
+- Add Open Developer Tools to native right-click menus, using the actual existing
+  GTK-hosted Brave inspector rather than claiming element selection support.
+
+Validation:
+- `nix run . -- --help` passes. Latest output:
+  `/nix/store/zz9w3lkmnpjwx501n5m4zmfm4w1921ql-gnosis-0.1.0`.
+- Real packaged GTK/Brave test passes nine form cases; actual context-menu action
+  opens Developer Tools; Cancel retains the dirty last tab; Discard removes it.
+- Full official uBlock native MV2/network/main-and-frame cosmetic/scriptlet and
+  enable/disable regression passes. `git diff --check` passes.
+- Sources, fixture, logs, old unverified native-find prototype and a complete
+  HEAD-to-worktree binary patch are backed up under
+  `.git/gnosis-handoff-2026-10-26/`. Existing unrelated edits are preserved.
+  No commit/reset/stash was performed; main remains intentionally dirty.
+
+Remaining, in priority order:
+1. Native Ctrl+F is implemented and verified today; see the current milestone
+   below. Keep the old prototype only as historical evidence.
+2. Real beforeunload preflight and native GTK close recovery are implemented
+   and verified today. Broaden live-editor and cross-process activity coverage.
+3. GPU freeze/overview stalls and actual mixed-monitor frame pacing.
+4. Remove WebKit/JSC/CEF dependencies and obsolete code. CEF stays linked for
+   live container/JSON APIs, but Nix now references its immutable SDK instead of
+   copying it per build. The old WebKit network session is created lazily only
+   for remaining legacy consumers; regular/private behavior is verified.
+5. Continue remaining GTK auth/conditional-passkey/tab-sharing UI, context-menu
+   media/iframe coverage, bundled uBlock refresh and broader live validation.
+
+Keep the normal compatibility profile/application ID and KeePassXC pairing.
+Work solo. Do not touch `.opencode/` or the existing untracked extension metadata.
+Use `nix run`, never a separate `nix build`. The custom tabs stay archived.
+
+## Verified implementation milestone — 2026-10-26
+
+Eight agents prepared independent parts before the quota reset was observed.
+All agents were stopped; integration, fixes and final validation continued solo.
+
+- Native Ctrl+F uses the pinned browser's real FindTabHelper. Native frame/query/
+  target lifetime tests and actual GTK count/ordinal/options/reopen tests pass.
+- Native close preflight runs Chromium's real handlers and preserves all tabs
+  until the complete close transaction is approved. GTK last-tab, two-tab window
+  and two-window application-wide Keep Open/Leave,
+  explicit failure recovery and the previous edited-form/DevTools checks pass.
+- Removed the default unlimited frame-rate flag and enabled Wayland's external
+  frame source. Real steady-state checks report 59.79 fps at 60 Hz and 119.55 fps
+  at 120 Hz, versus the earlier 1698.37 fps uncapped sample. Two actual shell
+  windows sharing one browser process also sustain 59.64/119.76 fps on separate
+  60/120 Hz monitors. The separate GPU-process SIGTRAP remains unconfirmed.
+- Nix links the compatibility CEF runtime to the immutable SDK. Loader, file modes,
+  sandbox helper, locales and ICU checks pass. Regular/private GTK probes verify
+  the WebKit network session is lazy and retains ITP/credential policy. CEF,
+  WebKit and JSC are still dependencies; removing them requires real API migration.
+- Bundled full uBlock upgrades keep their stable profile path and identity,
+  atomically replace files, retain storage, restore disabled state and support
+  rollback/recovery. Downgrades and unsafe paths are refused. Filesystem tests,
+  real same-path native reload/storage checks, full native filtering and real
+  GTK GSettings off/on filtering checks pass. External uBlock remains authoritative.
+- Actual context-menu media operations use the trusted captured element; stale
+  documents/elements are rejected. Unit and real Brave audio tests pass. Native
+  Inspect Element and downloads remain incomplete. Child and nested out-of-process
+  frame menus now route to their actual renderer sessions. Real GTK image copying,
+  audio actions, custom CSS, navigation/stale-action rejection and child trusted
+  activity invalidating native close approval pass; top-level title/URI stay intact.
+- Private Brave data is removed only after browser and extension filesystem
+  writers exit. Symlinks are never followed and replaced roots are refused.
+  The actual packaged incognito shutdown and ownership tests pass. Abrupt host
+  crashes can still leave a temporary directory; no broad cleanup scan is used.
+- Repeatable native and GTK probes are retained under engine/tests and
+  engine/tools; see engine/tests/NATIVE-GTK-TESTS.md.
+
+Missed compositor allocations are reconciled on the next active frame. A fault
+injection that suppressed allocation callbacks fails the previous package and
+passes the new package; ordinary resize/maximize/restore also pass. The user's
+original half-width screenshot was not independently reproduced.
+
+Still remaining: GTK PIN/GPM and conditional passkey presentation,
+GTK browser-tab sharing, private
+extensions/KeePassXC integration, full dependency removal, broader overview
+validation, and the unconfirmed severe GPU stall. Existing native fallbacks and
+private-context restrictions remain where these adapters are incomplete.

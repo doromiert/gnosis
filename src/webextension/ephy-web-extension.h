@@ -37,6 +37,7 @@ gboolean ephy_web_extension_native_is_available (EphyWebExtension *self);
 gboolean ephy_web_extension_native_is_pending (EphyWebExtension *self);
 gboolean ephy_web_extension_native_is_restart_required (EphyWebExtension *self);
 gboolean ephy_web_extension_native_is_builtin (EphyWebExtension *self);
+void ephy_web_extension_native_update_metadata (EphyWebExtension *self, JsonObject *metadata);
 void ephy_web_extension_native_set_state (EphyWebExtension *self, gboolean enabled, gboolean available, gboolean pending);
 void ephy_web_extension_native_set_restart_required (EphyWebExtension *self, gboolean restart_required);
 GdkPixbuf *ephy_web_extension_get_icon (EphyWebExtension *self, gint64 size);

@@ -101,6 +101,7 @@ public:
   std::function<void(const std::string&, CefRefPtr<CefResponse>)> on_response;
   std::function<void(const std::string&, CefRefPtr<CefResponse>)> on_resource_complete;
   std::function<void()> on_changed;
+  std::function<void(int, int)> on_popup_size;
   std::function<void()> on_security_changed;
   std::function<void(bool)> on_fullscreen_changed;
   std::function<void()> on_closed;

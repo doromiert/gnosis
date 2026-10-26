@@ -168,7 +168,10 @@ reader_html_evaluated_cb (GObject      *object,
   byline = ephy_json_object_dup_string (article, "byline");
   content = ephy_json_object_dup_string (article, "content");
   reading_time = ephy_json_object_dup_string (article, "reading_time");
-  title = ephy_engine_web_view_get_title (web_view);
+  /* Readability captured the source title before the reader navigation. */
+  title = ephy_json_object_get_string (article, "title");
+  if (!title || !*title)
+    title = ephy_engine_web_view_get_title (web_view);
 
   encoded_byline = byline ? ephy_encode_for_html (byline) : g_strdup ("");
   encoded_title = ephy_encode_for_html (title);

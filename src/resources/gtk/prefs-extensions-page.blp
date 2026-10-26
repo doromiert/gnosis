@@ -6,6 +6,23 @@ template $PrefsExtensionsPage: Adw.PreferencesPage {
   title: _("Extensions");
 
   Adw.PreferencesGroup install_group {
+    Adw.ActionRow {
+      title: _("Install from Online Extension Store…");
+      subtitle: _("Browse Chromium extensions");
+      activatable-widget: store_button;
+
+      [suffix]
+      MenuButton store_button {
+        icon-name: "go-next-symbolic";
+        tooltip-text: _("Choose an Extension Store");
+        valign: center;
+        styles [ "flat" ]
+        popover: PopoverMenu {
+          menu-model: extension_stores;
+        };
+      }
+    }
+
     Adw.ActionRow native_install_row {
       activatable: true;
       title: _("Install Unpacked Extension…");
@@ -52,5 +69,18 @@ template $PrefsExtensionsPage: Adw.PreferencesPage {
         };
       }
     }
+  }
+}
+
+menu extension_stores {
+  item {
+    label: _("Chrome Web Store");
+    action: "extension-store.open";
+    target: "chrome";
+  }
+  item {
+    label: _("Microsoft Edge Add-ons");
+    action: "extension-store.open";
+    target: "edge";
   }
 }

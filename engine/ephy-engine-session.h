@@ -15,6 +15,10 @@ gboolean ephy_engine_session_is_ephemeral(EphyEngineSession *);
  * directory, or NULL. Regular profiles persist through their CEF preference;
  * private sessions retain only their own memory until session/engine teardown.
  * A successful set may be queued until the regular request context is ready. */
+gboolean ephy_engine_session_uses_brave(EphyEngineSession *);
+void ephy_engine_session_clear_website_storage(EphyEngineSession *, const char *const *types,
+                                               GCancellable *, GAsyncReadyCallback, gpointer);
+gboolean ephy_engine_session_clear_website_storage_finish(EphyEngineSession *, GAsyncResult *, GError **);
 GFile *ephy_engine_session_dup_last_upload_folder(EphyEngineSession *);
 gboolean ephy_engine_session_set_last_upload_folder(EphyEngineSession *, GFile *folder);
 

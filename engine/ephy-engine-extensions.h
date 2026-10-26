@@ -4,6 +4,7 @@
 #include <json-glib/json-glib.h>
 
 G_BEGIN_DECLS
+JsonArray *ephy_engine_extensions_dup_native_snapshot(void);
 void ephy_engine_extensions_query_async(EphyEngineSession *, GCancellable *, GAsyncReadyCallback, gpointer);
 JsonArray *ephy_engine_extensions_query_finish(EphyEngineSession *, GAsyncResult *, GError **);
 void ephy_engine_extensions_set_enabled_async(EphyEngineSession *, const char *id, gboolean enabled,
@@ -22,6 +23,7 @@ class Extensions;
 /* UI-thread service, normal profile only. Catalog and context are retained. */
 void ephy_engine_extensions_initialize(JsonArray *owned, CefRefPtr<CefRequestContext>,
                                        std::function<void(JsonArray *)> changed, Extensions *store);
+void ephy_engine_extensions_initialize_brave(Extensions *store);
 void ephy_engine_extensions_close();
 bool ephy_engine_extensions_is_closed();
 void ephy_engine_extensions_shutdown();

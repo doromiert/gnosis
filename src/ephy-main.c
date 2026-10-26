@@ -105,7 +105,7 @@ option_version_cb (const gchar  *option_name,
                    gpointer      data,
                    GError      **error)
 {
-  g_print ("Jupiter %s\n", EPHY_VERSION);
+  g_print ("Gnosis %s\n", EPHY_VERSION);
 
   exit (EXIT_SUCCESS);
   return FALSE;
@@ -280,9 +280,9 @@ main (int   argc,
   ephy_debug_init ();
 
   option_context = g_option_context_new ("");
-  option_group = g_option_group_new ("jupiter",
-                                     N_("Jupiter"),
-                                     N_("Jupiter options"),
+  option_group = g_option_group_new ("gnosis",
+                                     N_("Gnosis"),
+                                     N_("Gnosis options"),
                                      NULL, NULL);
 
   g_option_group_set_translation_domain (option_group, GETTEXT_PACKAGE);
@@ -444,9 +444,9 @@ main (int   argc,
     mode = EPHY_EMBED_SHELL_MODE_BROWSER;
   }
 
-  if (mode == EPHY_EMBED_SHELL_MODE_BROWSER || mode == EPHY_EMBED_SHELL_MODE_INCOGNITO) {
-    g_set_prgname ("jupiter");
-    g_set_application_name ("Jupiter");
+  if (mode != EPHY_EMBED_SHELL_MODE_APPLICATION) {
+    g_set_prgname ("gnosis");
+    g_set_application_name ("Gnosis");
 
     gtk_window_set_default_icon_name (APPLICATION_ID);
   }
@@ -484,6 +484,7 @@ main (int   argc,
       goto out;
     }
     engine_initialized = TRUE;
+    ephy_engine_set_automation_mode (automation_mode);
   }
   status = g_application_run (G_APPLICATION (ephy_shell), argc, argv);
 

@@ -531,7 +531,7 @@ drag_drop_cb (EphyTabView  *self,
                               EPHY_PREFS_LOCKDOWN_ARBITRARY_URL))
     return;
 
-  embed = EPHY_EMBED (adw_tab_page_get_child (page));
+  embed = page ? EPHY_EMBED (adw_tab_page_get_child (page)) : NULL;
   window = EPHY_LINK (gtk_widget_get_root (GTK_WIDGET (self)));
 
   if (G_VALUE_HOLDS (value, G_TYPE_FILE)) {
@@ -540,7 +540,7 @@ drag_drop_cb (EphyTabView  *self,
 
     ephy_link_open (window, uri, embed, embed ? 0 : EPHY_LINK_NEW_TAB);
   } else if (G_VALUE_HOLDS (value, GDK_TYPE_FILE_LIST)) {
-    GdkFileList *file_list = g_value_get_object (value);
+    GdkFileList *file_list = g_value_get_boxed (value);
     g_autoptr (GSList) files = gdk_file_list_get_files (file_list);
     GSList *l;
     int i = 0;

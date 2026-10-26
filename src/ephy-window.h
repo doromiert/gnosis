@@ -121,4 +121,7 @@ void              ephy_window_toggle_bookmarks           (EphyWindow *window);
 void              ephy_window_add_toast                  (EphyWindow *window,
                                                           AdwToast   *toast);
 
+gboolean ephy_window_can_commit_close (EphyWindow *window);
+void ephy_window_cancel_close (EphyWindow *window);
+
 G_END_DECLS

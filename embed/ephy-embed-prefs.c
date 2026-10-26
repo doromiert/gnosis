@@ -45,12 +45,16 @@ static GFileMonitor *user_style_sheet_monitor = NULL;
 static WebKitUserStyleSheet *style_sheet = NULL;
 static GFileMonitor *user_javascript_monitor = NULL;
 static WebKitUserScript *javascript = NULL;
+static char *user_style_source = NULL;
+static char *user_script_source = NULL;
 static GList *ucm_list = NULL;
 
 static void
 update_user_style_on_all_ucm (void)
 {
   GList *list = NULL;
+
+  ephy_engine_set_user_stylesheet (style_sheet ? user_style_source : NULL);
 
   for (list = ucm_list; list; list = list->next) {
     WebKitUserContentManager *ucm = list->data;
@@ -71,8 +75,10 @@ user_style_sheet_output_stream_splice_cb (GOutputStream *output_stream,
   g_clear_pointer (&style_sheet, webkit_user_style_sheet_unref);
 
   bytes = g_output_stream_splice_finish (output_stream, result, NULL);
-  if (bytes > 0) {
-    style_sheet = webkit_user_style_sheet_new (g_memory_output_stream_get_data (G_MEMORY_OUTPUT_STREAM (output_stream)),
+  g_clear_pointer (&user_style_source, g_free);
+  if (bytes > 0 && g_settings_get_boolean (EPHY_SETTINGS_WEB, EPHY_PREFS_WEB_ENABLE_USER_CSS)) {
+    user_style_source = g_strndup (g_memory_output_stream_get_data (G_MEMORY_OUTPUT_STREAM (output_stream)), bytes);
+    style_sheet = webkit_user_style_sheet_new (user_style_source,
                                                WEBKIT_USER_CONTENT_INJECT_ALL_FRAMES, WEBKIT_USER_STYLE_LEVEL_USER,
                                                NULL, NULL);
   }
@@ -161,6 +167,8 @@ update_user_javascript_on_all_ucm (void)
 {
   GList *list = NULL;
 
+  ephy_engine_set_user_javascript (javascript ? user_script_source : NULL);
+
   for (list = ucm_list; list; list = list->next) {
     WebKitUserContentManager *ucm = list->data;
 
@@ -180,8 +188,10 @@ user_javascript_output_stream_splice_cb (GOutputStream *output_stream,
   g_clear_pointer (&javascript, webkit_user_script_unref);
 
   bytes = g_output_stream_splice_finish (output_stream, result, NULL);
-  if (bytes > 0) {
-    javascript = webkit_user_script_new (g_memory_output_stream_get_data (G_MEMORY_OUTPUT_STREAM (output_stream)),
+  g_clear_pointer (&user_script_source, g_free);
+  if (bytes > 0 && g_settings_get_boolean (EPHY_SETTINGS_WEB, EPHY_PREFS_WEB_ENABLE_USER_JS)) {
+    user_script_source = g_strndup (g_memory_output_stream_get_data (G_MEMORY_OUTPUT_STREAM (output_stream)), bytes);
+    javascript = webkit_user_script_new (user_script_source,
                                          WEBKIT_USER_CONTENT_INJECT_ALL_FRAMES, WEBKIT_USER_SCRIPT_INJECT_AT_DOCUMENT_END,
                                          NULL, NULL);
   }
@@ -240,8 +250,10 @@ engine_pref_callback_user_javascript (GSettings  *settings,
 
   if (user_javascript_monitor) {
     g_signal_handlers_disconnect_by_func (user_javascript_monitor, user_javascript_file_changed, NULL);
-    g_clear_object (&user_style_sheet_monitor);
+    g_clear_object (&user_javascript_monitor);
   }
+
+  g_clear_pointer (&javascript, webkit_user_script_unref);
 
   if (!value) {
     update_user_javascript_on_all_ucm ();
@@ -546,6 +558,12 @@ ephy_embed_prefs_init (gpointer user_data)
     g_free (key);
   }
 
+  g_settings_bind (EPHY_SETTINGS_WEB, EPHY_PREFS_WEB_ENABLE_ADBLOCK,
+                   engine_settings, "enable-adblock", G_SETTINGS_BIND_GET);
+  g_settings_bind (EPHY_SETTINGS_WEB, EPHY_PREFS_WEB_ENABLE_POPUPS,
+                   engine_settings, "allow-popups", G_SETTINGS_BIND_GET);
+  g_settings_bind (EPHY_SETTINGS_WEB, EPHY_PREFS_WEB_ENABLE_COOKIE_BANNER,
+                   engine_settings, "block-cookie-banners", G_SETTINGS_BIND_GET);
   g_settings_bind (EPHY_SETTINGS_MAIN,
                    EPHY_PREFS_ENABLE_CARET_BROWSING,
                    engine_settings, "enable-caret-browsing",

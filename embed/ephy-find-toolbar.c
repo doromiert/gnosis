@@ -48,6 +48,7 @@ struct _EphyFindToolbar {
   GtkWidget *prev;
   guint num_matches;
   guint current_match;
+  GSimpleAction *word_option;
   guint find_again_source_id;
   guint find_source_id;
   char *find_string;
@@ -136,10 +137,11 @@ real_find (EphyFindToolbar   *toolbar,
   if (!toolbar->case_sensitive)
     options |= WEBKIT_FIND_OPTIONS_CASE_INSENSITIVE;
 
-  if (toolbar->word_action)
+  if (toolbar->word_action && ephy_engine_find_controller_supports_word_starts (toolbar->controller))
     options |= WEBKIT_FIND_OPTIONS_AT_WORD_STARTS;
 
-  ephy_engine_find_controller_count_matches (toolbar->controller, toolbar->find_string, options, G_MAXUINT);
+  if (!ephy_engine_find_controller_uses_native_results (toolbar->controller))
+    ephy_engine_find_controller_count_matches (toolbar->controller, toolbar->find_string, options, G_MAXUINT);
   ephy_engine_find_controller_search (toolbar->controller, toolbar->find_string, options, G_MAXUINT);
 }
 
@@ -266,6 +268,7 @@ ephy_find_toolbar_init (EphyFindToolbar *toolbar)
   GtkWidget *settings_popover;
   GtkEventController *event_controller;
   GMenu *model;
+  GMenuItem *word_item;
   g_autoptr (GSimpleActionGroup) group = NULL;
   g_autoptr (GSimpleAction) case_action = NULL;
   g_autoptr (GSimpleAction) word_action = NULL;
@@ -311,6 +314,7 @@ ephy_find_toolbar_init (EphyFindToolbar *toolbar)
   g_signal_connect (case_action, "change-state", G_CALLBACK (on_case_senstive), toolbar);
 
   word_action = g_simple_action_new_stateful ("match-whole-word", NULL, g_variant_new_boolean (FALSE));
+  toolbar->word_option = word_action;
   g_action_map_add_action (G_ACTION_MAP (group), G_ACTION (word_action));
   g_signal_connect (word_action, "change-state", G_CALLBACK (on_word_action), toolbar);
 
@@ -318,7 +322,10 @@ ephy_find_toolbar_init (EphyFindToolbar *toolbar)
 
   model = g_menu_new ();
   g_menu_append_item (model, g_menu_item_new (_("_Case Sensitive"), "search-options.case-sensitive"));
-  g_menu_append_item (model, g_menu_item_new (_("Match Whole _Word Only"), "search-options.match-whole-word"));
+  word_item = g_menu_item_new (_("Match Whole _Word Only"), "search-options.match-whole-word");
+  g_menu_item_set_attribute (word_item, "hidden-when", "s", "action-disabled");
+  g_menu_append_item (model, word_item);
+  g_object_unref (word_item);
   settings_popover = gtk_popover_menu_new_from_model (G_MENU_MODEL (model));
   gtk_menu_button_set_popover (GTK_MENU_BUTTON (toolbar->options_button), settings_popover);
   gtk_widget_set_tooltip_text (toolbar->options_button, _("Search Options"));
@@ -462,6 +469,17 @@ counted_matches_cb (EphyEngineFind *find_controller,
 }
 
 static void
+native_search_result_cb (EphyEngineFind *controller,
+                         guint           count,
+                         guint           ordinal,
+                         EphyFindToolbar *toolbar)
+{
+  toolbar->num_matches = count;
+  toolbar->current_match = ordinal;
+  update_entry_matches (toolbar);
+}
+
+static void
 ephy_find_toolbar_set_web_view (EphyFindToolbar *toolbar,
                                 EphyEngineView   *web_view)
 {
@@ -476,6 +494,10 @@ ephy_find_toolbar_set_web_view (EphyFindToolbar *toolbar,
   toolbar->web_view = web_view;
   if (web_view) {
     toolbar->controller = ephy_engine_web_view_get_find_controller (web_view);
+    g_simple_action_set_enabled (toolbar->word_option,
+      ephy_engine_find_controller_supports_word_starts (toolbar->controller));
+    g_signal_connect_object (toolbar->controller, "search-result",
+                             G_CALLBACK (native_search_result_cb), toolbar, G_CONNECT_DEFAULT);
     g_signal_connect_object (toolbar->controller, "found-text",
                              G_CALLBACK (found_text_cb),
                              toolbar, G_CONNECT_DEFAULT);
@@ -496,7 +518,7 @@ ephy_find_toolbar_set_web_view (EphyFindToolbar *toolbar,
 void
 ephy_find_toolbar_find_next (EphyFindToolbar *toolbar)
 {
-  if (toolbar->num_matches) {
+  if (toolbar->num_matches && !ephy_engine_find_controller_uses_native_results (toolbar->controller)) {
     toolbar->current_match++;
     if (toolbar->current_match > toolbar->num_matches)
       toolbar->current_match = 1;
@@ -508,7 +530,7 @@ ephy_find_toolbar_find_next (EphyFindToolbar *toolbar)
 void
 ephy_find_toolbar_find_previous (EphyFindToolbar *toolbar)
 {
-  if (toolbar->num_matches) {
+  if (toolbar->num_matches && !ephy_engine_find_controller_uses_native_results (toolbar->controller)) {
     g_assert (toolbar->current_match > 0);
     toolbar->current_match--;
     if (toolbar->current_match < 1)

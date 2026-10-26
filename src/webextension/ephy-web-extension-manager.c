@@ -38,6 +38,7 @@ struct _EphyWebExtensionManager {
   GHashTable *browser_action_map;
   GListStore *browser_actions;
   gboolean native_query_pending;
+  gboolean native_query_again;
 };
 
 G_DEFINE_FINAL_TYPE (EphyWebExtensionManager, ephy_web_extension_manager, G_TYPE_OBJECT)
@@ -45,11 +46,41 @@ G_DEFINE_FINAL_TYPE (EphyWebExtensionManager, ephy_web_extension_manager, G_TYPE
 enum { CHANGED, SHOW_BROWSER_ACTION, LAST_SIGNAL };
 static guint signals[LAST_SIGNAL];
 static void remove_browser_action (EphyWebExtensionManager *self, EphyWebExtension *extension);
+static EphyWebExtension *find_native_extension (EphyWebExtensionManager *self, const char *id);
+static void native_extensions_changed (EphyEngineSession *session, EphyWebExtensionManager *self);
 
 static void
 reconcile_native_extensions (EphyWebExtensionManager *self,
                               JsonArray               *snapshot)
 {
+  /* Add real store installs and refresh updated metadata before reconciling
+   * action/state objects. Brave, rather than the old staged catalog, owns this
+   * inventory. Keep object identity so open detail views remain valid. */
+  for (guint i = 0; i < json_array_get_length (snapshot); i++) {
+    JsonObject *item = json_array_get_object_element (snapshot, i);
+    const char *id = json_object_get_string_member_with_default (item, "id", "");
+    EphyWebExtension *extension = find_native_extension (self, id);
+
+    if (extension)
+      ephy_web_extension_native_update_metadata (extension, item);
+    else if (*id)
+      g_ptr_array_add (self->web_extensions, ephy_web_extension_new_native (item));
+  }
+  for (guint i = self->web_extensions->len; i > 0; i--) {
+    EphyWebExtension *extension = g_ptr_array_index (self->web_extensions, i - 1);
+    gboolean present = FALSE;
+
+    if (!ephy_web_extension_is_native (extension))
+      continue;
+    for (guint j = 0; j < json_array_get_length (snapshot); j++)
+      present |= !g_strcmp0 (ephy_web_extension_get_guid (extension),
+                            json_object_get_string_member_with_default (json_array_get_object_element (snapshot, j), "id", ""));
+    if (!present) {
+      ephy_web_extension_native_set_state (extension, FALSE, FALSE, FALSE);
+      remove_browser_action (self, extension);
+      g_ptr_array_remove_index (self->web_extensions, i - 1);
+    }
+  }
   for (guint i = 0; i < self->web_extensions->len; i++) {
     EphyWebExtension *extension = g_ptr_array_index (self->web_extensions, i);
     gboolean available = FALSE;
@@ -84,6 +115,7 @@ reconcile_native_extensions (EphyWebExtensionManager *self,
       remove_browser_action (self, extension);
     }
   }
+  g_signal_emit (self, signals[CHANGED], 0);
 }
 
 static EphyWebExtension *
@@ -104,29 +136,8 @@ find_native_extension (EphyWebExtensionManager *self,
 void
 ephy_web_extension_manager_refresh_native_installed (EphyWebExtensionManager *self)
 {
-  g_autoptr (JsonArray) catalog = NULL;
-  gboolean changed = FALSE;
-
   g_return_if_fail (EPHY_IS_WEB_EXTENSION_MANAGER (self));
-  catalog = ephy_engine_extensions_dup_installed ();
-
-  for (guint i = 0; i < json_array_get_length (catalog); i++) {
-    JsonObject *metadata = json_array_get_object_element (catalog, i);
-    const char *id = metadata ? json_object_get_string_member_with_default (metadata, "id", "") : "";
-    EphyWebExtension *extension;
-
-    if (!*id || find_native_extension (self, id))
-      continue;
-    extension = ephy_web_extension_new_native (metadata);
-    /* Chromium has not loaded this staged directory in the running process. */
-    ephy_web_extension_native_set_state (extension, FALSE, FALSE, FALSE);
-    ephy_web_extension_native_set_restart_required (extension, TRUE);
-    g_ptr_array_add (self->web_extensions, extension);
-    changed = TRUE;
-  }
-
-  if (changed)
-    g_signal_emit (self, signals[CHANGED], 0);
+  native_extensions_changed (ephy_embed_shell_get_network_session (ephy_embed_shell_get_default ()), self);
 }
 
 static void
@@ -151,6 +162,25 @@ native_inventory_ready (GObject      *source,
                                            ephy_web_extension_native_is_enabled (extension),
                                            ephy_web_extension_native_is_available (extension), FALSE);
   }
+  if (self->native_query_again) {
+    self->native_query_again = FALSE;
+    native_extensions_changed (EPHY_ENGINE_SESSION (source), self);
+  }
+}
+
+static void
+native_extensions_changed (EphyEngineSession      *session,
+                            EphyWebExtensionManager *self)
+{
+  if (g_cancellable_is_cancelled (self->cancellable))
+    return;
+  if (self->native_query_pending) {
+    self->native_query_again = TRUE;
+    return;
+  }
+  self->native_query_pending = TRUE;
+  ephy_engine_extensions_query_async (session, self->cancellable,
+                                      native_inventory_ready, g_object_ref (self));
 }
 
 typedef struct {
@@ -180,9 +210,15 @@ native_toggle_reconciled (GObject      *source,
   if (snapshot)
     reconcile_native_extensions (self, snapshot);
   else {
-    g_autoptr (JsonArray) unavailable = json_array_new ();
+    /* A failed query is not proof that every extension was uninstalled. */
+    for (guint i = 0; i < self->web_extensions->len; i++) {
+      EphyWebExtension *extension = g_ptr_array_index (self->web_extensions, i);
 
-    reconcile_native_extensions (self, unavailable);
+      if (ephy_web_extension_is_native (extension)) {
+        ephy_web_extension_native_set_state (extension, FALSE, FALSE, FALSE);
+        remove_browser_action (self, extension);
+      }
+    }
   }
   ephy_web_extension_native_set_state (toggle->extension,
                                        ephy_web_extension_native_is_enabled (toggle->extension),
@@ -265,6 +301,7 @@ ephy_web_extension_manager_constructed (GObject *object)
 {
   EphyWebExtensionManager *self = EPHY_WEB_EXTENSION_MANAGER (object);
   g_autoptr (JsonArray) native_extensions = NULL;
+  EphyEngineSession *session;
 
   G_OBJECT_CLASS (ephy_web_extension_manager_parent_class)->constructed (object);
 
@@ -281,9 +318,9 @@ ephy_web_extension_manager_constructed (GObject *object)
     ephy_web_extension_native_set_state (extension, FALSE, FALSE, TRUE);
   }
 
-  self->native_query_pending = TRUE;
-  ephy_engine_extensions_query_async (ephy_embed_shell_get_network_session (ephy_embed_shell_get_default ()),
-                                      self->cancellable, native_inventory_ready, g_object_ref (self));
+  session = ephy_embed_shell_get_network_session (ephy_embed_shell_get_default ());
+  g_signal_connect_object (session, "extensions-changed", G_CALLBACK (native_extensions_changed), self, 0);
+  native_extensions_changed (session, self);
 }
 
 static void
@@ -400,16 +437,18 @@ ephy_web_extension_manager_create_browser_popup (EphyWebExtensionManager *self,
     return NULL;
   }
   uri = g_strdup_printf ("chrome-extension://%s/%s", ephy_web_extension_get_guid (extension), popup);
-  if (ephy_web_extension_native_is_builtin (extension) && !strcmp (popup, "popup-fenix.html")) {
+  /* Upstream uBlock accepts an explicit owning tab, including Web Store builds. */
+  if (!strcmp (popup, "popup-fenix.html") &&
+      !g_strcmp0 (ephy_web_extension_get_name (extension), "uBlock Origin")) {
     gint tab_id = ephy_engine_web_view_get_extension_tab_id (EPHY_ENGINE_VIEW (owner));
 
     g_free (uri);
-    uri = g_strdup_printf ("chrome-extension://%s/%s?portrait=1&tabId=%d",
+    uri = g_strdup_printf ("chrome-extension://%s/%s?tabId=%d",
                             ephy_web_extension_get_guid (extension), popup, tab_id);
   }
-  gtk_widget_set_size_request (view, 400, 560);
+  gtk_widget_set_size_request (view, 320, 80);
   gtk_widget_set_hexpand (view, TRUE);
-  gtk_widget_set_vexpand (view, TRUE);
+  gtk_widget_set_vexpand (view, FALSE);
   /* Keep the native readiness/error surface visible before Chromium starts. */
   gtk_widget_set_visible (view, TRUE);
   ephy_engine_web_view_load_uri (EPHY_ENGINE_VIEW (view), uri);

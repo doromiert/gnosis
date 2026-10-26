@@ -1,0 +1,65 @@
+# Bundled KeePassXC integration
+
+Jupiter packages the official KeePassXC-Browser **1.10.4.1** Chromium release,
+pinned by SHA-256 in `package.nix`. Password saving/filling, TOTP, encryption,
+database association, origin checks and WebAuthn/passkeys remain upstream code.
+The package is independent of a separately installed KeePassXC extension:
+`public-key.txt` fixes its identity to `giohadoodmdcadnkcpdmhmmdnaidnckm`.
+
+`engine/tools/prepare-keepassxc.py` checks the pinned version and exact source
+anchors before making these adaptations:
+
+- Enable upstream passkey support by default; preserve saved user settings.
+- Request KeePassXC's own unlock prompt on a user gesture in a detected top-level
+  login field. Ignore synthetic events/background frames and coalesce prompts,
+  with a 30-second cooldown after cancellation. No master password enters Jupiter.
+- Remove the extension action/options UI and exclude the backend from Jupiter's
+  extension list. All Jupiter controls live in the native libadwaita panel at
+  **hamburger menu → KeePassXC**: pairing, unlock/lock, login selection, TOTP,
+  passkeys and automatic-unlock settings. Only labels and entry IDs leave the
+  backend; password/code values are filled by upstream content scripts.
+- Style the closed-shadow page overlays using libadwaita popover/list geometry,
+  live GTK palette/font variables and GNOME symbolic icons. Preserve upstream
+  keyboard, origin, positioning and filling behavior.
+- Rescan a newly focused password field once on trusted interaction. The native
+  panel also offers **Redetect Login Fields** for staged forms. If this page
+  predates the integration's startup, recover only manifest-declared scripts in
+  its top frame, respecting URL exclusions and Chromium's host grants. This is
+  why the adapter requests the `scripting` permission.
+- Disable Brave's competing password-save and automatic-sign-in preferences.
+  Existing native vault data is preserved.
+
+The integration loads in the normal profile only. Private profiles do not
+load it or receive a native host registration. Enable KeePassXC's Browser
+Integration and choose **KeePassXC → Connect Database…** once to authorize
+Jupiter. Unlocking an already paired database is separate from association;
+KeePassXC must permit browser unlock requests for its password prompt to open.
+KeePassXC itself must be installed, with `keepassxc-proxy` in PATH.
+
+The bundled manifest uses an integration revision (`1.10.4.104`) and retains the
+upstream version in `version_name`. Existing Chromium profiles can retain older
+worker scripts after unpacked-resource changes. Jupiter resolves only the exact
+internal worker URL, waits for upstream initialization and installs its trusted
+GTK adapter from the pinned package through the private CDP pipe. It does not
+clear worker caches, extension storage, association keys, or browsing data.
+
+Brave searches a fixed default native-host path even with `--user-data-dir`.
+Jupiter gives only its Brave process a profile-owned `native-config` directory.
+Its host manifest permits only this bundled extension's origin. The generated
+0700 proxy launcher restores the original desktop config directory and clears
+Brave's foreign library/toolkit paths before executing the installed proxy. This
+avoids loading a newer Nix GLib into the user's older KeePassXC runtime. No other
+browser's host registration or KeePassXC settings are modified.
+
+Upgrade by updating the release URL/hash/version assertion and reviewing the
+small checked adaptations. Retain the public key to preserve association/storage.
+Run `node engine/tests/keepassxc-unlock-test.js` and
+`node engine/tests/keepassxc-service-test.js`, plus the actual native proxy/worker,
+GTK-panel, closed-shadow overlay and full native uBlock integration probes. Live database pairing and actual
+password/TOTP/passkey operations require a user-authorized test database; a
+successful host handshake alone does not establish those round trips.
+
+The user confirmed passkey use on GitHub. Discord did not respond in their test;
+its cause is unconfirmed. A real host handshake alone does not validate every
+credential, TOTP and passkey operation. Developer builds can use
+`-Dkeepassxc_dir=$KEEPASSXC_DIR` from the Nix development shell.

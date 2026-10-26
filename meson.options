@@ -35,5 +35,8 @@ option('man-pages',
 )
 
 option('cef_root', type: 'string', value: '', description: 'Pinned CEF SDK')
+option('cef_runtime', type: 'combo', choices: ['copy', 'linked'], value: 'copy', description: 'Copy the compatibility runtime, or link an immutable pinned SDK')
 option('cef_wrapper', type: 'string', value: '', description: 'Optional prebuilt libcef_dll_wrapper archive for development')
 option('ublock_dir', type: 'string', value: '', description: 'Official unpacked full uBlock Origin')
+
+option('keepassxc_dir', type: 'string', value: '', description: 'Pinned bundled official KeePassXC-Browser integration')

@@ -3,6 +3,8 @@
 #include <gdk/gdk.h>
 struct wl_display;
 struct wlr_seat;
+struct wlr_data_source;
+GdkContentProvider *jupiter_wayland_source_provider_new(struct wl_display*, struct wlr_data_source*);
 typedef struct JupiterClipboardBridge JupiterClipboardBridge;
 typedef gboolean (*JupiterClipboardAllowed)(gpointer data);
 JupiterClipboardBridge *jupiter_clipboard_bridge_new(struct wl_display*, struct wlr_seat*, GdkClipboard*, JupiterClipboardAllowed, gpointer);

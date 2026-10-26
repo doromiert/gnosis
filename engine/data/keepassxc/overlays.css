@@ -1,0 +1,135 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later
+ * KeePassXC closed-shadow overlays, using libadwaita 1.9 popover/list/button
+ * geometry and the live GTK palette inherited from Jupiter's browser stylesheet.
+ * Upstream retains event handling, keyboard selection, filling and positioning.
+ */
+:host, :root, [data-bs-theme] {
+  --kpxc-background-color: var(--jupiter-kpxc-bg, #ffffff);
+  --kpxc-text-color: var(--jupiter-kpxc-fg, #000006cc);
+  --kpxc-lighter-text-color: color-mix(in srgb, var(--kpxc-text-color) 55%, transparent);
+  --kpxc-light-text-color: var(--kpxc-lighter-text-color);
+  --kpxc-card-background-color: var(--kpxc-background-color);
+  --kpxc-card-header-color: color-mix(in srgb, var(--kpxc-text-color) 3%, var(--kpxc-background-color));
+  --kpxc-input-background-color: var(--jupiter-kpxc-view-bg, #ffffff);
+  --kpxc-input-active-border-color: var(--jupiter-kpxc-accent, #3584e4);
+  --kpxc-input-border: 1px solid color-mix(in srgb, var(--kpxc-text-color) 15%, transparent);
+  --kpxc-autocomplete-footer-color: transparent;
+  --kpxc-autocomplete-menu-border: 1px solid #00000024;
+  --kpxc-box-shadow: 0 1px 5px 1px #00000017, 0 2px 14px 3px #0000000d;
+  --kpxc-link-color: var(--jupiter-kpxc-accent, #3584e4);
+  --kpxc-link-hover-color: var(--kpxc-link-color);
+}
+@media (prefers-color-scheme: dark) {
+  :host, :root, [data-bs-theme] {
+    --kpxc-background-color: var(--jupiter-kpxc-bg, #36363a);
+    --kpxc-text-color: var(--jupiter-kpxc-fg, #ffffff);
+    --kpxc-input-background-color: var(--jupiter-kpxc-view-bg, #1d1d20);
+  }
+}
+.kpxcAutocomplete-container,
+div.kpxc-banner-dialog,
+.kpxc-notification {
+  color: var(--kpxc-text-color) !important;
+  background: var(--kpxc-background-color) !important;
+  border: var(--kpxc-autocomplete-menu-border) !important;
+  border-radius: 12px !important;
+  box-shadow: var(--kpxc-box-shadow) !important;
+  font-family: var(--jupiter-kpxc-font, "Adwaita Sans", sans-serif) !important;
+  font-size: var(--jupiter-kpxc-font-size, 14.667px) !important;
+  line-height: 1.35 !important;
+}
+.kpxcAutocomplete-container { padding: 8px; }
+.kpxcAutocomplete-items { background: transparent !important; scrollbar-width: thin; }
+.kpxcAutocomplete-item {
+  border-radius: 6px;
+  background: transparent;
+  color: var(--kpxc-text-color);
+  padding: 8px 12px;
+  transition: background-color 200ms cubic-bezier(.25, .46, .45, .94);
+}
+.kpxcAutocomplete-item:hover {
+  background-color: color-mix(in srgb, var(--kpxc-text-color) 7%, transparent);
+}
+.kpxcAutocomplete-item--active,
+.kpxcAutocomplete-item--active:hover {
+  background-color: color-mix(in srgb, var(--jupiter-kpxc-accent, #3584e4) 25%, transparent) !important;
+  color: var(--kpxc-text-color) !important;
+}
+.kpxcAutocomplete-item--active * {
+  background-color: transparent !important;
+  color: inherit !important;
+}
+.kpxcAutocomplete-item:active {
+  background-color: color-mix(in srgb, var(--jupiter-kpxc-accent, #3584e4) 35%, transparent) !important;
+}
+.kpxcAutocomplete-item__label { font-size: 1em; font-weight: 400; }
+.kpxcAutocomplete-item__value,
+.kpxcAutocomplete-item__value--last { font-size: .86em; margin-top: 2px; opacity: .55; color: inherit; }
+.kpxcAutocomplete-item__group {
+  color: inherit;
+  opacity: .55;
+  font-size: .8em;
+  font-weight: 400;
+  letter-spacing: normal;
+  text-transform: none;
+}
+.kpxcAutocomplete-container footer { padding: 8px 12px 2px; }
+.kpxcAutocomplete-container--compact .kpxcAutocomplete-item__header,
+.kpxcAutocomplete-container--compact .kpxcAutocomplete-item__value,
+.kpxcAutocomplete-container--compact .kpxcAutocomplete-item__group,
+.kpxcAutocomplete-container--compact .kpxcAutocomplete-item__value--last {
+  transition: background-color 200ms ease-out;
+}
+.kpxcAutocomplete-container--compact .kpxcAutocomplete-item--active > * {
+  background-color: color-mix(in srgb, var(--jupiter-kpxc-accent, #3584e4) 25%, transparent) !important;
+}
+.kpxc-button {
+  min-height: 34px !important;
+  height: auto !important;
+  padding: 5px 14px !important;
+  border: 0 !important;
+  border-radius: 9px !important;
+  background-color: color-mix(in srgb, var(--kpxc-text-color) 10%, transparent) !important;
+  color: var(--kpxc-text-color) !important;
+  font-family: var(--jupiter-kpxc-font, "Adwaita Sans", sans-serif) !important;
+  font-size: var(--jupiter-kpxc-font-size, 14.667px) !important;
+  font-weight: 700 !important;
+  transition: background-color 200ms ease-out !important;
+}
+.kpxc-button:hover { filter: none !important; background-color: color-mix(in srgb, var(--kpxc-text-color) 15%, transparent) !important; }
+.kpxc-button:active { background-color: color-mix(in srgb, var(--kpxc-text-color) 20%, transparent) !important; }
+.kpxc-green-button, .kpxc-blue-button {
+  background-color: var(--jupiter-kpxc-accent, #3584e4) !important;
+  color: var(--jupiter-kpxc-accent-fg, white) !important;
+}
+.kpxc-green-button:hover, .kpxc-blue-button:hover {
+  background-color: color-mix(in srgb, var(--jupiter-kpxc-accent, #3584e4) 90%, white) !important;
+}
+.kpxc-red-button { background-color: #c01c28 !important; color: white !important; }
+.kpxc-button:disabled { opacity: .5; }
+div.kpxc-banner {
+  background: var(--kpxc-background-color) !important;
+  color: var(--kpxc-text-color) !important;
+  font-family: var(--jupiter-kpxc-font, "Adwaita Sans", sans-serif) !important;
+  font-size: var(--jupiter-kpxc-font-size, 14.667px) !important;
+  padding: 8px 12px !important;
+}
+.kpxc-notification { width: min(460px, calc(100vw - 24px)); padding: 16px; margin: 12px; }
+.kpxc-username-icon, .kpxc-totp-icon, .kpxc-pwgen-icon {
+  background: var(--jupiter-kpxc-fg, #777777) !important;
+  mask: url('chrome-extension://__MSG_@@extension_id__/icons/keepassxc.svg') center / 16px 16px no-repeat !important;
+  opacity: .7;
+  transition: opacity 150ms ease-out;
+}
+.kpxc-username-icon:hover, .kpxc-totp-icon:hover, .kpxc-pwgen-icon:hover { opacity: 1; }
+.kpxc-username-icon.lock { mask-image: url('chrome-extension://__MSG_@@extension_id__/icons/locked.svg') !important; }
+.kpxc-username-icon.disconnected { mask-image: url('chrome-extension://__MSG_@@extension_id__/icons/disconnected.svg') !important; }
+.kpxc-totp-icon { mask-image: url('chrome-extension://__MSG_@@extension_id__/icons/otp.svg') !important; }
+@media (prefers-reduced-motion: reduce) {
+  .kpxcAutocomplete-item, .kpxc-button, .kpxc-username-icon, .kpxc-totp-icon, .kpxc-pwgen-icon { transition: none !important; }
+}
+
+.kpxc-banner-icon, .kpxc-banner-icon-moz, .kpxc-banner-icon-safari {
+  background: var(--jupiter-kpxc-fg, #777777) !important;
+  mask: url('chrome-extension://__MSG_@@extension_id__/icons/keepassxc.svg') center / 20px 20px no-repeat !important;
+}

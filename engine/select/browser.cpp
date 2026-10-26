@@ -339,7 +339,14 @@ void Browser::start() {
     if (closing) return;
     if (!brave_) {
       brave_ = JupiterBrave::Page::create(area_, host && host->private_mode);
+      brave_->set_extension_popup(is_extension_popup);
+      brave_->popup_size_changed = [this](int width, int height) {
+        if (!closing && on_popup_size) on_popup_size(width, height);
+      };
       brave_->changed = [this] { url = brave_->uri; name = brave_->title; loading = brave_->loading; progress = brave_->progress; changed(); };
+      brave_->favicon_changed = [this](const std::string& page, const std::string& icon, GdkTexture* image) {
+        if (!closing && on_favicon) on_favicon(page, icon, image);
+      };
       brave_->navigation_started = [this](const std::string& value) { main_navigation_uri_ = value; if (on_load_start) on_load_start(value); };
       brave_->load_finished = [this](int status) {
         if (on_load_end) on_load_end(status);
@@ -507,6 +514,7 @@ void Browser::detach_callbacks() {
   on_external_uri = nullptr;
   on_webstore_install_blocked = nullptr;
   on_changed = nullptr;
+  on_popup_size = nullptr;
   on_security_changed = nullptr;
   on_fullscreen_changed = nullptr;
   on_favicon = nullptr;

@@ -1,21 +1,22 @@
-# Jupiter
+# Gnosis
 
-Jupiter is a port of the actual GNOME Web (Epiphany 51.1) GTK/libadwaita shell to
-Chromium Embedded Framework. Work happens on `main`. The native tab bar,
-bookmarks sidebar, address bar, icons, and UI templates come from Epiphany.
-Source and issues: [doromiert/jupiter-browser](https://github.com/doromiert/jupiter-browser).
+Gnosis (formerly Jupiter) uses GNOME Web's GTK/libadwaita shell with an embedded
+Brave backend. Tabs, bookmarks, address entry and application controls are native
+GTK. The supplied `gnosis.svg` is the application artwork.
+Source and issues: [doromiert/gnosis](https://github.com/doromiert/gnosis).
 
-The engine replacement is **in progress**. Pages render through CEF, including
-internal URI handlers, JavaScript evaluation, navigation history, snapshots,
-printing, and favicons. Cookies, private request contexts, and downloads now use
-CEF, including HTTP cache clearing, fonts, languages, custom user agents, storage policy, and feature
-switches. The existing Website Data dialog lists Chromium cookie domains and
-clears selected domains or all cookies, including partitioned cookies.
-WebKitGTK/JavaScriptCore are still linked for remaining service/model APIs.
-Other site-data categories, remaining permission services, the page-script bridge, and
-the extension-manager UI still need migration. Tab groups are not implemented
-in this fork yet. See [the live checklist](JUPITER-TODO.md) for verified progress,
-known failures, and remaining work.
+Run `nix run .` or `nix run .#gnosis`. The primary executable is `gnosis`;
+`jupiter` remains a compatibility alias. Existing profile directories, GSettings
+schemas, application identifiers and KeePassXC identity are retained so the
+rename preserves browsing data, settings and database pairing.
+
+The engine migration is **in progress**. Brave provides the active browser
+backend, extensions and native engine services. WebKitGTK/JavaScriptCore and the
+CEF compatibility layer remain linked for services still being migrated. See
+[the current migration notes](BRAVE-MIGRATION.md) and
+[the live checklist](JUPITER-TODO.md) for verified coverage and remaining gaps.
+
+The following sections retain notes from the earlier CEF implementation.
 
 JavaScript evaluation runs in Chromium's main context or a native named isolated
 world, using unique context identities across navigation. Isolated worlds share
@@ -102,7 +103,7 @@ filtering is provided by the actual uBlock extension.
 nix run .
 ```
 
-The Nix package pins the CEF SDK and official full uBlock Origin. Jupiter uses
+The Nix package pins the CEF SDK and official full uBlock Origin. Gnosis uses
 its own application ID and profile, separate from Epiphany and Select.
 
 ## Develop and check
@@ -123,9 +124,9 @@ python3 engine/tools/check-native.py --desktop engine/build/capabilities-test --
 python3 engine/tools/check-extensions.py engine/build/extension-probe
 python3 engine/tools/check-native.py --portals engine/build/portal-test --files-only
 python3 engine/tools/check-native.py "$(command -v python3)" engine/tools/check-cache-ui.py \
-  build-cef/src/jupiter --schemas build-cef/data
+  build-cef/src/gnosis --schemas build-cef/data
 python3 engine/tools/check-native.py "$(command -v python3)" engine/tools/check-cookies-ui.py \
-  build-cef/src/jupiter --schemas build-cef/data
+  build-cef/src/gnosis --schemas build-cef/data
 ```
 
 The native checks use a local HTTP fixture, Xvfb, and disposable profiles.
@@ -135,9 +136,9 @@ can be checked in regular and private mode with:
 
 ```sh
 python3 engine/tools/check-native.py --timeout 90 "$(command -v python3)" \
-  engine/tools/check-script-ui.py build-cef/src/jupiter --schemas build-cef/data
+  engine/tools/check-script-ui.py build-cef/src/gnosis --schemas build-cef/data
 python3 engine/tools/check-native.py --timeout 90 "$(command -v python3)" \
-  engine/tools/check-script-ui.py build-cef/src/jupiter --schemas build-cef/data --incognito
+  engine/tools/check-script-ui.py build-cef/src/gnosis --schemas build-cef/data --incognito
 ```
  The
 isolated CEF diagnostic processes disable their sandbox; the application does

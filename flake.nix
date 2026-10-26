@@ -1,10 +1,11 @@
 {
-  description = "Jupiter — Epiphany with a Chromium engine";
+  description = "Gnosis — Epiphany with a Chromium engine";
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
   outputs = { self, nixpkgs }: let
     system = "x86_64-linux";
     pkgs = import nixpkgs { inherit system; config.allowUnfree = true; };
-    package = import ./package.nix { inherit pkgs; };
+    nativeBrave = import ./engine/brave/native-ui.nix { inherit pkgs; };
+    package = import ./package.nix { inherit pkgs; brave = nativeBrave; };
     compositorProbe = import ./engine/brave/compositor-probe.nix { inherit pkgs; };
     braveSeries = builtins.fromJSON (builtins.readFile ./engine/brave/patches/series.json);
     bravePatchChecker = pkgs.writeShellApplication {
@@ -30,9 +31,9 @@
       };
     }) braveSeries.sources);
   in {
-    packages.${system} = { default = package; jupiter = package; cef-sdk = package.cefSdk; };
+    packages.${system} = { default = package; gnosis = package; jupiter = package; cef-sdk = package.cefSdk; brave-native-ui = nativeBrave; };
     apps.${system} = {
-      default = { type = "app"; program = "${package}/bin/jupiter"; };
+      default = { type = "app"; program = "${package}/bin/gnosis"; };
       compositor-probe = { type = "app"; program = "${compositorProbe}/bin/jupiter-compositor-probe"; };
       check-brave-patches = { type = "app"; program = "${bravePatchChecker}/bin/check-brave-patches"; };
     };
@@ -48,6 +49,7 @@
       packages = with pkgs; [ cmake ninja meson pkg-config python3 xorg-server imagemagick gdb xdotool ];
       CEF_ROOT = package.cefSdk;
       UBLOCK_DIR = package.ublock;
+      KEEPASSXC_DIR = package.keepassxcBrowser;
       LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath package.cefSdk.buildInputs;
     };
   };

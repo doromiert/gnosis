@@ -1,0 +1,42 @@
+[
+  {
+    "credential": {
+      "credentialId": "Z25vc2lzLWFsaWNlLXBhc3NrZXk=",
+      "isResidentCredential": true,
+      "rpId": "localhost",
+      "privateKey": "MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAGhRANCAARrF9Hy4SxCR/i85uVjpEDydwN9gS3rM6D0oTlF2JjClk/jQuL+Gn+bjufrSnwPnhYrzjNXazFezsu2QGg3v1H1",
+      "userHandle": "YWxpY2U=",
+      "signCount": 0,
+      "userName": "alice@example.test",
+      "userDisplayName": "Alice"
+    },
+    "publicKey": {
+      "kty": "EC",
+      "crv": "P-256",
+      "x": "axfR8uEsQkf4vOblY6RA8ncDfYEt6zOg9KE5RdiYwpY",
+      "y": "T-NC4v4af5uO5-tKfA-eFivOM1drMV7Oy7ZAaDe_UfU",
+      "ext": true
+    },
+    "user": "alice"
+  },
+  {
+    "credential": {
+      "credentialId": "Z25vc2lzLWJvYi1wYXNza2V5",
+      "isResidentCredential": true,
+      "rpId": "localhost",
+      "privateKey": "MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAKhRANCAAR88nsYjQNPfopSOAMEtRrDwIlp4nfyGzWmC0j8R2aZeAd3VRDbjtBAKT2axp90MNu6fa3mPOmCKZ4Et50ieHPR",
+      "userHandle": "Ym9i",
+      "signCount": 0,
+      "userName": "bob@example.test",
+      "userDisplayName": "Bob"
+    },
+    "publicKey": {
+      "kty": "EC",
+      "crv": "P-256",
+      "x": "fPJ7GI0DT36KUjgDBLUaw8CJaeJ38hs1pgtI_EdmmXg",
+      "y": "B3dVENuO0EApPZrGn3Qw27p9reY86YIpngS3nSJ4c9E",
+      "ext": true
+    },
+    "user": "bob"
+  }
+]

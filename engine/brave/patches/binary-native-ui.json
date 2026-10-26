@@ -1,0 +1,43 @@
+{
+  "schema": 1,
+  "brave_version": "1.97.56",
+  "chromium_version": "155.0.8059.40",
+  "architecture": "x86_64-linux",
+  "executable": "opt/brave.com/brave/brave",
+  "input_sha256": "452cde417639fb5529c2faf4e5229d7f4510e748a1443dd4eb04d261c08be3d7",
+  "output_sha256": "b3b6068cd5a5e8db376be3ad2d5d5639d76f074753cb7b80f99646b46e069fb6",
+  "patches": [
+    {
+      "function": "ZoomBubbleCoordinator::Show",
+      "virtual_address": "0x0bab39d0",
+      "file_offset": 195766736,
+      "expected_prefix": "554889e54157415641554154534883ec38488b47384885c00f844402000089d34989f44989ff488b7830e8a11e5df94885c075154883c4385b415c415d415e41",
+      "replacement": "c3",
+      "intent": "Return before allocating native zoom feedback; page zoom stays upstream."
+    },
+    {
+      "function": "BrowserWebContentsDelegate::GetJavaScriptDialogManager",
+      "virtual_address": "0x0b540040",
+      "file_offset": 190050368,
+      "expected_prefix": "554889e5488d7e08488d359d64cdf7e85c7f69f9488d48d84885c0480f45c15dc3",
+      "replacement": "31c0c3",
+      "intent": "Return no native JS dialog manager; Page protocol handles alert/confirm/prompt/beforeunload with real decisions from GTK."
+    },
+    {
+      "function": "blink::CustomScrollbar::IsOverlayScrollbar vtable RELATIVE relocation",
+      "virtual_address": "0x12c4dae8",
+      "file_offset": 6768976,
+      "expected_prefix": "f8df2b0d00000000",
+      "replacement": "1845400400000000",
+      "intent": "Point only CustomScrollbar overlay classification to the existing true-returning implementation; themed scrollbars overlay content without a layout gutter. Do not change shared false-returning code."
+    },
+    {
+      "function": "InfoBarContainerView::CalculatePreferredSize",
+      "virtual_address": "0x04993bb0",
+      "file_offset": 77147056,
+      "expected_prefix": "554889e54157415641554154534883ec18488b8f9801000048c1e10331db4883c1f8747f4989ff488b8790010000488d35cbf043fe4531f64531ed488945c848",
+      "replacement": "31c0c3",
+      "intent": "Give the shared native infobar container zero preferred size. Browser layout treats it as empty, so all infobar banners remain invisible and reserve no content space. Retain native models, command-line flags, delegate ownership and sandbox enforcement."
+    }
+  ]
+}

@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 #include "ephy-engine-settings.h"
 #include "ephy-engine-session.h"
+#include "brave/browser.hpp"
 #include <cstring>
 #include <mutex>
 
@@ -19,7 +20,7 @@ void ephy_engine_views_preferences_changed(const char *property);
 enum {
   NONE, STANDARD, SERIF, SANS, MONOSPACE, FONT_SIZE, FIXED_SIZE, MIN_SIZE,
   ENCODING, LANGUAGES, SPELL_CHECK, CARET, STORAGE, HARDWARE, USER_AGENT,
-  FEATURES, N_PROPERTIES
+  FEATURES, POPUPS, ADBLOCK, COOKIE_BANNERS, N_PROPERTIES
 };
 static GParamSpec *properties[N_PROPERTIES];
 struct _EphyEngineSettings { GObject parent; GValue values[N_PROPERTIES]; };
@@ -78,6 +79,9 @@ static void ephy_engine_settings_class_init(EphyEngineSettingsClass *klass) {
   properties[STORAGE] = g_param_spec_boolean("enable-website-data-storage", nullptr, nullptr, true, flags);
   properties[HARDWARE] = g_param_spec_boolean("hardware-acceleration", nullptr, nullptr, true, flags);
   properties[USER_AGENT] = g_param_spec_string("user-agent", nullptr, nullptr, "", flags);
+  properties[POPUPS] = g_param_spec_boolean("allow-popups", nullptr, nullptr, false, flags);
+  properties[ADBLOCK] = g_param_spec_boolean("enable-adblock", nullptr, nullptr, true, flags);
+  properties[COOKIE_BANNERS] = g_param_spec_boolean("block-cookie-banners", nullptr, nullptr, false, flags);
   properties[FEATURES] = g_param_spec_variant("feature-overrides", nullptr, nullptr, G_VARIANT_TYPE("a{sb}"), nullptr, flags);
   g_object_class_install_properties(object, N_PROPERTIES, properties);
 }
@@ -107,12 +111,26 @@ private:
 }
 CefRefPtr<CefResourceRequestHandler> ephy_engine_settings_request_handler(CefRefPtr<CefCookieAccessFilter> filter,
   CefRefPtr<CefResourceRequestHandler> next) { return new SettingsRequestHandler(filter, next); }
+static void publish_native_preferences(EphyEngineSettings* settings) {
+  g_autoptr(JsonObject) root = json_object_new();
+  auto* fonts = json_object_new(); json_object_set_object_member(root, "fonts", fonts);
+  for (auto [id, name] : {std::pair{STANDARD,"standard"}, {SERIF,"serif"}, {SANS,"sansserif"}, {MONOSPACE,"fixed"}})
+    json_object_set_string_member(fonts, name, g_value_get_string(&settings->values[id]));
+  for (auto [id, name] : {std::pair{FONT_SIZE,"fontSize"}, {FIXED_SIZE,"fixedSize"}, {MIN_SIZE,"minimumSize"}})
+    json_object_set_int_member(root, name, g_value_get_uint(&settings->values[id]));
+  for (auto [id, name] : {std::pair{STORAGE,"storage"}, {POPUPS,"popups"}, {ADBLOCK,"adblock"}, {COOKIE_BANNERS,"cookieBanners"}})
+    json_object_set_boolean_member(root, name, g_value_get_boolean(&settings->values[id]));
+  g_autoptr(JsonNode) node = json_node_new(JSON_NODE_OBJECT); json_node_set_object(node, root);
+  g_autofree char* json = json_to_string(node, false);
+  JupiterBrave::update_preferences(json);
+}
 static void ephy_engine_settings_init(EphyEngineSettings *settings) {
   for (guint i = 1; i < N_PROPERTIES; ++i) {
     g_value_init(&settings->values[i], G_PARAM_SPEC_VALUE_TYPE(properties[i]));
     g_param_value_set_default(properties[i], &settings->values[i]);
   }
-  g_signal_connect(settings, "notify", G_CALLBACK(+[](GObject*, GParamSpec *spec, gpointer) {
+  g_signal_connect(settings, "notify", G_CALLBACK(+[](GObject* object, GParamSpec *spec, gpointer) {
+    publish_native_preferences(EPHY_ENGINE_SETTINGS(object));
     ephy_engine_sessions_preferences_changed();
     ephy_engine_views_preferences_changed(spec->name);
   }), nullptr);

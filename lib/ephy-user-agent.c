@@ -34,7 +34,7 @@ ephy_user_agent_get (void)
   user_agent = g_settings_get_string (EPHY_SETTINGS_WEB, EPHY_PREFS_WEB_USER_AGENT);
   if (!user_agent || !*user_agent) {
     g_free (user_agent);
-    user_agent = g_strdup ("Jupiter/" EPHY_VERSION);
+    user_agent = g_strdup ("Gnosis/" EPHY_VERSION);
   }
 
   return user_agent;

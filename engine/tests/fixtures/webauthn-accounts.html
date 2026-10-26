@@ -1,0 +1,18 @@
+<!doctype html><meta charset=utf-8><title>Native passkey account fixture</title><h1>Local account selection test</h1><script>
+window.startAccountRequest=(publicKey,round)=>{
+  window.accountResult=null;window.accountError=null;
+  navigator.credentials.get({publicKey:{challenge:new Uint8Array(32).fill(round),rpId:'localhost',userVerification:'required',hints:['security-key'],timeout:60000}}).then(async c=>{
+    try {
+      const der=new Uint8Array(c.response.signature);let at=2;
+      if(der[0]!==0x30||der[at++]!==2)throw Error('Invalid signature encoding');
+      let r=der.slice(at+1,at+1+der[at]);at+=1+der[at];if(der[at++]!==2)throw Error('Invalid signature integer');let s=der.slice(at+1,at+1+der[at]);
+      while(r.length>32&&r[0]===0)r=r.slice(1);while(s.length>32&&s[0]===0)s=s.slice(1);
+      if(r.length>32||s.length>32)throw Error('Invalid signature size');
+      const raw=new Uint8Array(64);raw.set(r,32-r.length);raw.set(s,64-s.length);
+      const auth=new Uint8Array(c.response.authenticatorData),hash=new Uint8Array(await crypto.subtle.digest('SHA-256',c.response.clientDataJSON)),message=new Uint8Array(auth.length+hash.length);message.set(auth);message.set(hash,auth.length);
+      const key=await crypto.subtle.importKey('jwk',publicKey,{name:'ECDSA',namedCurve:'P-256'},false,['verify']);
+      const verified=await crypto.subtle.verify({name:'ECDSA',hash:'SHA-256'},key,raw,message);
+      window.accountResult={user:new TextDecoder().decode(c.response.userHandle),verified,uv:!!(auth[32]&4),counter:new DataView(c.response.authenticatorData).getUint32(33)};
+    }catch(e){window.accountError=e.name+': '+e.message;}
+  },e=>{window.accountError=e.name;});return true;
+};</script>

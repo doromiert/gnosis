@@ -51,12 +51,15 @@ typedef struct {
 } View;
 typedef struct {
   JupiterCompositor *server;
+  struct wlr_surface *surface;
   struct wl_listener commit, destroy;
 } Surface;
 typedef struct {
   struct wlr_presentation_feedback *feedback;
   gint64 frame;
 } PresentedFrame;
+typedef struct DesktopDrag DesktopDrag;
+typedef struct ImportedDrag ImportedDrag;
 struct _JupiterCompositor {
   GObject parent;
   struct wl_display *display;
@@ -65,12 +68,14 @@ struct _JupiterCompositor {
   struct wlr_output *output;
   struct wlr_seat *seat;
   JupiterClipboardBridge *clipboard;
+  DesktopDrag *export_drag;
+  ImportedDrag *import_drag;
   struct wlr_pointer_constraints_v1 *constraints;
   struct wlr_relative_pointer_manager_v1 *relative;
   struct wlr_keyboard keyboard;
   struct wl_list views;
   GPtrArray *hosts; /* weak pointers; each widget owns a server reference */
-  struct wl_listener new_constraint, new_toplevel, new_surface, decoration;
+  struct wl_listener new_constraint, new_toplevel, new_surface, decoration, request_drag;
   guint dispatch;
   char *directory, *socket;
   int drm_fd;
@@ -84,6 +89,7 @@ struct _JupiterCompositorView {
   struct wlr_pointer_constraint_v1 *constraint;
   struct wl_listener constraint_destroy;
   JupiterOuterPointer *outer_pointer;
+  GdkDevice *pointer_device;
   GQueue presentations;
   gint64 last_reported_interval;
   gint64 trace_start;
@@ -96,7 +102,11 @@ struct _JupiterCompositorView {
 G_DEFINE_TYPE(JupiterCompositor, jupiter_compositor, G_TYPE_OBJECT)
 G_DEFINE_TYPE(JupiterCompositorView, jupiter_compositor_view, GTK_TYPE_WIDGET)
 static void restore_fullscreen(View *view);
+static void configure(View *view);
 static void discard_presentations(JupiterCompositorView *self);
+static void cancel_view_drag(JupiterCompositorView *self);
+static void setup_drop_target(JupiterCompositorView *self);
+static void request_drag(struct wl_listener *listener, void *data);
 
 static void listen(struct wl_signal *signal, struct wl_listener *listener, wl_notify_func_t callback) {
   listener->notify = callback; wl_signal_add(signal, listener);
@@ -198,6 +208,7 @@ static void focus_entered(GtkEventControllerFocus *controller, JupiterCompositor
     self->server->keyboard.keycodes, self->server->keyboard.num_keycodes, &self->server->keyboard.modifiers);
 }
 static void unmapped(GtkWidget *widget, JupiterCompositorView *self) {
+  cancel_view_drag(self);
   jupiter_compositor_view_release_buttons(self);
   (void)widget; self->capture_inhibited = TRUE; stop_capture(self);
   discard_presentations(self);
@@ -356,6 +367,11 @@ static gboolean tick(GtkWidget *widget, GdkFrameClock *clock, gpointer data) {
   (void)data;
   JupiterCompositorView *self = JUPITER_COMPOSITOR_VIEW(widget);
   if (self->server->display && self->active) {
+    /* Allocation/map can happen before the native xdg surface is initialized.
+     * Reconcile from GTK's settled allocation as well, so that skipped or
+     * coalesced startup resizes cannot leave content at the previous size.
+     * configure() only sends a protocol update when the dimensions changed. */
+    if (self->active->toplevel->base->initialized) configure(self->active);
     finish_presentations(self, clock);
     sync_output_refresh(self->server);
     gint64 usec = gdk_frame_clock_get_frame_time(clock);
@@ -379,7 +395,19 @@ static gboolean tick(GtkWidget *widget, GdkFrameClock *clock, gpointer data) {
 }
 static void surface_commit(struct wl_listener *listener, void *data) {
   (void)data; Surface *s = wl_container_of(listener, s, commit);
-  for (guint i = 0; i < s->server->hosts->len; i++) gtk_widget_queue_draw(g_ptr_array_index(s->server->hosts, i));
+  struct wlr_surface *root = wlr_surface_get_root_surface(s->surface);
+  /* A subsurface or native popup belongs to its parent tab. Invalidating every
+   * host made one page's animation invalidate all overview thumbnails too. */
+  for (guint depth = 0; depth < 64; depth++) {
+    struct wlr_xdg_surface *xdg = wlr_xdg_surface_try_from_wlr_surface(root);
+    if (!xdg || xdg->role != WLR_XDG_SURFACE_ROLE_POPUP || !xdg->popup->parent) break;
+    root = wlr_surface_get_root_surface(xdg->popup->parent);
+  }
+  for (guint i = 0; i < s->server->hosts->len; i++) {
+    JupiterCompositorView *host = g_ptr_array_index(s->server->hosts, i);
+    if (host->active && host->active->toplevel->base->surface == root)
+      gtk_widget_queue_draw(GTK_WIDGET(host));
+  }
 }
 static void surface_destroy(struct wl_listener *listener, void *data) {
   (void)data; Surface *s = wl_container_of(listener, s, destroy);
@@ -387,7 +415,7 @@ static void surface_destroy(struct wl_listener *listener, void *data) {
 }
 static void new_surface(struct wl_listener *listener, void *data) {
   JupiterCompositor *server = wl_container_of(listener, server, new_surface);
-  struct wlr_surface *surface = data; Surface *s = g_new0(Surface, 1); s->server = server;
+  struct wlr_surface *surface = data; Surface *s = g_new0(Surface, 1); s->server = server; s->surface = surface;
   listen(&surface->events.commit, &s->commit, surface_commit);
   listen(&surface->events.destroy, &s->destroy, surface_destroy);
 }
@@ -396,9 +424,21 @@ static void bind_view(View *view) {
   for (guint i = 0; i < view->server->hosts->len; i++) {
     JupiterCompositorView *host = g_ptr_array_index(view->server->hosts, i);
     if (host->active) continue;
+    if (g_strcmp0(host->token, "__jupiter_devtools__") == 0) {
+      g_autofree char *app = g_ascii_strdown(view->toplevel->app_id ? view->toplevel->app_id : "", -1);
+      if (!strstr(app, "devtools") && !(view->toplevel->title && strstr(view->toplevel->title, "DevTools"))) continue;
+      view->host = host; host->active = view; return;
+    }
     if (host->token && !(view->toplevel->app_id && strstr(view->toplevel->app_id, host->token)) &&
         !(view->toplevel->title && strstr(view->toplevel->title, host->token))) continue;
     view->host = host; host->active = view; return;
+  }
+}
+static void configure_size(View *view, int width, int height) {
+  if (width <= 0 || height <= 0) return;
+  if (width != view->requested_width || height != view->requested_height) {
+    view->requested_width = width; view->requested_height = height;
+    wlr_xdg_toplevel_set_size(view->toplevel, width, height);
   }
 }
 static void configure(View *view) {
@@ -408,15 +448,15 @@ static void configure(View *view) {
   // until GTK maps them, using the original fallback for newly created tabs.
   int width = widget && gtk_widget_get_mapped(widget) ? MAX(1,gtk_widget_get_width(widget)) : (view->requested_width > 0 ? view->requested_width : 1280);
   int height = widget && gtk_widget_get_mapped(widget) ? MAX(1,gtk_widget_get_height(widget)) : (view->requested_height > 0 ? view->requested_height : 800);
-  if (width != view->requested_width || height != view->requested_height) {
-    view->requested_width = width; view->requested_height = height;
-    wlr_xdg_toplevel_set_size(view->toplevel, width, height);
-  }
+  configure_size(view, width, height);
 }
 static void size_allocate(GtkWidget *widget, int width, int height, int baseline) {
-  (void)width; (void)height; (void)baseline;
+  (void)baseline;
   JupiterCompositorView *self = JUPITER_COMPOSITOR_VIEW(widget);
-  if (self->active && self->active->toplevel->base->initialized) configure(self->active);
+  if (self->active && self->active->toplevel->base->initialized) {
+    if (gtk_widget_get_mapped(widget)) configure_size(self->active, width, height);
+    else configure(self->active);
+  }
   for (GtkWidget *child = gtk_widget_get_first_child(widget); child; child = gtk_widget_get_next_sibling(child))
     if (GTK_IS_POPOVER(child) && gtk_widget_get_visible(child)) gtk_popover_present(GTK_POPOVER(child));
 }
@@ -547,6 +587,7 @@ static void button(GtkGestureClick *gesture, int count, double x, double y, Jupi
   if (n > 3) return; // Epiphany handles the back/forward mouse buttons.
   GdkEvent *event = gtk_event_controller_get_current_event(GTK_EVENT_CONTROLLER(gesture));
   if (!event) return;
+  g_set_object(&self->pointer_device, gdk_event_get_device(event));
   const gboolean pressed = gdk_event_get_event_type(event) == GDK_BUTTON_PRESS;
   const guint bit = 1u << (n ? n : 1);
   if (!pressed && !(self->pressed_buttons & bit)) return;
@@ -584,6 +625,7 @@ static gboolean scroll(GtkEventControllerScroll *controller, double dx, double d
   wlr_seat_pointer_notify_frame(self->server->seat); return TRUE;
 }
 void jupiter_compositor_view_release_buttons(JupiterCompositorView *self) {
+  if (self->server && self->server->export_drag) return;
   if (!self->server || !self->server->seat) { self->pressed_buttons = 0; return; }
   const guint32 time = (guint32)(g_get_monotonic_time() / 1000);
   for (guint n = 1; n <= 3; ++n) if (self->pressed_buttons & (1u << n))
@@ -639,6 +681,7 @@ static gboolean dispatch(gint fd, GIOCondition condition, gpointer data) {
   wl_event_loop_dispatch(wl_display_get_event_loop(self->display), 0); wl_display_flush_clients(self->display);
   return G_SOURCE_CONTINUE;
 }
+#include "drag-bridge.inc"
 static void server_dispose(GObject *object) {
   JupiterCompositor *self = JUPITER_COMPOSITOR(object);
   if (self->display && !self->shutting_down) {
@@ -647,7 +690,7 @@ static void server_dispose(GObject *object) {
     if (self->dispatch) { g_source_remove(self->dispatch); self->dispatch = 0; }
     // These listeners belong to this server, not to the wlroots globals.
     // wlroots requires its public event lists to be empty during destruction.
-    struct wl_listener *listeners[] = {&self->new_surface, &self->new_toplevel, &self->new_constraint, &self->decoration};
+    struct wl_listener *listeners[] = {&self->new_surface, &self->new_toplevel, &self->new_constraint, &self->decoration, &self->request_drag};
     for (guint i = 0; i < G_N_ELEMENTS(listeners); ++i) {
       if (listeners[i]->link.next) wl_list_remove(&listeners[i]->link);
       wl_list_init(&listeners[i]->link);
@@ -671,6 +714,8 @@ static void jupiter_compositor_init(JupiterCompositor *self) {
 }
 static void dispose(GObject *object) {
   JupiterCompositorView *self = JUPITER_COMPOSITOR_VIEW(object);
+  cancel_view_drag(self);
+  g_clear_object(&self->pointer_device);
   stop_capture(self); jupiter_outer_pointer_free(self->outer_pointer); self->outer_pointer = NULL;
   discard_presentations(self);
   if (self->server) {
@@ -690,11 +735,13 @@ static void jupiter_compositor_view_class_init(JupiterCompositorViewClass *klass
   gtk_widget_class_set_css_name(widget, "jupiter-compositor-view");
   g_signal_new("surface-ready", G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST, 0, NULL, NULL, NULL, G_TYPE_NONE, 0);
   g_signal_new("fullscreen-changed", G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST, 0, NULL, NULL, NULL, G_TYPE_NONE, 1, G_TYPE_BOOLEAN);
+  g_signal_new("drag-preview-image", G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST, 0, NULL, NULL, NULL, G_TYPE_NONE, 2, GDK_TYPE_DRAG, G_TYPE_STRING);
 }
 static void jupiter_compositor_view_init(JupiterCompositorView *self) {
   wl_list_init(&self->constraint_destroy.link);
   gtk_widget_set_focusable(GTK_WIDGET(self), TRUE); gtk_widget_set_hexpand(GTK_WIDGET(self), TRUE);
   gtk_widget_set_vexpand(GTK_WIDGET(self), TRUE); gtk_widget_set_overflow(GTK_WIDGET(self), GTK_OVERFLOW_HIDDEN);
+  setup_drop_target(self);
   GtkEventController *controller = gtk_event_controller_motion_new();
   g_signal_connect(controller, "motion", G_CALLBACK(motion), self); g_signal_connect(controller, "enter", G_CALLBACK(motion), self);
   g_signal_connect(controller, "leave", G_CALLBACK(leave), self); gtk_widget_add_controller(GTK_WIDGET(self), controller);
@@ -758,6 +805,7 @@ JupiterCompositor *jupiter_compositor_new(GError **error) {
   wlr_output_layout_add(layout, self->output, 0, 0); wlr_output_create_global(self->output, self->display);
   wlr_xdg_output_manager_v1_create(self->display, layout);
   self->seat = wlr_seat_create(self->display, "Jupiter GTK seat");
+  listen(&self->seat->events.request_start_drag, &self->request_drag, request_drag);
   self->clipboard = jupiter_clipboard_bridge_new(self->display, self->seat,
     gdk_display_get_clipboard(gdk_display_get_default()), clipboard_allowed, self);
   self->constraints = wlr_pointer_constraints_v1_create(self->display);

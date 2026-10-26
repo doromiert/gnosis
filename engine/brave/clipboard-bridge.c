@@ -90,7 +90,7 @@ static void inner_provider_class_init(InnerProviderClass *klass) {
   provider->write_mime_type_async = inner_write; provider->write_mime_type_finish = inner_write_finish;
 }
 static void inner_provider_init(InnerProvider *self) { wl_list_init(&self->destroyed.link); }
-static GdkContentProvider *inner_provider_new(struct wl_display *display, struct wlr_data_source *source) {
+GdkContentProvider *jupiter_wayland_source_provider_new(struct wl_display *display, struct wlr_data_source *source) {
   InnerProvider *self = g_object_new(inner_provider_get_type(), NULL);
   self->source = source; self->display = display;
   GdkContentFormatsBuilder *builder = gdk_content_formats_builder_new();
@@ -176,7 +176,7 @@ static void selection_requested(struct wl_listener *listener, void *data) {
   struct wlr_seat_request_set_selection_event *event = data;
   if (self->allowed && !self->allowed(self->user)) return;
   wlr_seat_set_selection(self->seat, event->source, event->serial);
-  GdkContentProvider *provider = event->source ? inner_provider_new(self->display, event->source) : NULL;
+  GdkContentProvider *provider = event->source ? jupiter_wayland_source_provider_new(self->display, event->source) : NULL;
   g_set_object(&self->exported, provider);
   // The changed callback sees the provider set before the notification, avoiding
   // a desktop -> private -> desktop selection loop.

@@ -9,9 +9,22 @@ namespace JupiterBrave {
 bool enabled();
 bool composited();
 void initialize(const std::string& profile);
+void set_automation_mode(bool);
 void shutdown();
+void update_preferences(const std::string& json);
+void set_user_content(const std::string& css, const std::string& script);
+void browser_command(bool private_profile, const std::string& method, const std::string& params,
+                     std::function<void(JsonObject*, const std::string&)> reply);
+void clear_website_data(bool private_profile, const std::string& types,
+                        std::function<void(JsonObject*, const std::string&)> reply);
+// Normal profile only. Returns false until its trusted worker is ready.
+void initialize_extensions(std::function<void()> changed);
+
+
 std::string quote(const std::string&);
 using Reply = std::function<void(JsonObject*, const std::string&)>;
+bool extensions_load(const std::string& path, Reply);
+bool extensions_call(const std::string& method, const std::string& arguments, Reply);
 using ResourceReply = std::function<void(GBytes*, const std::string&, const std::string&)>;
 using DownloadProgress = std::function<void(guint64, guint64, const std::string&)>;
 using DownloadBegin = std::function<DownloadProgress(const std::string&, const std::string&,
@@ -27,6 +40,8 @@ public:
   std::function<void()> changed, closed, tls_changed;
   std::function<void(bool)> fullscreen_changed;
   std::function<void(double)> zoom_changed;
+  std::function<void(const std::string&, const std::string&, GdkTexture*)> favicon_changed;
+  std::function<void(int, int)> popup_size_changed;
   std::function<void(const std::string&)> failed;
   std::function<void(const std::string&)> navigation_started;
   std::function<bool(const std::string&)> open_uri;
@@ -39,30 +54,69 @@ public:
   bool is_internal_page(const std::string&) const;
   bool send_page_message(const std::string&, const std::string&, const std::string&);
   void start();
+  void set_extension_popup(bool);
   void navigate(const std::string&);
   void command(const std::string&, const std::string& = "{}", Reply = {});
+  // Route a trusted engine command through the session that owns this frame.
+  // Runtime commands still need an explicit context for non-root local frames.
+  void command_for_frame(const std::string&, const std::string&, const std::string&, Reply = {});
   void back(); void forward(); void reload(bool bypass = false); void stop();
+  void find(const std::string&, bool forward, bool sensitive, bool match, Reply);
+  void stop_find();
+  void request_close(std::function<void(bool, bool, const std::string&)>);
+  void cancel_close();
+  bool close_is_approved() const;
   void focus(); void set_visible(bool); void close();
   void send_key(GdkEvent*);
   bool edit(const std::string&);
   void set_zoom(double);
+  GtkWidget* create_translation_controls();
+  void translation_request(const std::string& operation, const std::string& language, int sequence, Reply);
   GtkWidget* widget() const;
+  int native_tab_id() const;
+  void show_password_manager();
+  void show_devtools();
+  void close_devtools();
+  bool devtools_open() const;
+  void keepassxc_request(const std::string&, const std::string&, Reply);
   bool is_closed() const;
   bool tls_info(GTlsCertificate**, GTlsCertificateFlags*) const;
   bool tls_secure() const;
+  void update_preferences();
+  void update_user_content();
+  void print_pdf(const std::string& path, GtkPageSetup*, GCancellable*,
+                 std::function<void(const std::string&)>);
   void snapshot(std::function<void(GdkTexture*, const std::string&)>, bool full_document = false);
 private:
   friend class Process;
   struct State;
   std::unique_ptr<State> state_;
   explicit Page(GtkWidget*, bool);
-  void attach(); void handle(const std::string&, JsonObject*); void layout();
+  void attach(); void handle(const std::string&, JsonObject*, bool frame_event = false); void layout();
   void adopt_surface(GtkWidget*); void surface_ready();
   void history(int); void refresh_history();
   void internal_request(JsonObject*);
   void show_context_menu(JsonObject*, int context);
   void dismiss_context_menu();
+  void show_script_dialog(JsonObject*);
+  void show_close_failure(const std::string&);
+  void dismiss_script_dialog(bool cancel);
+  void show_install_dialog(JsonObject*);
+  void dismiss_install_dialog(bool cancel);
+  void theme_document(const std::string&, const std::string&);
+  void update_web_theme();
+  void request_favicon();
   void apply_zoom();
   void receive_zoom(double);
+  void dismiss_password_manager();
+  void show_authenticator(JsonObject*);
+  void dismiss_authenticator(bool cancel);
+  void authenticator_action(const std::string&, int, guint64);
+  void poll_password_manager();
+  void update_password_manager(JsonObject*, const std::string&);
+  void password_manager_operation(std::string, std::string = "null");
+  void dismiss_translation();
+  void poll_translation();
+  void update_translation(JsonObject*, const std::string&);
 };
 }

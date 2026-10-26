@@ -5,7 +5,7 @@ let
   jupiterGtk = pkgs.gtk4.overrideAttrs (old: {
     patches = (old.patches or []) ++ [ ./patches/gtk4-x11-ignore-stale-selection-clear.patch ];
   });
-  uiLibraries = with pkgs; [ gtk4 libadwaita json-glib libepoxy fontconfig freetype libsodium libsecret libsoup_3 ];
+  uiLibraries = with pkgs; [ gtk4 libadwaita json-glib libepoxy fontconfig freetype libsodium libsecret libsoup_3 qrencode ];
   chromiumLibraries = with pkgs; [
     stdenv.cc.cc.lib glib nss nspr dbus at-spi2-core systemd
     cups libdrm libxkbcommon libGL libgbm expat alsa-lib pango cairo
@@ -52,8 +52,23 @@ let
     installPhase = "mkdir -p $out; cp -r . $out/";
     meta.license = lib.licenses.gpl3Plus;
   };
+  keepassxcBrowser = pkgs.stdenvNoCC.mkDerivation {
+    pname = "jupiter-keepassxc-browser";
+    version = "1.10.4.1";
+    src = pkgs.fetchurl {
+      url = "https://github.com/keepassxreboot/keepassxc-browser/releases/download/1.10.4.1/keepassxc-browser_1.10.4.1_chromium.zip";
+      hash = "sha256-PM2mEqlR3UeItCTNQa3O2DKSLU5ILqPuA8YBM5D0WEI=";
+    };
+    nativeBuildInputs = [ pkgs.unzip pkgs.python3 ];
+    unpackPhase = "unzip -q $src";
+    patchPhase = "python3 ${./engine/tools/prepare-keepassxc.py} . ${./engine/data/keepassxc}";
+    dontConfigure = true;
+    dontBuild = true;
+    installPhase = "mkdir -p $out; cp -r . $out/";
+    meta.license = lib.licenses.gpl3;
+  };
   package = pkgs.epiphany.overrideAttrs (old: {
-    pname = "jupiter";
+    pname = "gnosis";
     version = "0.1.0";
     src = lib.cleanSourceWith {
       src = lib.cleanSource ./.;
@@ -65,24 +80,30 @@ let
       if input == pkgs.gtk4.dev then jupiterGtk.dev
       else if input == pkgs.gtk4 then jupiterGtk
       else input
-    ) old.buildInputs ++ [ pkgs.libpwquality pkgs.libepoxy pkgs.wlroots_0_19 pkgs.wayland pkgs.wayland-protocols pkgs.libxkbcommon pkgs.libdrm pkgs.libglvnd pkgs.pixman ] ++ chromiumLibraries;
+    ) old.buildInputs ++ [ pkgs.libpwquality pkgs.libepoxy pkgs.wlroots_0_19 pkgs.wayland pkgs.wayland-protocols pkgs.libxkbcommon pkgs.libdrm pkgs.libglvnd pkgs.pixman pkgs.qrencode ] ++ chromiumLibraries;
     preConfigure = (old.preConfigure or "") + ''
       export PKG_CONFIG_PATH="${jupiterGtk.dev}/lib/pkgconfig:''${PKG_CONFIG_PATH-}"
       test "$(pkg-config --variable=libdir gtk4)" = "${lib.getLib jupiterGtk}/lib"
       export NIX_LDFLAGS="-rpath ${lib.getLib jupiterGtk}/lib ''${NIX_LDFLAGS-}"
     '';
-    mesonFlags = [ "-Dgranite=disabled" "-Dunit_tests=disabled" "-Dman-pages=disabled" "-Dcef_root=${cefSdk}" "-Dublock_dir=${ublock}" ];
+    mesonFlags = [ "-Dgranite=disabled" "-Dunit_tests=disabled" "-Dman-pages=disabled" "-Dcef_root=${cefSdk}" "-Dcef_runtime=linked" "-Dublock_dir=${ublock}" "-Dkeepassxc_dir=${keepassxcBrowser}" ];
     preFixup = (old.preFixup or "") + ''
       gappsWrapperArgs+=(--set JUPITER_ENGINE brave)
       gappsWrapperArgs+=(--set-default JUPITER_SURFACE wayland)
       gappsWrapperArgs+=(--set-default JUPITER_BRAVE_EXECUTABLE ${brave}/bin/brave)
       gappsWrapperArgs+=(--set-default JUPITER_BRAVE_VERSION ${brave.version})
+      gappsWrapperArgs+=(--set JUPITER_NOTIFICATION_ICON "$out/share/icons/hicolor/scalable/apps/io.github.doromiert.Jupiter.svg")
+      ${lib.optionalString (brave ? nativeInstallShim) "gappsWrapperArgs+=(--set-default JUPITER_NATIVE_UI_BRIDGE 1)"}
     '';
-    passthru = (old.passthru or {}) // { inherit cefSdk ublock jupiterGtk; };
+    postFixup = (old.postFixup or "") + ''
+      # Retain the old command as an alias for existing launch scripts.
+      ln -s gnosis "$out/bin/jupiter"
+    '';
+    passthru = (old.passthru or {}) // { inherit cefSdk ublock jupiterGtk keepassxcBrowser; };
     meta = old.meta // {
       description = "GNOME Web shell with a composited Brave web-content backend";
-      homepage = "https://github.com/doromiert/jupiter-browser";
-      mainProgram = "jupiter";
+      homepage = "https://github.com/doromiert/gnosis";
+      mainProgram = "gnosis";
     };
   });
 in package

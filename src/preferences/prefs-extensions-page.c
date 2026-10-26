@@ -24,6 +24,8 @@
 #include "prefs-extensions-page.h"
 
 #include "ephy-embed-shell.h"
+#include "ephy-link.h"
+#include "ephy-window.h"
 #include "ephy-engine-extensions.h"
 #include "ephy-pixbuf-utils.h"
 #include "ephy-web-extension-manager.h"
@@ -49,6 +51,33 @@ struct _PrefsExtensionsPage {
 static guint signals[LAST_SIGNAL];
 
 G_DEFINE_FINAL_TYPE (PrefsExtensionsPage, prefs_extensions_page, ADW_TYPE_PREFERENCES_PAGE)
+
+static void
+open_extension_store (GSimpleAction *action,
+                      GVariant      *parameter,
+                      gpointer       user_data)
+{
+  GtkWidget *window = GTK_WIDGET (gtk_widget_get_root (GTK_WIDGET (user_data)));
+  const char *store = g_variant_get_string (parameter, NULL);
+  const char *uri = NULL;
+
+  if (!EPHY_IS_WINDOW (window))
+    return;
+  if (g_str_equal (store, "chrome"))
+    uri = "https://chromewebstore.google.com/";
+  else if (g_str_equal (store, "edge"))
+    uri = "https://microsoftedge.microsoft.com/addons/";
+  if (!uri)
+    return;
+
+  ephy_link_open (EPHY_LINK (window), uri, NULL, EPHY_LINK_NEW_TAB | EPHY_LINK_JUMP_TO);
+  if (ADW_IS_APPLICATION_WINDOW (window)) {
+    AdwDialog *dialog = adw_application_window_get_visible_dialog (ADW_APPLICATION_WINDOW (window));
+
+    if (dialog)
+      adw_dialog_close (dialog);
+  }
+}
 
 static void
 on_extension_row_activated (GtkWidget           *row,
@@ -417,6 +446,14 @@ prefs_extensions_page_init (PrefsExtensionsPage *self)
   EphyWebExtensionManager *manager;
 
   gtk_widget_init_template (GTK_WIDGET (self));
+  {
+    g_autoptr (GSimpleActionGroup) group = g_simple_action_group_new ();
+    const GActionEntry actions[] = { { "open", open_extension_store, "s" } };
+
+    g_action_map_add_action_entries (G_ACTION_MAP (group), actions, G_N_ELEMENTS (actions), self);
+    gtk_widget_insert_action_group (GTK_WIDGET (self), "extension-store", G_ACTION_GROUP (group));
+  }
+
 
   manager = ephy_web_extension_manager_get_default ();
   g_set_weak_pointer (&self->web_extension_manager, manager);

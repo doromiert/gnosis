@@ -1226,10 +1226,10 @@ window_cmd_show_about (GSimpleAction *action,
   dialog = ADW_ABOUT_DIALOG (adw_about_dialog_new_from_appdata ("/org/gnome/Epiphany/io.github.doromiert.Jupiter.metainfo.xml", NULL));
 
   if (g_str_equal (PROFILE, "Canary"))
-    adw_about_dialog_set_application_name (dialog, _("Jupiter Canary"));
+    adw_about_dialog_set_application_name (dialog, _("Gnosis Canary"));
 #if TECH_PREVIEW
   else
-    adw_about_dialog_set_application_name (dialog, _("Jupiter Technology Preview"));
+    adw_about_dialog_set_application_name (dialog, _("Gnosis Technology Preview"));
 #endif
 
   adw_about_dialog_set_version (dialog, EPHY_VERSION);
@@ -1504,10 +1504,14 @@ window_cmd_new_tab (GSimpleAction *action,
 {
   EphyWindow *window = user_data;
   char *url;
+  EphyEmbedShellMode mode = ephy_embed_shell_get_mode (EPHY_EMBED_SHELL (ephy_shell_get_default ()));
 
   url = g_settings_get_string (EPHY_SETTINGS_MAIN, EPHY_PREFS_HOMEPAGE_URL);
-  if (g_strcmp0 (url, "about:newtab") != 0) {
+  if (mode == EPHY_EMBED_SHELL_MODE_INCOGNITO || mode == EPHY_EMBED_SHELL_MODE_AUTOMATION || !url || !*url)
     g_clear_pointer (&url, g_free);
+  else if (g_str_equal (url, "about:newtab")) {
+    g_free (url);
+    url = g_strdup ("about:blank");
   }
 
   ephy_link_open (EPHY_LINK (window),
@@ -3115,7 +3119,7 @@ window_cmd_toggle_inspector (GSimpleAction *action,
 
   inspector_window = ephy_engine_web_view_get_inspector (view);
 
-  if (!ephy_embed_inspector_is_loaded (embed))
+  if (!ephy_engine_web_inspector_is_open (inspector_window))
     ephy_engine_web_inspector_show (inspector_window);
   else
     ephy_engine_web_inspector_close (inspector_window);
@@ -3579,6 +3583,10 @@ window_cmd_passwords (GSimpleAction *action,
 {
   EphyWindow *window = user_data;
 
+  EphyEmbed *embed = ephy_window_get_active_embed (window);
+
+  if (embed && ephy_engine_web_view_show_password_manager (EPHY_ENGINE_VIEW (ephy_embed_get_web_view (embed))))
+    return;
   ephy_passwords_show (window);
 }
 

@@ -1,11 +1,14 @@
-# Jupiter
+# Gnosis
 
 Keep the shell grounded in Epiphany's actual GTK layouts and native libadwaita
 styles. The active engine direction is the working Brave native-window PoC,
 embedded in this actual Epiphany shell. Reuse Select's tab/workspace behavior.
 Remove WebKit and the temporary CEF compatibility layer as their services move
 to Brave; do not describe a partial bridge as a completed engine migration.
-Work solo: the user has explicitly stopped subagent use.
+Work solo now. The user temporarily authorized parallel agents until the Codex
+usage/quota reset; root observed that the current weekly window started at
+2026-10-26 07:05:30 Europe/Warsaw and stopped all subagents. Do not spawn or
+reactivate agents without another explicit user instruction.
 
 Do not use the interface-polish / make-interfaces-feel-better skill for Jupiter.
 The user explicitly considers it irrelevant here. Follow Epiphany's source and
@@ -28,3 +31,7 @@ source patches as reference and keep upgrade/application checks explicit.
 
 Run meaningful unit checks and the affected native integration checks. New
 extension adapters must enforce host permissions and isolate private contexts.
+
+The product is now Gnosis. Keep the existing Jupiter application/profile/schema
+identifiers as compatibility identities; they preserve current user data and
+KeePassXC pairing. Public names, the main executable and artwork use Gnosis.

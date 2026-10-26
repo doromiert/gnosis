@@ -4,6 +4,7 @@
 #include <glib/gstdio.h>
 #include <string>
 CefRefPtr<CefBrowser> ephy_engine_view_browser(EphyEngineView*);
+std::shared_ptr<JupiterBrave::Page> ephy_engine_view_brave_page(EphyEngineView*);
 namespace {
 struct Print {
   GTask* task;
@@ -21,22 +22,24 @@ struct Print {
     g_clear_object(&cancel);g_clear_object(&parent);g_object_unref(dialog);g_object_unref(task);
   }
   void fail(GError* error) {g_task_return_error(task,error);delete this;}
+  void rendered(bool success) {
+    if(g_cancellable_is_cancelled(cancel)){fail(g_error_new_literal(G_IO_ERROR,G_IO_ERROR_CANCELLED,"Printing was cancelled"));return;}
+    if(!success) {fail(g_error_new_literal(G_IO_ERROR,G_IO_ERROR_FAILED,"The browser could not render this document for printing"));return;}
+    auto* file=g_file_new_for_path(path.c_str());
+    gtk_print_dialog_print_file(dialog,parent,setup,file,cancel,
+      +[](GObject* object,GAsyncResult* result,gpointer user) {
+        auto* job=static_cast<Print*>(user);GError* error=nullptr;
+        if(!gtk_print_dialog_print_file_finish(GTK_PRINT_DIALOG(object),result,&error)){job->fail(error);return;}
+        g_task_return_pointer(job->task,gtk_print_setup_ref(job->setup),reinterpret_cast<GDestroyNotify>(gtk_print_setup_unref));delete job;
+      },this);
+    g_object_unref(file);
+  }
 };
 class PDF final : public CefPdfPrintCallback {
 public:
   explicit PDF(Print* job):job_(job){}
   void OnPdfPrintFinished(const CefString&,bool success) override {
-    auto* job=job_;job_=nullptr;
-    if(g_cancellable_is_cancelled(job->cancel)){job->fail(g_error_new_literal(G_IO_ERROR,G_IO_ERROR_CANCELLED,"Printing was cancelled"));return;}
-    if(!success) {job->fail(g_error_new_literal(G_IO_ERROR,G_IO_ERROR_FAILED,"Chromium could not render this document for printing"));return;}
-    auto* file=g_file_new_for_path(job->path.c_str());
-    gtk_print_dialog_print_file(job->dialog,job->parent,job->setup,file,job->cancel,
-      +[](GObject* object,GAsyncResult* result,gpointer user) {
-        auto* job=static_cast<Print*>(user);GError* error=nullptr;
-        if(!gtk_print_dialog_print_file_finish(GTK_PRINT_DIALOG(object),result,&error)){job->fail(error);return;}
-        g_task_return_pointer(job->task,gtk_print_setup_ref(job->setup),reinterpret_cast<GDestroyNotify>(gtk_print_setup_unref));delete job;
-      },job);
-    g_object_unref(file);
+    auto* job=job_;job_=nullptr;job->rendered(success);
   }
 private:
   Print* job_;
@@ -55,11 +58,22 @@ void ephy_engine_web_view_print(EphyEngineView* view,GtkPageSetup* page,GtkPrint
     job->setup=gtk_print_dialog_setup_finish(GTK_PRINT_DIALOG(object),result,&error);
     if(!job->setup){job->fail(error);return;}
     auto* view=EPHY_ENGINE_VIEW(g_task_get_source_object(job->task));auto browser=ephy_engine_view_browser(view);
-    if(!browser){job->fail(g_error_new_literal(G_IO_ERROR,G_IO_ERROR_CLOSED,"The tab was closed"));return;}
+    auto brave=ephy_engine_view_brave_page(view);
+    if(!browser&&!brave){job->fail(g_error_new_literal(G_IO_ERROR,G_IO_ERROR_CLOSED,"The tab was closed"));return;}
     char* directory=g_dir_make_tmp("jupiter-print-XXXXXX",&error);
     if(!directory){job->fail(error);return;}
     job->directory=directory;g_free(directory);job->path=job->directory+"/document.pdf";
-    auto* setup=gtk_print_setup_get_page_setup(job->setup);auto* paper=gtk_page_setup_get_paper_size(setup);
+    auto* setup=gtk_print_setup_get_page_setup(job->setup);
+    if(brave) {
+      brave->print_pdf(job->path,setup,job->cancel,[job](const std::string& failure) {
+        if(!failure.empty() && !g_cancellable_is_cancelled(job->cancel)) {
+          job->fail(g_error_new_literal(G_IO_ERROR,G_IO_ERROR_FAILED,failure.c_str()));return;
+        }
+        job->rendered(failure.empty());
+      });
+      return;
+    }
+    auto* paper=gtk_page_setup_get_paper_size(setup);
     CefPdfPrintSettings pdf;
     pdf.landscape=gtk_page_setup_get_orientation(setup)==GTK_PAGE_ORIENTATION_LANDSCAPE || gtk_page_setup_get_orientation(setup)==GTK_PAGE_ORIENTATION_REVERSE_LANDSCAPE;
     pdf.paper_width=gtk_paper_size_get_width(paper,GTK_UNIT_INCH);pdf.paper_height=gtk_paper_size_get_height(paper,GTK_UNIT_INCH);
