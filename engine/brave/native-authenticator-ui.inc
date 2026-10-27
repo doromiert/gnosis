@@ -225,6 +225,7 @@ static gboolean publish_authenticator(void *view) {
 }
 static void authenticator_construct(void *view, void *contents, void *model) {
   original_authenticator_construct(view, contents, model);
+  if (!jupiter_adapter_enabled("passkeys")) return;
   AuthenticatorView *entry = g_new0(AuthenticatorView, 1);
   entry->view = view; entry->contents = contents; entry->next = authenticator_views; authenticator_views = entry;
 }
@@ -257,7 +258,7 @@ static gboolean show_authenticator_widget(void *widget) {
 }
 static void authenticator_show(void *view) {
   if (*((unsigned char *)view + 0x608)) return;
-  if (!publish_authenticator(view)) {
+  if (!jupiter_adapter_enabled("passkeys") || !publish_authenticator(view)) {
     void *widget = ((void *(*)(void *))(image + UI_PERMISSION_GET_WIDGET_RVA))((char *)view + 0x2c8);
     original_widget_show(widget);
   }

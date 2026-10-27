@@ -60,6 +60,7 @@
     for (auto& id : sources) forget_frame(id);
   }
   void attach_frames(const std::string& source) {
+    if (!adapter_enabled("frame-sessions")) return;
     command("Target.setAutoAttach",R"({"autoAttach":true,"waitForDebuggerOnStart":true,"flatten":true,"filter":[{"type":"iframe","exclude":false},{"exclude":true}]})",source,
       [](JsonObject*,const std::string& error){if(!error.empty())g_warning("Native iframe adapters could not attach: %s",error.c_str());});
   }
@@ -123,12 +124,13 @@
       command("Runtime.addBinding",R"({"name":"__jupiterDocumentMetadata","executionContextName":"JupiterDocumentMetadata"})",child);
       command("Runtime.enable","{}",child);
       for (auto item : {std::pair{"JupiterContextMenu","context-menu.js"},std::pair{"JupiterScrollbars","scrollbars.js"}}) {
+        if (!adapter_enabled(!strcmp(item.second,"context-menu.js") ? "context-menu" : "scrollbar-events")) continue;
         g_autofree char* path = g_build_filename(JUPITER_NATIVE_INTEGRATION_DIR,item.second,nullptr);
         g_autofree char* script = nullptr;
         if (g_file_get_contents(path,&script,nullptr,nullptr))
           command("Page.addScriptToEvaluateOnNewDocument","{\"worldName\":"+quote(item.first)+",\"source\":"+quote(script)+",\"runImmediately\":true}",child);
       }
-      command("Page.addScriptToEvaluateOnNewDocument","{\"worldName\":\"JupiterDocumentMetadata\",\"source\":"+quote(document_adapter_source())+",\"runImmediately\":true}",child,
+      if (adapter_enabled("document-metadata")) command("Page.addScriptToEvaluateOnNewDocument","{\"worldName\":\"JupiterDocumentMetadata\",\"source\":"+quote(document_adapter_source())+",\"runImmediately\":true}",child,
         [this,child](JsonObject*,const std::string&){resume_frame(child);});
       return true;
     }

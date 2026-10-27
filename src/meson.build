@@ -65,6 +65,7 @@ libephymain_sources = [
   'preferences/ephy-search-engine-listbox.c',
   'preferences/ephy-search-engine-row.c',
   'preferences/prefs-appearance-page.c',
+  'preferences/prefs-debugging-page.c',
   'preferences/prefs-extensions-page.c',
   'preferences/prefs-features-page.c',
   'preferences/prefs-general-page.c',

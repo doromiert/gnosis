@@ -61,7 +61,7 @@ compositor_lib = static_library('jupiter-compositor', ['brave/compositor.c', 'br
   dependencies: compositor_deps, c_args: ['-Wno-declaration-after-statement'], pic: true)
 compositor_dep = declare_dependency(link_with: compositor_lib, dependencies: compositor_deps)
 engine = static_library('jupiter-engine',
-  ['brave/browser.cpp', 'ephy-engine-download.cpp', 'ephy-engine-authentication.cpp', 'ephy-engine-client-certificate.cpp', 'ephy-engine-extensions.cpp', 'ephy-engine-permission.cpp', 'ephy-engine-session.cpp', 'ephy-engine-response.cpp', 'ephy-engine-settings.cpp', 'ephy-engine-origin.cpp', 'ephy-engine-certificate.cpp', 'ephy-engine-favicon.c', 'ephy-engine-view.cpp', 'ephy-engine-scheme.cpp', 'ephy-engine-print.cpp', 'select/application.cpp', 'select/browser.cpp', 'select/file-dialog.cpp', 'select/page-messages.cpp', 'select/webstore-guard.cpp', 'select/clipboard.cpp',
+  ['brave/browser.cpp', 'brave/debug-adapters.cpp', 'ephy-engine-download.cpp', 'ephy-engine-authentication.cpp', 'ephy-engine-client-certificate.cpp', 'ephy-engine-extensions.cpp', 'ephy-engine-permission.cpp', 'ephy-engine-session.cpp', 'ephy-engine-response.cpp', 'ephy-engine-settings.cpp', 'ephy-engine-origin.cpp', 'ephy-engine-certificate.cpp', 'ephy-engine-favicon.c', 'ephy-engine-view.cpp', 'ephy-engine-scheme.cpp', 'ephy-engine-print.cpp', 'select/application.cpp', 'select/browser.cpp', 'select/file-dialog.cpp', 'select/page-messages.cpp', 'select/webstore-guard.cpp', 'select/clipboard.cpp',
    'select/cursor.cpp', 'select/policy.cpp', 'select/extensions.cpp', 'select/extension-host.cpp', engine_resource],
   include_directories: engine_includes,
   dependencies: [gtk_dep, libadwaita_dep, json_glib_dep, libsoup_dep, webkitgtk_dep, dependency('epoxy'), dependency('x11'), dependency('libqrencode'), compositor_dep, cef_dep, wrapper_dep],
@@ -82,6 +82,12 @@ install_subdir('data/extension-manager', install_dir: pkgdatadir)
 install_subdir('data/native-integration', install_dir: pkgdatadir)
 install_data(cef_root / 'LICENSE.txt', cef_root / 'CREDITS.html', install_dir: datadir / 'licenses/jupiter-cef')
 if get_option('unit_tests').enabled()
+  debug_adapters_test = executable('brave-debug-adapters-test',
+    ['tests/brave-debug-adapters-test.cpp', 'brave/debug-adapters.cpp'],
+    dependencies: [gtk_dep, json_glib_dep], include_directories: include_directories('.'))
+  foreach mode : ['defaults', 'overrides', 'invalid']
+    test('Brave debug adapters ' + mode, debug_adapters_test, args: [mode])
+  endforeach
   private_profile_test = executable('brave-private-profile-test', 'tests/private-profile-test.cpp',
     dependencies: [glib_dep], include_directories: include_directories('.'), cpp_args: ['-UNDEBUG'])
   test('Brave private profile ownership', private_profile_test)

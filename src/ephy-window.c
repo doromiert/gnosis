@@ -33,6 +33,7 @@
 #include <gtk/gtk.h>
 #include <libportal-gtk4/portal-gtk4.h>
 #include "ephy-engine-view.h"
+#include "ephy-engine-settings.h"
 
 #include "context-menu-commands.h"
 #include "ephy-action-bar.h"
@@ -1173,7 +1174,7 @@ show_zoom_osd (EphyWindow *window,
 {
   g_autofree char *label = g_strdup_printf ("%.f%%", zoom * 100);
 
-  if (!window->zoom_osd || window->closing)
+  if (!window->zoom_osd || window->closing || !ephy_engine_debug_adapter_enabled("zoom-osd"))
     return;
   gtk_label_set_label (GTK_LABEL (window->zoom_osd_label), label);
   gtk_revealer_set_reveal_child (GTK_REVEALER (window->zoom_osd), TRUE);

@@ -35,6 +35,7 @@
 #include "ephy-web-extension.h"
 #include "extension-view.h"
 #include "prefs-extensions-page.h"
+#include "prefs-debugging-page.h"
 #include "prefs-features-page.h"
 #include "prefs-general-page.h"
 #include "prefs-search-engine-page.h"
@@ -195,6 +196,8 @@ ephy_prefs_dialog_init (EphyPrefsDialog *dialog)
 
   gtk_widget_set_size_request (GTK_WIDGET (dialog), 360, 200);
   sync_extensions (dialog);
+  adw_preferences_dialog_add (ADW_PREFERENCES_DIALOG (dialog),
+                              g_object_new (EPHY_TYPE_PREFS_DEBUGGING_PAGE, NULL));
 
   search_engine_list_box = prefs_general_page_get_search_engine_list_box (dialog->general_page);
   g_signal_connect_object (search_engine_list_box,

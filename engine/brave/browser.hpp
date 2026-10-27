@@ -7,6 +7,10 @@
 #include <string>
 namespace JupiterBrave {
 bool enabled();
+void configure_debug_adapters(const std::string&);
+bool adapter_enabled(const char*);
+bool adapter_overridden(const char*);
+std::string disabled_adapters();
 bool composited();
 void initialize(const std::string& profile);
 void set_automation_mode(bool);

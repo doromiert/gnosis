@@ -20,7 +20,7 @@ void ephy_engine_views_preferences_changed(const char *property);
 enum {
   NONE, STANDARD, SERIF, SANS, MONOSPACE, FONT_SIZE, FIXED_SIZE, MIN_SIZE,
   ENCODING, LANGUAGES, SPELL_CHECK, CARET, STORAGE, HARDWARE, USER_AGENT,
-  FEATURES, POPUPS, ADBLOCK, COOKIE_BANNERS, VIM_MODE, N_PROPERTIES
+  FEATURES, POPUPS, ADBLOCK, COOKIE_BANNERS, VIM_MODE, ADAPTERS, N_PROPERTIES
 };
 static GParamSpec *properties[N_PROPERTIES];
 struct _EphyEngineSettings { GObject parent; GValue values[N_PROPERTIES]; };
@@ -83,6 +83,7 @@ static void ephy_engine_settings_class_init(EphyEngineSettingsClass *klass) {
   properties[ADBLOCK] = g_param_spec_boolean("enable-adblock", nullptr, nullptr, true, flags);
   properties[COOKIE_BANNERS] = g_param_spec_boolean("block-cookie-banners", nullptr, nullptr, false, flags);
   properties[VIM_MODE] = g_param_spec_boolean("enable-vim-mode", nullptr, nullptr, false, flags);
+  properties[ADAPTERS] = g_param_spec_variant("brave-adapter-overrides", nullptr, nullptr, G_VARIANT_TYPE("a{sb}"), nullptr, flags);
   properties[FEATURES] = g_param_spec_variant("feature-overrides", nullptr, nullptr, G_VARIANT_TYPE("a{sb}"), nullptr, flags);
   g_object_class_install_properties(object, N_PROPERTIES, properties);
 }
@@ -121,10 +122,17 @@ static void publish_native_preferences(EphyEngineSettings* settings) {
     json_object_set_int_member(root, name, g_value_get_uint(&settings->values[id]));
   for (auto [id, name] : {std::pair{STORAGE,"storage"}, {POPUPS,"popups"}, {ADBLOCK,"adblock"}, {COOKIE_BANNERS,"cookieBanners"}, {VIM_MODE,"vimMode"}})
     json_object_set_boolean_member(root, name, g_value_get_boolean(&settings->values[id]));
+  auto* adapters = json_object_new(); json_object_set_object_member(root, "adapters", adapters);
+  if (auto* overrides = g_value_get_variant(&settings->values[ADAPTERS])) {
+    GVariantIter iter; const char* id; gboolean enabled;
+    g_variant_iter_init(&iter, overrides);
+    while (g_variant_iter_loop(&iter, "{&sb}", &id, &enabled)) json_object_set_boolean_member(adapters, id, enabled);
+  }
   g_autoptr(JsonNode) node = json_node_new(JSON_NODE_OBJECT); json_node_set_object(node, root);
   g_autofree char* json = json_to_string(node, false);
   JupiterBrave::update_preferences(json);
 }
+gboolean ephy_engine_debug_adapter_enabled(const char *id) { return JupiterBrave::adapter_enabled(id); }
 static void ephy_engine_settings_init(EphyEngineSettings *settings) {
   for (guint i = 1; i < N_PROPERTIES; ++i) {
     g_value_init(&settings->values[i], G_PARAM_SPEC_VALUE_TYPE(properties[i]));

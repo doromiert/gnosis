@@ -7,6 +7,20 @@ let
       "#define UI_${pkgs.lib.toUpper key} " +
       (if pkgs.lib.hasSuffix "_rva" key then "${value}UL" else builtins.toJSON value)
     ) (builtins.removeAttrs installPin [ "schema" ])));
+  debugPatch = id: name:
+    let
+      patch = pkgs.lib.findFirst (item: item.function == name) (throw "Missing pinned native UI patch: ${name}") pin.patches;
+      length = builtins.div (builtins.stringLength patch.replacement) 2;
+      bytes = pkgs.lib.concatMapStringsSep "," (index: "0x" + builtins.substring (index * 2) 2 patch.expected_prefix) (pkgs.lib.range 0 (length - 1));
+    in "{\"${id}\",${toString patch.virtual_address}UL,{${bytes}},${toString length}}";
+  debugConfig = pkgs.writeText "jupiter-native-debug-config.h" (''
+    struct DebugOptionalPatch { const char *id; uintptr_t offset; unsigned char original[3]; size_t length; };
+    static const struct DebugOptionalPatch debug_optional_patches[] = {
+      ${debugPatch "zoom-osd" "ZoomBubbleCoordinator::Show"},
+      ${debugPatch "script-dialogs" "BrowserWebContentsDelegate::GetJavaScriptDialogManager"},
+      ${debugPatch "infobars" "InfoBarContainerView::CalculatePreferredSize"}
+    };
+  '');
   nativeInstallShim = pkgs.stdenv.mkDerivation {
     pname = "jupiter-native-install-ui";
     version = brave.version;
@@ -14,7 +28,9 @@ let
     nativeBuildInputs = [ pkgs.pkg-config ];
     buildInputs = [ pkgs.glib pkgs.json-glib pkgs.dbus ];
     buildPhase = ''
-      cp ${config} jupiter-native-install-config.h
+      cat ${config} > jupiter-native-install-config.h
+      echo >> jupiter-native-install-config.h
+      cat ${debugConfig} >> jupiter-native-install-config.h
       cp ${./native-authenticator-ui.inc} native-authenticator-ui.inc
       cp ${./native-find.inc} native-find.inc
       cp ${./native-close.inc} native-close.inc

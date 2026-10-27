@@ -8,6 +8,11 @@
 		<child schema="io.github.doromiert.Jupiter.permissions" name="permissions"/>
 		<child schema="io.github.doromiert.Jupiter.sync" name="sync"/>
 		<child schema="io.github.doromiert.Jupiter.reader" name="reader"/>
+        <key type="a{sb}" name="brave-adapter-overrides">
+            <default>{}</default>
+            <summary>Debugging overrides for Brave integration adapters</summary>
+            <description>Explicit adapter enable states, applied on the next Gnosis start.</description>
+        </key>
 		<key type="b" name="enable-caret-browsing">
 			<default>false</default>
 			<summary>Browse with caret</summary>

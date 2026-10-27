@@ -52,7 +52,9 @@ static dbus_bool_t copy_value(DBusMessageIter *from, DBusMessageIter *to, const 
   return dbus_message_iter_close_container(to, &output);
 }
 
+extern int jupiter_adapter_enabled(const char *id);
 static DBusMessage *notification_message(DBusMessage *source) {
+  if (!jupiter_adapter_enabled("notifications")) return NULL;
   if (!dbus_message_is_method_call(source, "org.freedesktop.Notifications", "Notify") ||
       !dbus_message_has_path(source, "/org/freedesktop/Notifications")) return NULL;
   DBusMessageIter input, output;

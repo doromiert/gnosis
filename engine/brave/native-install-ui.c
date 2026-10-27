@@ -34,6 +34,18 @@ static gint64 sequence;
 static NativeVoid original_destroy, original_permission_destroy, original_permission_show;
 static guint input_watch;
 
+gboolean jupiter_adapter_enabled(const char *id) {
+  static gsize initialized;
+  static GHashTable *disabled;
+  if (g_once_init_enter(&initialized)) {
+    disabled = g_hash_table_new_full(g_str_hash,g_str_equal,g_free,NULL);
+    g_auto(GStrv) values = g_strsplit(g_getenv("GNOSIS_DISABLED_ADAPTERS") ? g_getenv("GNOSIS_DISABLED_ADAPTERS") : "",",",-1);
+    for (guint i=0;values[i];++i) if (*values[i]) g_hash_table_add(disabled,g_strdup(values[i]));
+    g_once_init_leave(&initialized,1);
+  }
+  return !g_hash_table_contains(disabled,id);
+}
+
 static void *pointer_at(void *object, size_t offset) {
   void *value;
   memcpy(&value, (char *)object + offset, sizeof value);
@@ -309,7 +321,7 @@ static void show_install(void *widget, void *view) {
   memcpy(&kind, prompt, sizeof kind);
   /* Enterprise justification and host-withholding variants need additional
    * controls. Keep native handling until those controls have a GTK bridge. */
-  if (channel < 0 || (kind != 0 && kind != 3 && kind != 4) ||
+  if (!jupiter_adapter_enabled("extension-dialogs") || channel < 0 || (kind != 0 && kind != 3 && kind != 4) ||
       pointer_at(view, 0x818) || pointer_at(view, 0x820)) {
     native_call(UI_WIDGET_SHOW_RVA, widget); return;
   }
@@ -349,7 +361,7 @@ static void show_install(void *widget, void *view) {
 }
 
 static void show_permission(void *view) {
-  if (channel < 0) { original_permission_show(view); return; }
+  if (!jupiter_adapter_enabled("permission-dialogs") || channel < 0) { original_permission_show(view); return; }
   void *widget = ((void *(*)(void *))(image + UI_PERMISSION_GET_WIDGET_RVA))(view);
   void *delegate = (char *)view + 0x310;
   void *table = pointer_at(delegate, 0);
@@ -489,9 +501,11 @@ static gboolean show_uninstall(void *widget);
 static gboolean show_authenticator_widget(void *widget);
 
 static void show_widget(void *widget) {
-  if (show_authenticator_widget(widget)) return;
-  if (show_file_access(widget) || show_portal_capture(widget) || show_uninstall(widget)) return;
-  if (channel >= 0) for (Chooser *c = choosers; c; c = c->next) {
+  if (jupiter_adapter_enabled("passkeys") && show_authenticator_widget(widget)) return;
+  if ((jupiter_adapter_enabled("file-access") && show_file_access(widget)) ||
+      (jupiter_adapter_enabled("screen-capture") && show_portal_capture(widget)) ||
+      (jupiter_adapter_enabled("extension-dialogs") && show_uninstall(widget))) return;
+  if (jupiter_adapter_enabled("device-choosers") && channel >= 0) for (Chooser *c = choosers; c; c = c->next) {
     void *owner = ((void *(*)(void *))(image + UI_PERMISSION_GET_WIDGET_RVA))(c->view);
     if (owner != widget) continue;
     for (Request *r = requests; r; r = r->next) if (r->view == c->view) return;
@@ -558,7 +572,7 @@ static void (*original_model_host_construct)(void *, void *, void *, int, int, i
 static void show_extension_model(void *parent, void *extension, void *model) {
   gboolean uninstall = (uintptr_t)__builtin_return_address(0) == image + UI_UNINSTALL_MODEL_CALLER_RVA;
   void *previous_model = pending_uninstall_model;
-  if (uninstall) pending_uninstall_model = model;
+  if (uninstall && jupiter_adapter_enabled("extension-dialogs")) pending_uninstall_model = model;
   original_extension_model_show(parent, extension, model);
   pending_uninstall_model = previous_model;
 }
@@ -667,7 +681,7 @@ static void destroy_model_host(void *host) {
 static void file_access_dialog(void *request, void *callback, void *contents) {
   void *model = ((void *(*)(void *, void *, void *))(image + UI_FILE_MODEL_CREATE_RVA))(contents, request, callback);
   void *previous_model = pending_file_model, *previous_host = pending_file_host;
-  pending_file_model = model; pending_file_host = NULL;
+  pending_file_model = jupiter_adapter_enabled("file-access") ? model : NULL; pending_file_host = NULL;
   ((void (*)(void *, void *))(image + UI_SHOW_TAB_MODAL_RVA))(model, contents);
   pending_file_model = previous_model; pending_file_host = previous_host;
 }
@@ -772,7 +786,7 @@ static void capture_construct(void *view, void *params, void *parent, void *list
   /* Browser-tab-only requests keep their existing path. Never synthesize a
    * screen list when the caller/policy omitted it. Prefer the requested window
    * list; otherwise use the portal's monitor list for no-preference requests. */
-  if (channel >= 0 && items && count <= 8 && preference != 3) {
+  if (jupiter_adapter_enabled("screen-capture") && channel >= 0 && items && count <= 8 && preference != 3) {
     for (size_t i = 0; i < count; ++i) {
       void *list = pointer_at(items, i * 8);
       int type = list_type(list);
@@ -781,7 +795,7 @@ static void capture_construct(void *view, void *params, void *parent, void *list
           (type == preference || (!preference && (!selected || type == 1)))) selected = type;
     }
   }
-  Capture *c = channel >= 0 ? g_new0(Capture, 1) : NULL;
+  Capture *c = jupiter_adapter_enabled("screen-capture") && channel >= 0 ? g_new0(Capture, 1) : NULL;
   if (c) {
     c->view = view; c->type = selected; c->combined = selected && allowed == 3;
     c->next = captures; captures = c;
@@ -949,6 +963,8 @@ __attribute__((constructor)) static void initialize(void) {
   if (!dladdr(main, &info)) return;
   image = (uintptr_t)info.dli_fbase;
   g_unsetenv("JUPITER_NATIVE_UI_FD");
+  (void)jupiter_adapter_enabled("permission-dialogs");
+  g_unsetenv("GNOSIS_DISABLED_ADAPTERS");
   channel = 5;
   fcntl(channel, F_SETFD, FD_CLOEXEC);
   int type = 0; socklen_t size = sizeof type;
@@ -996,6 +1012,12 @@ __attribute__((constructor)) static void initialize(void) {
       !matches(UI_GET_USER_DATA_RVA, UI_GET_USER_DATA_BYTES)) {
     g_printerr("Jupiter native install UI: unsupported binary; keeping native dialog\n");
     close(channel); channel = -1; return;
+  }
+  /* Restore only the exact original instructions recorded by the binary pin.
+   * The on-disk hash was checked above; no browser policy is changed. */
+  for (size_t i=0;i<G_N_ELEMENTS(debug_optional_patches);++i) {
+    const struct DebugOptionalPatch *patch=&debug_optional_patches[i];
+    if (!jupiter_adapter_enabled(patch->id) && !replace_code(patch->offset,patch->original,patch->length)) _exit(126);
   }
   unsigned char *trampoline = mmap(NULL, 4096, PROT_READ | PROT_WRITE,
     MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
@@ -1124,7 +1146,7 @@ __attribute__((constructor)) static void initialize(void) {
   if (!replace_code(UI_CAPTURE_DISMISSED_RVA, jump, 14)) _exit(126);
   original_download_begin = (void (*)(void *, void *, void *))(trampoline + 896);
   absolute_jump(jump, download_begin);
-  if (!replace_code(UI_DOWNLOAD_BEGIN_RVA, jump, 14)) _exit(126);
+  if (jupiter_adapter_enabled("downloads") && !replace_code(UI_DOWNLOAD_BEGIN_RVA, jump, 14)) _exit(126);
   original_extension_model_show = (void (*)(void *, void *, void *))(trampoline + 960);
   original_model_host_construct = (void (*)(void *, void *, void *, int, int, int, int))(trampoline + 1024);
   absolute_jump(jump, show_extension_model);
@@ -1132,7 +1154,7 @@ __attribute__((constructor)) static void initialize(void) {
   absolute_jump(jump, model_host_construct);
   if (!replace_code(UI_MODEL_HOST_CONSTRUCT_RVA, jump, 14)) _exit(126);
   absolute_jump(jump, translate_ui);
-  if (!replace_code(UI_TRANSLATE_UI_RVA, jump, 14)) _exit(126);
+  if (jupiter_adapter_enabled("translation") && !replace_code(UI_TRANSLATE_UI_RVA, jump, 14)) _exit(126);
   absolute_jump(jump, authenticator_construct);
   if (!replace_code(UI_AUTHENTICATOR_CONSTRUCT_RVA, jump, 14)) _exit(126);
   absolute_jump(jump, authenticator_destroy);

@@ -50,7 +50,9 @@ const char* text(JsonObject* o, const char* key) { return o ? json_object_get_st
 JsonObject* object(JsonObject* o, const char* key) { return o && json_object_has_member(o, key) ? json_object_get_object_member(o, key) : nullptr; }
 std::string document_adapter_source() {
   std::string result;
+  if (!adapter_enabled("document-metadata")) return result;
   for (const char* name : {"document-metadata.js", "vim-field.js", "vim-mode.js"}) {
+    if (strcmp(name,"document-metadata.js") && !adapter_enabled("vim")) continue;
     g_autofree char* path = g_build_filename(JUPITER_NATIVE_INTEGRATION_DIR, name, nullptr);
     g_autofree char* source = nullptr;
     if (g_file_get_contents(path, &source, nullptr, nullptr)) result += std::string(source) + "\n";
@@ -214,6 +216,7 @@ public:
   unsigned profile_writers = 0;
   std::shared_ptr<PrivateProfile> private_storage;
   bool integration_ready = false, integration_connecting = false;
+  bool debug_startup_pending = false;
   bool preferences_busy = false, preferences_again = false, shields_configured = false;
   std::string settings_target, settings_session;
   bool extensions_ready = false, private_profile = false;
@@ -238,6 +241,8 @@ public:
   std::vector<ParkedPage> parked;
   std::map<std::string, gint64> routed_windows;
   explicit Process(bool ephemeral, const std::string& reuse_profile = "") : private_profile(ephemeral) {
+    configure_debug_adapters(native_preferences);
+    debug_startup_pending = adapter_overridden("keepassxc") || adapter_overridden("ublock");
     if (composited()) {
       GError* failure = nullptr;
       compositor = jupiter_compositor_new(&failure);
@@ -256,7 +261,7 @@ public:
     if (!jupiter_brave_profile_prepare(profile.c_str(), &profile_error)) {
       g_warning("Brave profile preparation: %s", profile_error->message); g_error_free(profile_error); return;
     }
-    if (!ephemeral && *JUPITER_KEEPASSXC_DIR) {
+    if (!ephemeral && adapter_enabled("keepassxc") && *JUPITER_KEEPASSXC_DIR) {
       if (!jupiter_brave_profile_prepare_keepassxc(profile.c_str(), &profile_error)) {
         g_warning("KeePassXC integration: %s", profile_error->message); g_clear_error(&profile_error);
       }
@@ -306,6 +311,13 @@ public:
   }
   void command(const std::string& method, const std::string& params, const std::string& session, Reply reply = {}) {
     if (closing || output < 0) { if (reply) reply(nullptr, "The Brave browser is closed"); return; }
+    if ((!adapter_enabled("page-style") && (method.starts_with("DOM.") || method.starts_with("CSS."))) ||
+        (!adapter_enabled("network-events") && method == "Network.enable") ||
+        (!adapter_enabled("extension-events") && method == "Runtime.addBinding" &&
+         (params.find("__jupiterZoomChanged") != std::string::npos || params.find("__jupiterExtensionsChanged") != std::string::npos))) {
+      if (reply) reply(nullptr, "Adapter disabled in Debugging settings");
+      return;
+    }
     int id = ++sequence;
     std::string json = "{\"id\":" + std::to_string(id) + ",\"method\":" + quote(method) + ",\"params\":" + params;
     if (!session.empty()) json += ",\"sessionId\":" + quote(session);
@@ -442,6 +454,7 @@ public:
     if (composited() && g_strcmp0(g_getenv("JUPITER_UNCAP_FRAMES"), "1") == 0)
       args.push_back("--disable-frame-rate-limit");
     auto* launcher = g_subprocess_launcher_new(G_SUBPROCESS_FLAGS_NONE);
+    g_subprocess_launcher_setenv(launcher, "GNOSIS_DISABLED_ADAPTERS", disabled_adapters().c_str(), true);
     // Brave deliberately searches native hosts under its default config path,
     // even with --user-data-dir. Keep that path inside this Jupiter profile.
     // The KeePassXC host launcher restores the original desktop environment.
@@ -521,7 +534,7 @@ public:
     command("Browser.getVersion", "{}", "", [this](JsonObject* result, const std::string& error) {
       if (!result) { g_warning("Brave startup: %s", error.c_str()); return; }
       product = text(result, "product"); ready = true;
-      command("Browser.setDownloadBehavior", "{\"behavior\":\"allowAndName\",\"downloadPath\":" + quote(download_directory) +
+      if (adapter_enabled("downloads")) command("Browser.setDownloadBehavior", "{\"behavior\":\"allowAndName\",\"downloadPath\":" + quote(download_directory) +
         ",\"eventsEnabled\":true}", "", [this](JsonObject*, const std::string& error) {
           if (!error.empty()) { fail_downloads(); g_warning("Could not connect Brave downloads: %s", error.c_str()); }
         });
@@ -556,15 +569,18 @@ public:
         }
         auto* value = object(result, "result");
         if (value && json_object_get_boolean_member_with_default(value, "value", false)) {
-          integration_ready = true;
-          apply_preferences();
+          apply_debug_extensions([weak = weak_from_this()] {
+            auto self = weak.lock(); if (!self || self->closing) return;
+            self->integration_ready = true;
+            self->apply_preferences();
+            for (auto& [token, weak] : self->pages) if (auto page = weak.lock()) page->surface_ready();
+          });
           g_message("Brave download UI disabled: GTK owns download feedback");
           if (!private_profile) {
             extensions_deadline = g_get_monotonic_time() + 15 * G_USEC_PER_SEC;
             poll_extensions();
           }
           // Keep this private worker session alive for native browser services.
-          for (auto& [token, weak] : pages) if (auto page = weak.lock()) page->surface_ready();
           return;
         }
         if (g_get_monotonic_time() >= integration_deadline) { integration_failed("Native integration worker did not become ready"); return; }
@@ -576,8 +592,25 @@ public:
         }, new std::weak_ptr<Process>(weak_from_this()), +[](gpointer data) { delete static_cast<std::weak_ptr<Process>*>(data); });
       });
   }
+  void apply_debug_extensions(std::function<void()> done) {
+    const bool keepass_override = !private_profile && adapter_overridden("keepassxc");
+    if (!keepass_override && adapter_enabled("downloads")) { done(); return; }
+    std::string expression = "(async()=>{";
+    if (!adapter_enabled("downloads")) expression += "await chrome.downloads.setUiOptions({enabled:true});";
+    if (keepass_override) expression += "const item=(await chrome.management.getAll()).find(x=>x.id==='giohadoodmdcadnkcpdmhmmdnaidnckm');if(item&&item.enabled!==" +
+      (adapter_enabled("keepassxc") ? std::string("true") : std::string("false")) + ")await chrome.management.setEnabled(item.id," +
+      (adapter_enabled("keepassxc") ? "true" : "false") + ");";
+    expression += "return true})()";
+    command("Runtime.evaluate", "{\"expression\":" + quote(expression) + ",\"awaitPromise\":true,\"returnByValue\":true}", integration_session,
+      [done = std::move(done)](JsonObject* result, const std::string& error) {
+        if (!result || !error.empty() || object(result,"exceptionDetails")) g_warning("Could not apply browser debugging overrides: %s",error.c_str());
+        done();
+      });
+  }
   void preferences_done() {
     preferences_busy = false;
+    if (std::exchange(debug_startup_pending, false))
+      for (auto& [token, weak] : pages) if (auto page = weak.lock()) page->surface_ready();
     if (std::exchange(preferences_again, false)) apply_preferences();
   }
   void disable_brave_adblock(unsigned attempts = 0) {
@@ -624,16 +657,16 @@ public:
     if (!g_file_get_contents(path, &source, &size, nullptr) || size > 64 * 1024) { preferences_done(); return; }
     auto parser = json_parser_new(); json_parser_load_from_data(parser, native_preferences.c_str(), -1, nullptr);
     auto* prefs = json_parser_get_root(parser);
-    bool blocking = prefs && JSON_NODE_HOLDS_OBJECT(prefs) && json_object_get_boolean_member_with_default(json_node_get_object(prefs), "adblock", true);
+    bool blocking = adapter_enabled("ublock") && prefs && JSON_NODE_HOLDS_OBJECT(prefs) && json_object_get_boolean_member_with_default(json_node_get_object(prefs), "adblock", true);
     g_object_unref(parser);
-    const auto expression = std::string(source, size) + ";jupiterBrowserSettings.apply(" + native_preferences + ").then(()=>jupiterBrowserSettings.adblock(" + (blocking ? "true" : "false") + ")).then(()=>chrome.management.getAll())";
+    const auto expression = std::string(source, size) + (adapter_enabled("browser-preferences") ? ";jupiterBrowserSettings.apply(" + native_preferences + ")" : ";Promise.resolve()") + ".then(()=>jupiterBrowserSettings.adblock(" + (blocking ? "true" : "false") + ")).then(()=>chrome.management.getAll())";
     command("Runtime.evaluate", "{\"expression\":" + quote(expression) + ",\"awaitPromise\":true,\"returnByValue\":true}", integration_session,
       [this, blocking](JsonObject* result, const std::string& error) {
         if (!error.empty() || object(result, "exceptionDetails")) {
           g_warning("Brave preferences could not be applied: %s %s", error.c_str(), text(object(object(result, "exceptionDetails"), "exception"), "description"));
           preferences_done(); return;
         }
-        auto finish = [this] { if (!shields_configured) disable_brave_adblock(); else preferences_done(); };
+        auto finish = [this] { if (!shields_configured && adapter_enabled("browser-preferences")) disable_brave_adblock(); else preferences_done(); };
         auto* rows = object(result, "result");
         auto* value = rows ? json_object_get_member(rows, "value") : nullptr;
         if (!value || !JSON_NODE_HOLDS_ARRAY(value)) { preferences_done(); return; }
@@ -665,7 +698,7 @@ public:
       });
   }
   void load_keepassxc() {
-    if (private_profile || !*JUPITER_KEEPASSXC_DIR) return;
+    if (private_profile || !adapter_enabled("keepassxc") || !*JUPITER_KEEPASSXC_DIR) return;
     extension_operation("inventory", "", [this](JsonObject* result, const std::string& error) {
       if (closing || !error.empty()) return;
       auto* value = object(result, "result");
@@ -1334,7 +1367,7 @@ void Page::adopt_surface(GtkWidget* widget) {
 }
 void Page::surface_ready() {
   auto& s = *state_;
-  if (s.disposed || s.attached || !s.protocol_ready || !s.process->integration_ready || session.empty() || !s.surface ||
+  if (s.disposed || s.attached || !s.protocol_ready || !s.process->integration_ready || s.process->debug_startup_pending || session.empty() || !s.surface ||
       !jupiter_compositor_view_has_surface(JUPITER_COMPOSITOR_VIEW(s.surface))) return;
   s.attached = true; navigate(s.requested);
   g_message("Brave composited tab ready: target=%s", target.c_str());
@@ -1396,7 +1429,9 @@ std::string webpage_theme(GtkWidget* widget) {
     "!important;--jupiter-kpxc-view-bg:" + view + "!important;--jupiter-kpxc-accent:" + bg +
     "!important;--jupiter-kpxc-accent-fg:" + fg + "!important;--jupiter-kpxc-font:" + font_family +
     "!important;--jupiter-kpxc-font-size:" + std::to_string(font_size > 0 ? font_size : 14.667) + "px!important;}";
-  return overlay + "*::selection{background-color:" + std::string(bg) + "!important;color:" + fg + R"CSS(!important;}
+  const auto colors = overlay + "*::selection{background-color:" + std::string(bg) + "!important;color:" + fg + "!important;}";
+  if (!adapter_enabled("scrollbars")) return colors;
+  return colors + R"CSS(
 @property --jupiter-scrollbar-expansion { syntax:"<number>"; inherits:false; initial-value:0; }
 @property --jupiter-scrollbar-thumb-hover { syntax:"<number>"; inherits:false; initial-value:0; }
 @property --jupiter-scrollbar-pressed { syntax:"<number>"; inherits:false; initial-value:0; }
@@ -1484,15 +1519,15 @@ void Page::theme_document(const std::string& frame, const std::string& loader) {
       found->second.sheet = text(result, "styleSheetId");
       if (!found->second.sheet.empty()) page->command_for_frame(frame,"CSS.setStyleSheetText", "{\"styleSheetId\":" + quote(found->second.sheet) +
         ",\"text\":" + quote(webpage_theme(page->widget()) +
-          (page->state_->extension_popup && page->uri.starts_with("chrome-extension://") ? popup_layout : "") +
-          ((page->uri.starts_with("https://") || page->uri.starts_with("http://") || page->uri.starts_with("file://")) ? user_stylesheet : "")) + "}");
+          (adapter_enabled("popup-sizing") && page->state_->extension_popup && page->uri.starts_with("chrome-extension://") ? popup_layout : "") +
+          ((page->uri.starts_with("https://") || page->uri.starts_with("http://") || page->uri.starts_with("file://")) ? (adapter_enabled("user-content") ? user_stylesheet : "") : "")) + "}");
     });
 }
 void Page::update_web_theme() {
   auto& s = *state_;
   if (s.disposed || !s.theme_ready) return;
-  const auto css = webpage_theme(s.content) + (s.extension_popup && uri.starts_with("chrome-extension://") ? popup_layout : "") +
-    ((uri.starts_with("https://") || uri.starts_with("http://") || uri.starts_with("file://")) ? user_stylesheet : "");
+  const auto css = webpage_theme(s.content) + (adapter_enabled("popup-sizing") && s.extension_popup && uri.starts_with("chrome-extension://") ? popup_layout : "") +
+    ((uri.starts_with("https://") || uri.starts_with("http://") || uri.starts_with("file://")) ? (adapter_enabled("user-content") ? user_stylesheet : "") : "");
   for (const auto& [frame, style] : s.theme_frames) {
     if (style.sheet.empty()) theme_document(frame, style.loader);
     else command_for_frame(frame,"CSS.setStyleSheetText", "{\"styleSheetId\":" + quote(style.sheet) + ",\"text\":" + quote(css) + "}");
@@ -1518,18 +1553,18 @@ void Page::attach() {
   });
   g_autofree char* scrollbars_path = g_build_filename(JUPITER_NATIVE_INTEGRATION_DIR, "scrollbars.js", nullptr);
   g_autofree char* scrollbars_script = nullptr;
-  if (g_file_get_contents(scrollbars_path, &scrollbars_script, nullptr, nullptr))
+  if (adapter_enabled("scrollbar-events") && g_file_get_contents(scrollbars_path, &scrollbars_script, nullptr, nullptr))
     command("Page.addScriptToEvaluateOnNewDocument", "{\"worldName\":\"JupiterScrollbars\",\"source\":" + quote(scrollbars_script) + ",\"runImmediately\":true}");
-  else g_warning("The scrollbar state adapter could not be loaded");
+  else if (adapter_enabled("scrollbar-events")) g_warning("The scrollbar state adapter could not be loaded");
   command("Runtime.addBinding", "{\"name\":\"__jupiterContextMenu\",\"executionContextName\":\"JupiterContextMenu\"}");
   g_autofree char* menu_path = g_build_filename(JUPITER_NATIVE_INTEGRATION_DIR, "context-menu.js", nullptr);
   g_autofree char* menu_script = nullptr;
-  if (g_file_get_contents(menu_path, &menu_script, nullptr, nullptr))
+  if (adapter_enabled("context-menu") && g_file_get_contents(menu_path, &menu_script, nullptr, nullptr))
     command("Page.addScriptToEvaluateOnNewDocument", "{\"worldName\":\"JupiterContextMenu\",\"source\":" + quote(menu_script) + "}");
-  else g_warning("The native context-menu adapter could not be loaded");
+  else if (adapter_enabled("context-menu")) g_warning("The native context-menu adapter could not be loaded");
   command("Runtime.addBinding", "{\"name\":\"__jupiterDocumentMetadata\",\"executionContextName\":\"JupiterDocumentMetadata\"}");
-  command("Page.addScriptToEvaluateOnNewDocument", "{\"worldName\":\"JupiterDocumentMetadata\",\"source\":" + quote(document_adapter_source()) + "}");
-  if (state_->extension_popup) {
+  if (adapter_enabled("document-metadata")) command("Page.addScriptToEvaluateOnNewDocument", "{\"worldName\":\"JupiterDocumentMetadata\",\"source\":" + quote(document_adapter_source()) + "}");
+  if (state_->extension_popup && adapter_enabled("popup-sizing")) {
     g_autofree char* popup_path = g_build_filename(JUPITER_NATIVE_INTEGRATION_DIR, "popup-size.js", nullptr);
     g_autofree char* popup_script = nullptr;
     if (g_file_get_contents(popup_path, &popup_script, nullptr, nullptr))
@@ -2346,6 +2381,11 @@ void Page::dismiss_script_dialog(bool cancel) {
     command("Page.handleJavaScriptDialog", "{\"accept\":false}");
 }
 void Page::show_script_dialog(JsonObject* params) {
+  if (!adapter_enabled("script-dialogs")) {
+    state_->script_dialog_open = true;
+    if (std::string(text(params,"type")) == "beforeunload" && state_->close_callback) state_->close_prompted = true;
+    return;
+  }
   auto& s = *state_;
   // This event comes from the inherited protocol session, never a page binding.
   // Background tabs cannot grab another tab's GTK dialog surface.
@@ -2457,6 +2497,7 @@ const TranslationLanguage translation_languages[] = {
 };
 }
 void Page::translation_request(const std::string& operation, const std::string& language, int sequence, Reply reply) {
+  if (!adapter_enabled("translation")) { reply(nullptr,"Translation is disabled in Debugging settings"); return; }
   if (is_closed() || !state_->protocol_ready || target.empty() || !state_->process) {
     reply(nullptr, _("The page is not ready for translation")); return;
   }
@@ -2727,6 +2768,7 @@ void Page::password_manager_operation(std::string operation, std::string argumen
     });
 }
 void Page::show_password_manager() {
+  if (!adapter_enabled("keepassxc")) { g_warning("KeePassXC is disabled in Debugging settings"); return; }
   if (is_closed()) return;
   auto* root = gtk_widget_get_root(state_->content); if (!root || !GTK_IS_WINDOW(root)) return;
   if (state_->passwords) { adw_dialog_present(state_->passwords->dialog, GTK_WIDGET(root)); return; }
@@ -2810,6 +2852,7 @@ void Page::show_password_manager() {
 
 
 void Page::update_vim(int context) {
+  if (!adapter_enabled("vim")) return;
   auto unique = state_->metadata_unique.find(context);
   auto source = state_->menu_sessions.find(context);
   if (is_closed() || unique == state_->metadata_unique.end() || source == state_->menu_sessions.end()) return;
@@ -2835,7 +2878,7 @@ void Page::update_user_content() {
     command("Page.removeScriptToEvaluateOnNewDocument", "{\"identifier\":" + quote(state.user_script_id) + "}");
     state.user_script_id.clear();
   }
-  if (user_javascript.empty()) return;
+  if (!adapter_enabled("user-content") || user_javascript.empty()) return;
   const std::string body = "(()=>{if(!['http:','https:','file:'].includes(location.protocol))return;const run=()=>{\n" +
     user_javascript + "\n};if(document.readyState==='loading')addEventListener('DOMContentLoaded',run,{once:true});else run();})()";
   command("Page.addScriptToEvaluateOnNewDocument", "{\"source\":" + quote(body) + "}",
@@ -2938,6 +2981,7 @@ void Page::apply_zoom() {
     });
 }
 void Page::show_context_menu(JsonObject* hit, int context) {
+  if (!adapter_enabled("context-menu")) return;
   auto& s = *state_;
   if (s.disposed || !s.surface || !gtk_widget_get_mapped(s.surface)) return;
   dismiss_context_menu();

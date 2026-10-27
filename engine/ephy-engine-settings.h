@@ -10,6 +10,7 @@ EphyEngineSettings *ephy_engine_settings_get_default(void);
 gboolean ephy_engine_settings_get_storage_enabled(void);
 gboolean ephy_engine_settings_get_hardware_acceleration(void);
 char *ephy_engine_settings_dup_user_agent(void);
+gboolean ephy_engine_debug_adapter_enabled(const char *id);
 
 typedef struct {
   const char *id, *name, *category, *details;
