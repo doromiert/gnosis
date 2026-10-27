@@ -30,6 +30,12 @@ let
     dontUnpack = true;
     nativeBuildInputs = [ pkgs.pkg-config ];
     buildInputs = [ pkgs.glib pkgs.json-glib pkgs.dbus ];
+    doCheck = true;
+    checkPhase = ''
+      $CC -Wall -Wextra ${../tests/brave-portal-parent-test.c} -I${./.} \
+        $(pkg-config --cflags --libs glib-2.0 dbus-1) -ldl -o portal-parent-test
+      ./portal-parent-test
+    '';
     buildPhase = ''
       cat ${config} > jupiter-native-install-config.h
       echo >> jupiter-native-install-config.h

@@ -14,8 +14,8 @@ manifest_path = root / 'manifest.json'
 manifest = json.loads(manifest_path.read_text())
 assert manifest['version'] == '1.10.4.1', 'Review the integration when upgrading'
 # Separate integration revision forces Chromium to retire cached worker code.
-manifest['version'] = '1.10.4.106'
-manifest['version_name'] = '1.10.4.1 (Gnosis integration 6)'
+manifest['version'] = '1.10.4.107'
+manifest['version_name'] = '1.10.4.1 (Gnosis integration 7)'
 manifest['permissions'].append('scripting')
 manifest['key'] = (assets / 'public-key.txt').read_text().strip()
 manifest.pop('update_url', None)
@@ -24,6 +24,38 @@ page = root / 'background/page.js'
 text = page.read_text()
 assert text.count('    passkeys: false,') == 1
 page.write_text(text.replace('    passkeys: false,', '    passkeys: true,'))
+# Explicit GTK provider choice precedes upstream WebAuthn processing.
+inject = root / 'content/passkeys-inject.js'
+text = inject.read_text()
+anchor = "        passkeysLogDebug('Passkey response', ret);"
+assert text.count(anchor) == 1
+text = text.replace(anchor, anchor + '''
+        if (ret?.gnosisProvider === 'device' || ret?.gnosisProvider === 'cancel') {
+            kpxcPasskeysUtils.sendPasskeysResponse(null,
+                ret.gnosisProvider === 'device' ? PASSKEYS_REQUEST_CANCELED : 'abort',
+                null, ret.gnosisProvider === 'device');
+            lifetimeTimer.promise.catch(() => {});
+            lifetimeTimer.abort();
+            passkeysLifetimeTimerAbortFunc = null;
+            return;
+        }
+''')
+anchor = 'kpxcPasskeysUtils.sendPasskeysResponse(ret?.response, errorCode, errorMessage);'
+assert text.count(anchor) == 1
+text = text.replace(anchor, '''kpxcPasskeysUtils.sendPasskeysResponse(ret?.response, errorCode, errorMessage,
+            ret?.gnosisProvider === 'keepassxc' ? false : kpxcPasskeysUtils.passkeysFallback);''')
+inject.write_text(text)
+text = inject.read_text()
+anchor = "        } else if (ev.detail.action === 'abort') {"
+assert text.count(anchor) == 1
+inject.write_text(text.replace(anchor, anchor + "\n            void chrome.runtime.sendMessage({action: 'gnosis_passkeys_cancel'});"))
+utils = root / 'content/passkeys-utils.js'
+text = utils.read_text()
+before = 'function(publicKey, errorCode, errorMessage) {'
+assert text.count(before) == 1
+text = text.replace(before, 'function(publicKey, errorCode, errorMessage, fallback = kpxcPasskeysUtils?.passkeysFallback) {')
+assert text.count('fallback: kpxcPasskeysUtils?.passkeysFallback') == 2
+utils.write_text(text.replace('fallback: kpxcPasskeysUtils?.passkeysFallback', 'fallback'))
 (root / 'content/jupiter-unlock.js').write_text((assets / 'unlock.js').read_text())
 manifest['content_scripts'][0]['js'].append('content/jupiter-unlock.js')
 # The GTK shell owns the integration UI; retain upstream as a private service.

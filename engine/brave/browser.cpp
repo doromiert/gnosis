@@ -7,6 +7,7 @@
 #include "private-profile.hpp"
 #include "bundled-extension.hpp"
 #include <gdk/x11/gdkx.h>
+#include <gdk/wayland/gdkwayland.h>
 #include <glib-unix.h>
 #include <libsoup/soup.h>
 #include <X11/Xlib.h>
@@ -183,6 +184,8 @@ struct Page::State {
   std::unique_ptr<TranslationUI> translation;
   std::unique_ptr<PasswordUI> passwords;
   std::unique_ptr<AuthenticatorUI> authenticator;
+  GCancellable* passkey_provider = nullptr;
+  std::string passkey_provider_id;
   AdwDialog* install_dialog = nullptr;
   gulong install_response = 0;
   gint64 install_id = 0;
@@ -209,6 +212,7 @@ public:
   int input = -1, output = -1, sequence = 0;
   guint watch = 0, native_watch = 0;
   int native_fd = -1;
+  std::string portal_target;
   gint64 native_sequence = 0;
   struct NativeReply { Reply callback; guint timeout; };
   std::map<gint64, NativeReply> native_replies;
@@ -777,6 +781,8 @@ public:
             keepassxc_session = text(result, "sessionId");
             if (keepassxc_session.empty()) { g_warning("KeePassXC service: %s", error.c_str()); return; }
             const auto candidate = keepassxc_session;
+            command("Runtime.enable", "{}", candidate);
+            command("Runtime.addBinding", "{\"name\":\"__gnosisPasskeyProvider\"}", candidate);
             command("Runtime.runIfWaitingForDebugger", "{}", candidate);
             // An existing profile can keep an older worker script after a
             // resource-only unpacked-extension update. Install only our trusted
@@ -794,7 +800,13 @@ public:
                 if (closing) return;
                 auto* remote = object(result, "result");
                 if (remote && json_object_get_boolean_member_with_default(remote, "value", false)) {
-                  keepassxc_ready = true; g_message("Native KeePassXC service ready"); return;
+                  keepassxc_ready = true; g_message("Native KeePassXC service ready");
+                  // The first document can finish before an unpacked extension
+                  // loads. Recover its declared scripts once, as manual redetection does.
+                  for (auto& [token, weak] : pages) if (auto page = weak.lock(); page && !page->is_closed() &&
+                      page->state_->native_tab >= 0 && (page->uri.starts_with("https://") || page->uri.starts_with("http://")))
+                    keepassxc_call(page->state_->native_tab, "redetect", "null", [](JsonObject*, const std::string&) {});
+                  return;
                 }
                 command("Target.detachFromTarget", "{\"sessionId\":" + quote(candidate) + "}", "");
                 keepassxc_session.clear();
@@ -942,6 +954,30 @@ public:
               progress(static_cast<guint64>(std::max(0., json_object_get_double_member_with_default(params, "receivedBytes", 0))),
                        static_cast<guint64>(std::max(0., json_object_get_double_member_with_default(params, "totalBytes", 0))), state);
             }
+          } else if (method == "Runtime.bindingCalled" && !private_profile && keepassxc_ready &&
+                     std::string(text(root,"sessionId")) == keepassxc_session &&
+                     std::string(text(params,"name")) == "__gnosisPasskeyProvider") {
+            const std::string payload = text(params,"payload");
+            g_autoptr(JsonParser) event = json_parser_new();
+            if (payload.size() <= 8192 && json_parser_load_from_data(event,payload.data(),payload.size(),nullptr) &&
+                JSON_NODE_HOLDS_OBJECT(json_parser_get_root(event))) {
+              auto* request = json_node_get_object(json_parser_get_root(event));
+              const auto id = std::string(text(request,"id"));
+              if (id.size() != 36 || id.find_first_not_of("0123456789abcdef-") != std::string::npos) continue;
+              const int tab = json_object_get_int_member_with_default(request,"tabId",-1);
+              if (json_object_get_boolean_member_with_default(request,"closed",false)) {
+                for (auto& [token, weak] : pages) if (auto page = weak.lock(); page &&
+                    page->state_->native_tab == tab && page->state_->passkey_provider_id == id)
+                  page->dismiss_passkey_provider();
+                continue;
+              }
+              bool shown = false;
+              for (auto& [token, weak] : pages) if (auto page = weak.lock(); page && !page->is_closed() &&
+                  page->state_->mapped && page->state_->native_tab == tab && page->uri == text(request,"url")) {
+                page->show_passkey_provider(request); shown = true; break;
+              }
+              if (!shown) command("Runtime.evaluate", "{\"expression\":" + quote("jupiterKeePassXC.resolvePasskey(" + quote(id) + ", 'cancel')") + "}", keepassxc_session);
+            }
           } else if (method == "Runtime.bindingCalled" && !private_profile && extensions_ready &&
                      std::string(text(root,"sessionId")) == integration_session &&
                      std::string(text(params,"name")) == "__jupiterExtensionsChanged") {
@@ -1054,7 +1090,7 @@ public:
       if (reply.timeout) g_source_remove(reply.timeout); reply.callback(nullptr, _("The translation service stopped"));
     }
     for (auto& [token, weak] : pages) if (auto page = weak.lock()) {
-      page->dismiss_install_dialog(false); page->dismiss_authenticator(false);
+      page->dismiss_install_dialog(false); page->dismiss_authenticator(false); page->dismiss_passkey_provider();
     }
   }
   bool dispatch_authenticator(JsonObject* message, gint64 id) {
@@ -1357,6 +1393,14 @@ void Page::start() {
 }
 void Page::adopt_surface(GtkWidget* widget) {
   state_->surface = widget;
+  auto* focus = gtk_event_controller_focus_new();
+  g_signal_connect(focus, "enter", G_CALLBACK(+[](GtkEventControllerFocus*, gpointer data) {
+    static_cast<Page*>(data)->update_portal_parent();
+  }), this);
+  gtk_widget_add_controller(widget, focus);
+  g_signal_connect(widget, "map", G_CALLBACK(+[](GtkWidget*, gpointer data) {
+    static_cast<Page*>(data)->update_portal_parent();
+  }), this);
   g_signal_connect(widget, "vim-command", G_CALLBACK(+[](GtkWidget*, const char* command, gpointer data) { static_cast<Page*>(data)->vim_key(command); }), this);
   g_signal_connect(widget, "surface-ready", G_CALLBACK(+[](GtkWidget*, gpointer data) { static_cast<Page*>(data)->surface_ready(); }), this);
   g_signal_connect(widget, "fullscreen-changed", G_CALLBACK(+[](GtkWidget*, gboolean value, gpointer data) {
@@ -1510,6 +1554,7 @@ void Page::attach() {
     if (send(state_->process->native_fd, message.data(), message.size(), MSG_NOSIGNAL | MSG_DONTWAIT) != static_cast<ssize_t>(message.size()))
       state_->process->close_native_ui();
   }
+  update_portal_parent();
   update_user_content();
   state_->process->attach_frames(session);
   command("Page.enable"); command("Runtime.enable"); command("Network.enable"); command("Security.enable");
@@ -1641,6 +1686,7 @@ void Page::request_favicon() {
     });
 }
 void Page::navigate(const std::string& value) {
+  dismiss_passkey_provider();
   dismiss_authenticator(true);
   dismiss_context_menu();
   dismiss_script_dialog(true);
@@ -1956,6 +2002,7 @@ void Page::handle(const std::string& method, JsonObject* params, bool frame_even
       dismiss_translation();
       dismiss_password_manager();
       dismiss_authenticator(true);
+      dismiss_passkey_provider();
       g_clear_object(&state_->certificate); state_->security_state.clear(); state_->tls_errors = GTlsCertificateFlags(0);
       state_->main_frame = text(frame, "id");
       state_->context_id = 0; state_->context_unique.clear();
@@ -2126,8 +2173,64 @@ bool Page::edit(const std::string& name) {
   return s.surface && JUPITER_IS_COMPOSITOR_VIEW(s.surface) &&
     jupiter_compositor_view_edit(JUPITER_COMPOSITOR_VIEW(s.surface), name.c_str());
 }
+void Page::update_portal_parent() {
+  auto& s = *state_;
+  if (s.disposed || !s.process || s.process->native_fd < 0 || target.empty() || !s.mapped) return;
+  auto* root = gtk_widget_get_root(s.content);
+  if (!GTK_IS_WINDOW(root)) return;
+  auto* surface = gtk_native_get_surface(GTK_NATIVE(root));
+  if (!surface) return;
+  s.process->portal_target = target;
+  std::string parent;
+  if (GDK_IS_WAYLAND_TOPLEVEL(surface)) {
+    struct Export {
+      GdkToplevel* surface;
+      std::string handle;
+      std::vector<std::weak_ptr<Page>> waiting;
+      Export(GdkToplevel* value, std::weak_ptr<Page> page) : surface(GDK_TOPLEVEL(g_object_ref(value))), waiting{page} {}
+      ~Export() {
+        if (!handle.empty() && !gdk_surface_is_destroyed(GDK_SURFACE(surface)))
+          gdk_wayland_toplevel_drop_exported_handle(surface, handle.c_str());
+        g_object_unref(surface);
+      }
+    };
+    auto* cached = static_cast<std::shared_ptr<Export>*>(g_object_get_data(G_OBJECT(root), "gnosis-portal-parent"));
+    if (cached && (*cached)->surface != GDK_TOPLEVEL(surface)) {
+      g_object_set_data(G_OBJECT(root), "gnosis-portal-parent", nullptr); cached = nullptr;
+    }
+    if (!cached) {
+      auto exported = std::make_shared<Export>(GDK_TOPLEVEL(surface), weak_from_this());
+      g_object_set_data_full(G_OBJECT(root), "gnosis-portal-parent", new std::shared_ptr<Export>(exported),
+        +[](gpointer data) { delete static_cast<std::shared_ptr<Export>*>(data); });
+      auto* pending = new std::shared_ptr<Export>(exported);
+      if (!gdk_wayland_toplevel_export_handle(exported->surface,
+          +[](GdkToplevel*, const char* handle, gpointer data) {
+            auto exported = *static_cast<std::shared_ptr<Export>*>(data); exported->handle = handle ? handle : "";
+            if (exported->handle.empty()) { exported->waiting.clear(); return; }
+            auto waiting = std::move(exported->waiting);
+            for (auto& weak : waiting) if (auto page = weak.lock(); page && page->state_->process &&
+                page->state_->process->portal_target == page->target) page->update_portal_parent();
+          }, pending, +[](gpointer data) { delete static_cast<std::shared_ptr<Export>*>(data); })) {
+        delete pending;
+        g_object_set_data(G_OBJECT(root), "gnosis-portal-parent", nullptr);
+      }
+      return;
+    }
+    const auto& exported = *cached;
+    if (exported->handle.empty()) {
+      exported->waiting.push_back(weak_from_this()); return;
+    }
+    parent = "wayland:" + exported->handle;
+  } else if (GDK_IS_X11_SURFACE(surface)) {
+    char xid[32]; g_snprintf(xid, sizeof xid, "x11:%lx", gdk_x11_surface_get_xid(surface)); parent = xid;
+  }
+  const auto message = "{\"kind\":\"parent-window\",\"handle\":" + quote(parent) + "}";
+  if (send(s.process->native_fd, message.data(), message.size(), MSG_NOSIGNAL | MSG_DONTWAIT) != static_cast<ssize_t>(message.size()))
+    s.process->close_native_ui();
+}
 void Page::focus() {
   auto& s = *state_;
+  update_portal_parent();
   if (s.surface) { gtk_widget_grab_focus(s.surface); return; }
   if (!s.display || !s.child || s.disposed) return;
   gtk_widget_grab_focus(s.content);
@@ -3213,8 +3316,9 @@ void Page::show_context_menu(JsonObject* hit, int context) {
   gtk_popover_popup(GTK_POPOVER(popover));
 }
 void Page::set_visible(bool visible) {
-  if (!visible) { dismiss_context_menu(); dismiss_script_dialog(true); dismiss_install_dialog(true); dismiss_authenticator(true); }
+  if (!visible) { dismiss_context_menu(); dismiss_script_dialog(true); dismiss_install_dialog(true); dismiss_authenticator(true); dismiss_passkey_provider(); }
   state_->mapped = visible;
+  if (visible) update_portal_parent();
   if (state_->surface) gtk_widget_set_visible(state_->surface, visible);
   if (state_->display && state_->container) { if (visible) layout(); else XUnmapWindow(state_->display, state_->container); }
 }
@@ -3266,6 +3370,7 @@ void Page::show_devtools() {
     });
 }
 void Page::close() {
+  dismiss_passkey_provider();
   stop_find();
   const bool approved_close = close_is_approved();
   cancel_close();

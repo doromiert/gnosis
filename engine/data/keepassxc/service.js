@@ -2,6 +2,9 @@
 // Private GTK-shell adapter. No external messaging listener and no credential
 // values leave the upstream worker/content-script boundary.
 globalThis.jupiterKeePassXC = Object.freeze({
+    resolvePasskey(id, provider) {
+        globalThis.gnosisPasskeyRequests?.get(id)?.(provider);
+    },
     async invoke(tabId, operation, argument = '') {
         if (!page.settings) throw new Error('KeePassXC is starting. Try again shortly.');
         const tab = await browser.tabs.get(tabId);
@@ -105,3 +108,51 @@ globalThis.jupiterKeePassXC = Object.freeze({
         };
     }
 });
+
+// Only the attached, verified extension worker has this CDP binding. Credential
+// options and responses stay inside upstream; GTK receives provider metadata.
+globalThis.gnosisPasskeyRequests ??= new Map();
+kpxcEvent.messageHandlers.gnosis_passkeys_cancel = tab => {
+    for (const finish of globalThis.gnosisPasskeyRequests.values())
+        if (finish.tabId === tab.id) finish('cancel');
+};
+for (const [action, method] of [['passkeys_register', 'passkeysRegister'], ['passkeys_get', 'passkeysGet']]) {
+    kpxcEvent.messageHandlers[action] = async (tab, args = []) => {
+        if (typeof globalThis.__gnosisPasskeyProvider !== 'function') return keepass[method](tab, args);
+        const current = await browser.tabs.get(tab.id);
+        if (current.incognito || !/^https?:\/\//.test(current.url || '') || args.length < 2 ||
+            !page.settings.passkeys || globalThis.gnosisPasskeyRequests.size >= 8)
+            return {gnosisProvider: 'cancel'};
+        const id = crypto.randomUUID();
+        const timeout = Math.min(120000, Math.max(15000, Number(args[0]?.timeout) || 60000));
+        const provider = await new Promise(resolve => {
+            const timer = setTimeout(() => finish('cancel'), timeout);
+            const finish = choice => {
+                clearTimeout(timer);
+                globalThis.gnosisPasskeyRequests.delete(id);
+                try { globalThis.__gnosisPasskeyProvider(JSON.stringify({id, tabId: tab.id, url: current.url, closed: true})); } catch {}
+                resolve(['keepassxc', 'device'].includes(choice) ? choice : 'cancel');
+            };
+            finish.tabId = tab.id;
+            globalThis.gnosisPasskeyRequests.set(id, finish);
+            try {
+                globalThis.__gnosisPasskeyProvider(JSON.stringify({id, tabId: tab.id, url: current.url,
+                    create: action === 'passkeys_register', timeout}));
+            } catch { finish('cancel'); }
+        });
+        if (provider !== 'keepassxc') return {gnosisProvider: provider};
+        try {
+            if (!keepass.isConnected) await kpxcEvent.onReconnect(current);
+            await keepass.getDatabaseHash(current, [false, true]);
+            const deadline = Date.now() + timeout;
+            while (keepass.isDatabaseClosed && Date.now() < deadline)
+                await new Promise(resolve => setTimeout(resolve, 250));
+            if (keepass.isDatabaseClosed) return {gnosisProvider: 'cancel'};
+            if (!keepass.isAssociated()) await keepass.associate(current);
+            if (!keepass.isAssociated()) return {gnosisProvider: 'cancel'};
+            if ((await browser.tabs.get(tab.id)).url !== current.url) return {gnosisProvider: 'cancel'};
+            // Never retry this request with a different provider without consent.
+            return {...await keepass[method](current, args), gnosisProvider: 'keepassxc'};
+        } catch { return {gnosisProvider: 'cancel'}; }
+    };
+}

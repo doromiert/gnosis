@@ -1,5 +1,56 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later
  * GTK presentation for Chromium-owned WebAuthn requests. */
+void Page::dismiss_passkey_provider() {
+  state_->passkey_provider_id.clear();
+  if (!state_->passkey_provider) return;
+  g_cancellable_cancel(state_->passkey_provider);
+  g_clear_object(&state_->passkey_provider);
+}
+void Page::show_passkey_provider(JsonObject* request) {
+  dismiss_passkey_provider();
+  auto process = state_->process;
+  const std::string id = text(request, "id");
+  auto* root = gtk_widget_get_root(widget());
+  if (!GTK_IS_WINDOW(root)) {
+    process->command("Runtime.evaluate", "{\"expression\":" + quote("jupiterKeePassXC.resolvePasskey(" + quote(id) + ", 'cancel')") + "}", process->keepassxc_session);
+    return;
+  }
+  auto* dialog = ADW_ALERT_DIALOG(adw_alert_dialog_new(
+    json_object_get_boolean_member_with_default(request, "create", false) ? _("Create a Passkey") : _("Use a Passkey"), nullptr));
+  g_autoptr(GUri) address = g_uri_parse(text(request, "url"), G_URI_FLAGS_PARSE_RELAXED, nullptr);
+  g_autofree char* body = g_strdup_printf(json_object_get_boolean_member_with_default(request, "create", false) ?
+    _("Choose where to save a passkey for %s.") : _("Choose where to use your passkey for %s."),
+    address && g_uri_get_host(address) ? g_uri_get_host(address) : "");
+  adw_alert_dialog_set_body(dialog, body);
+  adw_alert_dialog_add_responses(dialog, "cancel", _("Cancel"), "device", _("Phone or Security Key…"), "keepassxc", _("KeePassXC"), nullptr);
+  adw_alert_dialog_set_default_response(dialog, "keepassxc");
+  adw_alert_dialog_set_close_response(dialog, "cancel");
+  adw_alert_dialog_set_response_appearance(dialog, "keepassxc", ADW_RESPONSE_SUGGESTED);
+  state_->passkey_provider = g_cancellable_new();
+  state_->passkey_provider_id = id;
+  struct Choice { std::weak_ptr<Page> page; std::weak_ptr<Process> process; std::string id; GCancellable* cancel; guint timeout; };
+  auto* choice = new Choice{weak_from_this(), process, id, G_CANCELLABLE(g_object_ref(state_->passkey_provider)), 0};
+  choice->timeout = g_timeout_add_full(G_PRIORITY_DEFAULT,
+    std::clamp<gint64>(json_object_get_int_member_with_default(request, "timeout", 60000), 15000, 120000),
+    +[](gpointer data) -> gboolean { g_cancellable_cancel(G_CANCELLABLE(data)); return G_SOURCE_REMOVE; },
+    g_object_ref(choice->cancel), g_object_unref);
+  if (state_->surface) jupiter_compositor_view_release_buttons(JUPITER_COMPOSITOR_VIEW(state_->surface));
+  adw_alert_dialog_choose(dialog, GTK_WIDGET(root), choice->cancel, +[](GObject* source, GAsyncResult* result, gpointer data) {
+    std::unique_ptr<Choice> choice(static_cast<Choice*>(data));
+    const char* response = adw_alert_dialog_choose_finish(ADW_ALERT_DIALOG(source), result);
+    // A cancelled timeout source may already have fired.
+    if (g_main_context_find_source_by_id(nullptr, choice->timeout)) g_source_remove(choice->timeout);
+    if (auto process = choice->process.lock(); process && !process->closing && !process->keepassxc_session.empty()) {
+      const auto expression = "jupiterKeePassXC.resolvePasskey(" + quote(choice->id) + "," + quote(response ? response : "cancel") + ")";
+      process->command("Runtime.evaluate", "{\"expression\":" + quote(expression) + "}", process->keepassxc_session);
+    }
+    if (auto page = choice->page.lock(); page && page->state_->passkey_provider == choice->cancel) {
+      page->state_->passkey_provider_id.clear();
+      g_clear_object(&page->state_->passkey_provider);
+    }
+    g_object_unref(choice->cancel);
+  }, choice);
+}
 void Page::dismiss_authenticator(bool cancel) {
   if (!state_->authenticator) return;
   auto ui = std::move(state_->authenticator);

@@ -33,6 +33,15 @@ static Request *requests;
 static gint64 sequence;
 static NativeVoid original_destroy, original_permission_destroy, original_permission_show;
 static guint input_watch;
+static GMutex portal_parent_mutex;
+static char *portal_parent;
+
+char *jupiter_portal_parent(void) {
+  g_mutex_lock(&portal_parent_mutex);
+  char *copy = g_strdup(portal_parent);
+  g_mutex_unlock(&portal_parent_mutex);
+  return copy;
+}
 
 gboolean jupiter_adapter_enabled(const char *id) {
   static gsize initialized;
@@ -278,6 +287,15 @@ static gboolean receive_response(gint fd, GIOCondition condition, gpointer unuse
       if (json_parser_load_from_data(parser, data, length, NULL) &&
           JSON_NODE_HOLDS_OBJECT(json_parser_get_root(parser))) {
         JsonObject *message = json_node_get_object(json_parser_get_root(parser));
+        if (!strcmp(json_object_get_string_member_with_default(message, "kind", ""), "parent-window")) {
+          const char *handle = json_object_get_string_member_with_default(message, "handle", "");
+          if (strlen(handle) <= 4096 && (!*handle || g_str_has_prefix(handle, "wayland:") || g_str_has_prefix(handle, "x11:"))) {
+            g_mutex_lock(&portal_parent_mutex);
+            g_free(portal_parent); portal_parent = g_strdup(handle);
+            g_mutex_unlock(&portal_parent_mutex);
+          }
+          return G_SOURCE_CONTINUE;
+        }
         if (native_close_request(message) || native_find_dispatch(message)) return G_SOURCE_CONTINUE;
         if (!strcmp(json_object_get_string_member_with_default(message, "kind", ""), "translation")) {
           translation_request(message); return G_SOURCE_CONTINUE;
@@ -658,14 +676,8 @@ static gboolean show_uninstall(void *widget) {
   return TRUE;
 }
 static void decide_uninstall(Request *r, gboolean accept, const char *choice) {
-  void *model = pointer_at(r->view, 0x450), *widget = r->widget;
-  if (model) {
-    // The host owns this field. Update the real native checkbox before calling
-    // DialogModel::OnDialogAccept; the browser performs removal/report routing.
-    if (r->checkbox) *((unsigned char *)r->checkbox + 0xb0) = accept && choice && !strcmp(choice, "report-abuse");
-    native_call(accept ? UI_FILE_MODEL_ACCEPT_RVA : UI_FILE_MODEL_CANCEL_RVA, model);
-  }
-  native_call(UI_WIDGET_CLOSE_RVA, widget);
+  if (r->checkbox) *((unsigned char *)r->checkbox + 0xb0) = accept && choice && !strcmp(choice, "report-abuse");
+  native_call(accept ? UI_DIALOG_ACCEPT_RVA : UI_DIALOG_CANCEL_RVA, r->view);
   g_free(r);
 }
 static void destroy_model_host(void *host) {
@@ -746,12 +758,10 @@ static gboolean show_file_access(void *widget) {
   return TRUE;
 }
 static void decide_file_access(Request *r, gboolean accept) {
-  void *model = pointer_at(r->view, 0x450);
-  void *widget = r->widget;
-  /* The browser model owns the original split-once permission callback. The
-   * host remains responsible for destruction and its close/dismiss callback. */
-  if (model) native_call(accept ? UI_FILE_MODEL_ACCEPT_RVA : UI_FILE_MODEL_CANCEL_RVA, model);
-  native_call(UI_WIDGET_CLOSE_RVA, widget);
+  /* DialogDelegate guards synchronous destruction and suppresses the close
+   * callback after a button decision. Calling the model then Widget::Close
+   * instead consumes FileSystemAccess's split-once callback twice. */
+  native_call(accept ? UI_DIALOG_ACCEPT_RVA : UI_DIALOG_CANCEL_RVA, r->view);
   g_free(r);
 }
 
@@ -991,6 +1001,8 @@ __attribute__((constructor)) static void initialize(void) {
       !matches(UI_FILE_DIALOG_RVA, UI_FILE_DIALOG_BYTES) ||
       !matches(UI_CREATE_MODAL_RVA, UI_CREATE_MODAL_BYTES) ||
       !matches(UI_MODEL_HOST_DESTROY_RVA, UI_MODEL_HOST_DESTROY_BYTES) ||
+      !matches(UI_DIALOG_ACCEPT_RVA, UI_DIALOG_ACCEPT_BYTES) ||
+      !matches(UI_DIALOG_CANCEL_RVA, UI_DIALOG_CANCEL_BYTES) ||
       !matches(UI_CAPTURE_CONSTRUCT_RVA, UI_CAPTURE_CONSTRUCT_BYTES) ||
       !matches(UI_CAPTURE_DESTROY_RVA, UI_CAPTURE_DESTROY_BYTES) ||
       !matches(UI_CAPTURE_SELECTED_RVA, UI_CAPTURE_SELECTED_BYTES) ||
