@@ -3,6 +3,8 @@
 #include <dlfcn.h>
 #include <unistd.h>
 #include <cstring>
+#include <glib/gstdio.h>
+#include "web-app-config.h"
 static GtkWindow *window;
 static std::shared_ptr<GnosisBrave::Page> page;
 static EphyWebAppDialog *setup;
@@ -22,9 +24,29 @@ static GtkWidget *button(GtkWidget*widget,const char*label) {
  return nullptr;
 }
 static void fail(const char *message){g_printerr("WEBAPPS_FAIL stage=%d %s\n",stage,message);_exit(77);}
+static void check_launcher() {
+ auto* app=g_new0(EphyWebApplication,1);app->id=g_compute_checksum_for_string(G_CHECKSUM_SHA1,"gnosis-owned-launcher-check",-1);
+ auto* profile=ephy_web_application_get_profile_directory(app->id);g_mkdir_with_parents(profile,0700);
+ app->name=g_strdup("Launcher check");app->url=g_strdup("http://example.test/path");app->icon_path=g_strdup("folder");app->desktop_path=g_build_filename(profile,"fixture.desktop",nullptr);
+ const char* original="[Desktop Entry]\nType=Application\nName=Launcher check\nIcon=folder\nExec=\"/nix/store/old-gnosis/bin/gnosis\" --application-mode --profile=/tmp/fixture --custom-test-flag http://example.test/path\n";
+ if(!g_file_set_contents(app->desktop_path,original,-1,nullptr)||!ephy_web_application_save(app))fail("could not update old launcher");
+ auto* key=g_key_file_new();if(!g_key_file_load_from_file(key,app->desktop_path,G_KEY_FILE_NONE,nullptr))fail("updated launcher unreadable");
+ auto* command=g_key_file_get_string(key,"Desktop Entry","Exec",nullptr);char exe[2048];auto size=readlink("/proc/self/exe",exe,sizeof(exe)-1);if(size<0)fail("no executable path");exe[size]=0;
+ auto current=std::string(exe);current=current.substr(0,current.find_last_of('/'))+"/gnosis";
+ auto expected="\""+current+"\" --application-mode --profile=/tmp/fixture --custom-test-flag http://example.test/path";
+ if(expected!=command)fail("launcher did not refresh its executable while keeping arguments");
+ if(!ephy_web_application_save(app))fail("unchanged launcher save failed");
+ auto* config=g_key_file_new();g_key_file_set_string_list(config,"Extensions","enabled",nullptr,0);GError*error=nullptr;
+ if(!ephy_web_application_set_extensions(app->id,config,&error))fail(error?error->message:"could not persist app extension choice");
+ auto* saved=gnosis_web_app_config_load(profile,&error);if(!saved||!g_key_file_has_group(saved,"Extensions"))fail("saved extension choice missing");
+ auto* settings=g_build_filename(profile,GNOSIS_WEB_APP_CONFIG,nullptr);g_unlink(settings);g_unlink(app->desktop_path);g_rmdir(profile);
+ g_free(settings);g_free(profile);g_free(command);g_key_file_unref(key);g_key_file_unref(saved);g_key_file_unref(config);ephy_web_application_free(app);
+ g_print("WEBAPP_LAUNCHER_PASS current Nix executable, preserved arguments, idempotent save, per-app config persistence\n");
+}
 static gboolean tick(gpointer) {
  auto now=g_get_monotonic_time();if(now-started>35*G_USEC_PER_SEC)fail("timeout");
  if(busy||page->session.empty()||page->loading||now-changed<300000)return G_SOURCE_CONTINUE;
+ if(g_getenv("GNOSIS_TEST_WEBAPP_LAUNCHER")){check_launcher();page.reset();g_action_group_activate_action(G_ACTION_GROUP(g_application_get_default()),"quit",nullptr);return G_SOURCE_REMOVE;}
  if(g_getenv("GNOSIS_TEST_WEBAPP_POLICY")) {
   if(page->title!="Native web app test")return G_SOURCE_CONTINUE;
   busy=true;

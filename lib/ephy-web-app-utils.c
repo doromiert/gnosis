@@ -1025,11 +1025,14 @@ ephy_web_application_save (EphyWebApplication *app)
   g_autofree char *name = NULL;
   g_autofree char *icon = NULL;
   g_autofree char *exec = NULL;
+  g_autofree char *updated_exec = NULL;
   g_auto (GStrv) strings = NULL;
   g_autofree char *unescaped_url = NULL;
   guint exec_length;
   gboolean changed = FALSE;
   gboolean saved = FALSE;
+  gboolean quoted = FALSE;
+  const char *end;
   g_autoptr (GError) error = NULL;
 
   g_assert (!xdp_portal_running_under_sandbox ());
@@ -1070,6 +1073,21 @@ ephy_web_application_save (EphyWebApplication *app)
   }
 
   exec = g_key_file_get_string (keyfile, "Desktop Entry", "Exec", NULL);
+  if (!exec) {
+    g_warning ("Web app launcher has no executable");
+    return FALSE;
+  }
+  /* Refresh a Nix build path while preserving the launcher's other arguments. */
+  for (end = exec; *end; end++) {
+    if (*end == '\\' && end[1]) end++;
+    else if (*end == '"') quoted = !quoted;
+    else if (!quoted && g_ascii_isspace (*end)) break;
+  }
+  updated_exec = g_strconcat ("\"" GNOSIS_EXECUTABLE "\"", end, NULL);
+  if (g_strcmp0 (exec, updated_exec)) {
+    changed = TRUE;
+    g_set_str (&exec, updated_exec);
+  }
   strings = g_strsplit (exec, " ", -1);
 
   exec_length = g_strv_length (strings);
@@ -1080,8 +1098,8 @@ ephy_web_application_save (EphyWebApplication *app)
     strings[exec_length - 1] = escape_exec_string (app->url);
     g_free (exec);
     exec = g_strjoinv (" ", strings);
-    g_key_file_set_string (keyfile, "Desktop Entry", "Exec", exec);
   }
+  g_key_file_set_string (keyfile, "Desktop Entry", "Exec", exec);
 
   if (changed) {
     char *resolved_path = realpath (app->desktop_path, NULL);
