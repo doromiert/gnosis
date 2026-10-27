@@ -273,6 +273,7 @@ struct ViewData {
       const int max_height = std::max(100, std::min(600, gtk_widget_get_height(GTK_WIDGET(root)) - 100));
       gtk_widget_set_size_request(GTK_WIDGET(self), std::clamp(width, 25, max_width),
                                   std::clamp(height, 25, max_height));
+      g_signal_emit_by_name(self, "extension-popup-size-changed");
     };
     browser->on_security_changed = [this] { if (!disposed) g_signal_emit_by_name(self, "tls-info-changed"); };
     browser->on_fullscreen_changed = [this](bool value) {
@@ -785,6 +786,7 @@ static void ephy_engine_web_view_class_init(EphyEngineViewClass* klass) {
   g_signal_new("load-failed", G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST, G_STRUCT_OFFSET(EphyEngineViewClass, load_failed), g_signal_accumulator_true_handled, nullptr, nullptr, G_TYPE_BOOLEAN, 3, WEBKIT_TYPE_LOAD_EVENT, G_TYPE_STRING, G_TYPE_ERROR);
   g_signal_new("create-popup", G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST, G_STRUCT_OFFSET(EphyEngineViewClass, create_popup), g_signal_accumulator_first_wins, nullptr, nullptr, GTK_TYPE_WIDGET, 1, G_TYPE_POINTER);
   g_signal_new("popup-geometry-changed", G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST, 0, nullptr, nullptr, nullptr, G_TYPE_NONE, 0);
+  g_signal_new("extension-popup-size-changed", G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST, 0, nullptr, nullptr, nullptr, G_TYPE_NONE, 0);
   g_signal_new("ready-to-show", G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST, G_STRUCT_OFFSET(EphyEngineViewClass, ready_to_show), nullptr, nullptr, nullptr, G_TYPE_NONE, 0);
   g_signal_new("tls-info-changed", G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST, 0, nullptr, nullptr, nullptr, G_TYPE_NONE, 0);
   g_signal_new("run-as-modal", G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST, G_STRUCT_OFFSET(EphyEngineViewClass, run_as_modal), nullptr, nullptr, nullptr, G_TYPE_NONE, 0);

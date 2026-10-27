@@ -52,9 +52,12 @@ struct _EphyActionBarEnd {
   GtkWidget *browser_actions_listbox;
   GtkWidget *page_actions_listbox;
   GtkWidget *browser_actions_stack;
+  GtkWidget *browser_actions_overlay;
   GtkWidget *browser_actions_popup_view_box;
   GtkWidget *browser_actions_popup_view_label;
   GtkWidget *browser_action_popup_web_view;
+  guint popup_size_timeout;
+  guint popup_prepare_timeout;
 
   GListModel *browser_actions_model;
 
@@ -140,11 +143,65 @@ show_downloads_cb (EphyDownloadsManager *manager,
 static void
 remove_popup_webview (EphyActionBarEnd *action_bar_end)
 {
+  g_clear_handle_id (&action_bar_end->popup_size_timeout, g_source_remove);
+  g_clear_handle_id (&action_bar_end->popup_prepare_timeout, g_source_remove);
   if (action_bar_end->browser_action_popup_web_view) {
-    gtk_box_remove (GTK_BOX (action_bar_end->browser_actions_popup_view_box),
-                    action_bar_end->browser_action_popup_web_view);
+    GtkWidget *view = action_bar_end->browser_action_popup_web_view;
+
+    g_signal_handlers_disconnect_by_data (view, action_bar_end);
+    if (gtk_widget_get_parent (view) == action_bar_end->browser_actions_overlay)
+      gtk_overlay_remove_overlay (GTK_OVERLAY (action_bar_end->browser_actions_overlay), view);
+    else
+      gtk_box_remove (GTK_BOX (action_bar_end->browser_actions_popup_view_box), view);
     action_bar_end->browser_action_popup_web_view = NULL;
   }
+}
+
+static void
+reveal_browser_action_popup (EphyActionBarEnd *self)
+{
+  GtkWidget *view = self->browser_action_popup_web_view;
+
+  g_clear_handle_id (&self->popup_size_timeout, g_source_remove);
+  g_clear_handle_id (&self->popup_prepare_timeout, g_source_remove);
+  if (!view || gtk_widget_get_parent (view) != self->browser_actions_overlay)
+    return;
+
+  g_object_ref (view);
+  gtk_overlay_remove_overlay (GTK_OVERLAY (self->browser_actions_overlay), view);
+  gtk_widget_set_opacity (view, 1);
+  gtk_widget_set_can_target (view, TRUE);
+  gtk_widget_set_halign (view, GTK_ALIGN_FILL);
+  gtk_widget_set_valign (view, GTK_ALIGN_FILL);
+  gtk_box_append (GTK_BOX (self->browser_actions_popup_view_box), view);
+  g_object_unref (view);
+  gtk_stack_set_visible_child (GTK_STACK (self->browser_actions_stack),
+                               self->browser_actions_popup_view_box);
+}
+
+static void
+popup_size_settled_cb (EphyActionBarEnd *self)
+{
+  self->popup_size_timeout = 0;
+  reveal_browser_action_popup (self);
+}
+
+static void
+popup_prepare_timeout_cb (EphyActionBarEnd *self)
+{
+  self->popup_prepare_timeout = 0;
+  reveal_browser_action_popup (self);
+}
+
+static void
+popup_size_changed_cb (GtkWidget        *view,
+                       EphyActionBarEnd *self)
+{
+  if (gtk_widget_get_parent (view) != self->browser_actions_overlay)
+    return;
+
+  g_clear_handle_id (&self->popup_size_timeout, g_source_remove);
+  self->popup_size_timeout = g_timeout_add_once (150, (GSourceOnceFunc)popup_size_settled_cb, self);
 }
 
 static gboolean
@@ -185,14 +242,23 @@ show_browser_action_popup (EphyActionBarEnd  *action_bar_end,
   if (!popup_view)
     return;
 
-  gtk_box_append (GTK_BOX (action_bar_end->browser_actions_popup_view_box), popup_view);
+  remove_popup_webview (action_bar_end);
   action_bar_end->browser_action_popup_web_view = popup_view;
+
+  /* Keep it mapped while it lays out, without resizing the extensions list. */
+  gtk_widget_set_opacity (popup_view, 0);
+  gtk_widget_set_can_target (popup_view, FALSE);
+  gtk_widget_set_halign (popup_view, GTK_ALIGN_START);
+  gtk_widget_set_valign (popup_view, GTK_ALIGN_START);
+  gtk_overlay_add_overlay (GTK_OVERLAY (action_bar_end->browser_actions_overlay), popup_view);
+  gtk_overlay_set_clip_overlay (GTK_OVERLAY (action_bar_end->browser_actions_overlay), popup_view, TRUE);
+  g_signal_connect (popup_view, "extension-popup-size-changed", G_CALLBACK (popup_size_changed_cb), action_bar_end);
+  action_bar_end->popup_prepare_timeout = g_timeout_add_once (2000, (GSourceOnceFunc)popup_prepare_timeout_cb, action_bar_end);
 
   gtk_label_set_text (GTK_LABEL (action_bar_end->browser_actions_popup_view_label),
                       ephy_browser_action_get_title (action));
 
-  gtk_stack_set_visible_child (GTK_STACK (action_bar_end->browser_actions_stack),
-                               action_bar_end->browser_actions_popup_view_box);
+  gtk_menu_button_popup (GTK_MENU_BUTTON (action_bar_end->browser_actions_button));
 }
 
 static void
@@ -303,6 +369,7 @@ ephy_action_bar_end_dispose (GObject *object)
   EphyActionBarEnd *self = EPHY_ACTION_BAR_END (object);
 
   g_clear_handle_id (&self->downloads_button_attention_timeout_id, g_source_remove);
+  remove_popup_webview (self);
   g_clear_object (&self->browser_actions_model);
 
   G_OBJECT_CLASS (ephy_action_bar_end_parent_class)->dispose (object);
@@ -352,6 +419,9 @@ ephy_action_bar_end_class_init (EphyActionBarEndClass *klass)
   gtk_widget_class_bind_template_child (widget_class,
                                         EphyActionBarEnd,
                                         browser_actions_stack);
+  gtk_widget_class_bind_template_child (widget_class,
+                                        EphyActionBarEnd,
+                                        browser_actions_overlay);
   gtk_widget_class_bind_template_child (widget_class,
                                         EphyActionBarEnd,
                                         browser_actions_popup_view_box);

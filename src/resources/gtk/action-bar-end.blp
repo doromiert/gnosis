@@ -36,70 +36,72 @@ template $EphyActionBarEnd: Box {
         "menu",
       ]
 
-      child: Stack browser_actions_stack {
-        transition-type: slide_left_right;
-        interpolate-size: true;
-        vhomogeneous: false;
-        hhomogeneous: false;
+      child: Overlay browser_actions_overlay {
+        child: Stack browser_actions_stack {
+          transition-type: slide_left_right;
+          interpolate-size: true;
+          vhomogeneous: false;
+          hhomogeneous: false;
 
-        ScrolledWindow browser_actions_scrolled_window {
-          width-request: 320;
-          hscrollbar-policy: never;
-          max-content-height: 420;
-          propagate-natural-height: true;
+          ScrolledWindow browser_actions_scrolled_window {
+            width-request: 320;
+            hscrollbar-policy: never;
+            max-content-height: 420;
+            propagate-natural-height: true;
 
-          child: Box {
+            child: Box {
+              orientation: vertical;
+              margin-top: 6;
+              margin-bottom: 6;
+              margin-start: 6;
+              margin-end: 6;
+
+              ListBox browser_actions_listbox {
+                selection-mode: none;
+                row-activated => $browser_actions_row_activated_cb();
+              }
+
+              ListBox page_actions_listbox {
+                selection-mode: none;
+                visible: false;
+                row-activated => $page_actions_row_activated_cb();
+              }
+            };
+          }
+
+          Box browser_actions_popup_view_box {
             orientation: vertical;
-            margin-top: 6;
-            margin-bottom: 6;
-            margin-start: 6;
-            margin-end: 6;
+            spacing: 6;
 
-            ListBox browser_actions_listbox {
-              selection-mode: none;
-              row-activated => $browser_actions_row_activated_cb();
-            }
+            CenterBox {
+              orientation: horizontal;
+              margin-top: 6;
+              margin-start: 6;
+              margin-end: 6;
 
-            ListBox page_actions_listbox {
-              selection-mode: none;
-              visible: false;
-              row-activated => $page_actions_row_activated_cb();
-            }
-          };
-        }
+              [start]
+              Button {
+                icon-name: "go-previous-symbolic";
+                tooltip-text: _("Back to Extensions");
+                focus-on-click: false;
+                clicked => $browser_actions_popup_view_back_clicked_cb();
 
-        Box browser_actions_popup_view_box {
-          orientation: vertical;
-          spacing: 6;
+                styles [
+                  "flat",
+                ]
+              }
 
-          CenterBox {
-            orientation: horizontal;
-            margin-top: 6;
-            margin-start: 6;
-            margin-end: 6;
+              [center]
+              Label browser_actions_popup_view_label {
+                hexpand: true;
 
-            [start]
-            Button {
-              icon-name: "go-previous-symbolic";
-              tooltip-text: _("Back to Extensions");
-              focus-on-click: false;
-              clicked => $browser_actions_popup_view_back_clicked_cb();
-
-              styles [
-                "flat",
-              ]
-            }
-
-            [center]
-            Label browser_actions_popup_view_label {
-              hexpand: true;
-
-              styles [
-                "heading",
-              ]
+                styles [
+                  "heading",
+                ]
+              }
             }
           }
-        }
+        };
       };
     };
   }
