@@ -14,8 +14,8 @@ manifest_path = root / 'manifest.json'
 manifest = json.loads(manifest_path.read_text())
 assert manifest['version'] == '1.10.4.1', 'Review the integration when upgrading'
 # Separate integration revision forces Chromium to retire cached worker code.
-manifest['version'] = '1.10.4.104'
-manifest['version_name'] = '1.10.4.1 (Gnosis integration 4)'
+manifest['version'] = '1.10.4.105'
+manifest['version_name'] = '1.10.4.1 (Gnosis integration 5)'
 manifest['permissions'].append('scripting')
 manifest['key'] = (assets / 'public-key.txt').read_text().strip()
 manifest.pop('update_url', None)
@@ -34,6 +34,61 @@ service = root / 'background/background_service.js'
 text = service.read_text()
 assert text.count("        'init.js'\n") == 1
 service.write_text(text.replace("        'init.js'\n", "        'init.js',\n        'jupiter.js'\n"))
+# Reject non-credential inputs before any visibility/layout reads.
+observer = root / 'content/observer-helper.js'
+text = observer.read_text()
+before = '''    for (const field of inputFields) {
+        if ((!ignoreVisibility && !kpxcFields.isVisible(field))
+            || kpxcFields.isSearchField(field)) {
+            continue;
+        }
+
+        const type = field.getLowerCaseAttribute('type');
+        if (kpxcObserverHelper.inputTypes.includes(type)) {
+            inputs.push(field);
+        }
+    }'''
+after = '''    for (const field of inputFields) {
+        const type = field.getLowerCaseAttribute('type');
+        if (!kpxcObserverHelper.inputTypes.includes(type)
+            || (!ignoreVisibility && !kpxcFields.isVisible(field))
+            || kpxcFields.isSearchField(field)) {
+            continue;
+        }
+        inputs.push(field);
+    }'''
+assert text.count(before) == 1, 'Review upstream field filtering'
+text = text.replace(before, after)
+# Collapse repeated checks in a batch, preserving add/remove/add ordering.
+start = text.index('kpxcObserverHelper.initObserver = async function() {')
+end = text.index('// Stores mutation style', start)
+handler = text[start:end]
+anchor = '        const styleMutations = [];'
+assert handler.count(anchor) == 1
+handler = handler.replace(anchor, '''        const pending = [], operations = new Map();
+        const queue = (target, removal = false) => {
+            if (operations.get(target) === removal) return;
+            operations.set(target, removal);
+            pending.push([target, removal]);
+        };
+''' + anchor)
+for before, after in [
+    ('kpxcObserverHelper.handleObserverAdd(node);', 'queue(node);'),
+    ('kpxcObserverHelper.handleObserverRemove(node);', 'queue(node, true);'),
+    ('kpxcObserverHelper.handleObserverAdd(mut.target);', 'queue(mut.target);'),
+    ('kpxcObserverHelper.handleObserverAdd(styleMut.target);', 'queue(styleMut.target);'),
+    ('kpxcObserverHelper.handleObserverRemove(styleMut.target);', 'queue(styleMut.target, true);'),
+]:
+    assert handler.count(before) == 1, 'Review upstream mutation handling'
+    handler = handler.replace(before, after)
+anchor = '    });\n\n    if (document.body)'
+assert handler.count(anchor) == 1
+handler = handler.replace(anchor, '''        for (const [target, removal] of pending) {
+            if (removal) kpxcObserverHelper.handleObserverRemove(target);
+            else kpxcObserverHelper.handleObserverAdd(target);
+        }
+''' + anchor)
+observer.write_text(text[:start] + handler + text[end:])
 # Keep the upstream closed Shadow DOM and trusted input handlers. Only append
 # scoped presentation rules and replace colored logos with GNOME symbolic icons.
 overlays = (assets / 'overlays.css').read_text()

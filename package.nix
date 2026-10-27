@@ -65,6 +65,9 @@ let
     nativeBuildInputs = [ pkgs.unzip pkgs.python3 ];
     unpackPhase = "unzip -q $src";
     patchPhase = "python3 ${./engine/tools/prepare-keepassxc.py} . ${./engine/data/keepassxc}";
+    nativeCheckInputs = [ pkgs.nodejs ];
+    doCheck = true;
+    checkPhase = "node ${./engine/tests/keepassxc-observer-test.js} .";
     dontConfigure = true;
     dontBuild = true;
     installPhase = "mkdir -p $out; cp -r . $out/";

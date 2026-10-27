@@ -36,7 +36,7 @@ Jupiter. Unlocking an already paired database is separate from association;
 KeePassXC must permit browser unlock requests for its password prompt to open.
 KeePassXC itself must be installed, with `keepassxc-proxy` in PATH.
 
-The bundled manifest uses an integration revision (`1.10.4.104`) and retains the
+The bundled manifest uses an integration revision (`1.10.4.105`) and retains the
 upstream version in `version_name`. Existing Chromium profiles can retain older
 worker scripts after unpacked-resource changes. Jupiter resolves only the exact
 internal worker URL, waits for upstream initialization and installs its trusted
@@ -63,3 +63,17 @@ The user confirmed passkey use on GitHub. Discord did not respond in their test;
 its cause is unconfirmed. A real host handshake alone does not validate every
 credential, TOTP and passkey operation. Developer builds can use
 `-Dkeepassxc_dir=$KEEPASSXC_DIR` from the Nix development shell.
+
+Integration 5 rejects unsupported input types before visibility, hit testing and
+layout reads. Credential and TOTP input types, visibility/search filtering and
+closed-shadow discovery stay upstream. Repeated mutation checks for the same
+node/action are collapsed within a callback; add/remove/add ordering is retained.
+`keepassxc-observer-test.js` checks these contracts against the prepared release
+and runs in the Nix package's check phase. Service and unlock tests also pass.
+
+A controlled Chromium 155 test alternated old/new filters over five rounds of 200
+scans, with 97 checkboxes and three credential fields plus a layout-invalidating
+style change each iteration. Median time fell from 240.4ms to 26.1ms; visibility
+checks fell from 20,000 to 600. Both versions returned exactly the same username,
+password and numeric TOTP fields. This measures this scan path, not total
+Speedometer throughput. Results: `/tmp/gnosis-keepassxc-filter-benchmark.json`.
