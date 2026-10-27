@@ -57,9 +57,16 @@ foreach item : [
   compositor_protocols += custom_target(item[1], input: protocol_dir / item[0], output: item[1], command: [scanner, item[2], '@INPUT@', '@OUTPUT@'])
 endforeach
 compositor_deps = [gtk_dep, json_glib_dep, libxml_dep, dependency('gio-unix-2.0'), dependency('wlroots-0.19'), dependency('wayland-server'), dependency('wayland-client'), dependency('xkbcommon'), dependency('libdrm'), dependency('glesv2'), dependency('pixman-1')]
-compositor_lib = static_library('gnosis-compositor', ['brave/compositor.c', 'brave/outer-pointer.c', 'brave/clipboard-bridge.c', 'brave/profile.c', compositor_protocols],
+compositor_lib = static_library('gnosis-compositor', ['brave/compositor.c', 'brave/wayland-source.c', 'brave/outer-pointer.c', 'brave/clipboard-bridge.c', 'brave/profile.c', compositor_protocols],
   dependencies: compositor_deps, c_args: ['-Wno-declaration-after-statement'], pic: true)
 compositor_dep = declare_dependency(link_with: compositor_lib, dependencies: compositor_deps)
+if get_option('unit_tests').enabled()
+  wayland_source_test = executable('wayland-source-test',
+    ['brave/wayland-source.c', 'tests/wayland-source-test.c'],
+    include_directories: include_directories('brave'),
+    dependencies: [dependency('glib-2.0'), dependency('wayland-server')])
+  test('Nested Wayland idle dispatch', wayland_source_test)
+endif
 engine = static_library('gnosis-engine',
   ['brave/browser.cpp', 'brave/debug-adapters.cpp', 'ephy-engine-download.cpp', 'ephy-engine-authentication.cpp', 'ephy-engine-client-certificate.cpp', 'ephy-engine-extensions.cpp', 'ephy-engine-permission.cpp', 'ephy-engine-session.cpp', 'ephy-engine-response.cpp', 'ephy-engine-settings.cpp', 'ephy-engine-origin.cpp', 'ephy-engine-certificate.cpp', 'ephy-engine-favicon.c', 'ephy-engine-view.cpp', 'ephy-engine-scheme.cpp', 'ephy-engine-print.cpp', 'select/application.cpp', 'select/browser.cpp', 'select/file-dialog.cpp', 'select/page-messages.cpp', 'select/webstore-guard.cpp', 'select/clipboard.cpp',
    'select/cursor.cpp', 'select/policy.cpp', 'select/extensions.cpp', 'select/extension-host.cpp', engine_resource],

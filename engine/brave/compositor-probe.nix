@@ -14,7 +14,7 @@ pkgs.stdenv.mkDerivation {
     wayland-scanner private-code ${pkgs.wayland-protocols}/share/wayland-protocols/unstable/pointer-constraints/pointer-constraints-unstable-v1.xml pointer-constraints-code.c
     wayland-scanner client-header ${pkgs.wayland-protocols}/share/wayland-protocols/unstable/relative-pointer/relative-pointer-unstable-v1.xml relative-pointer-client.h
     wayland-scanner private-code ${pkgs.wayland-protocols}/share/wayland-protocols/unstable/relative-pointer/relative-pointer-unstable-v1.xml relative-pointer-code.c
-    $CC -std=gnu11 -O2 -Wall -Wextra -I. compositor.c outer-pointer.c clipboard-bridge.c profile.c compositor-probe.c pointer-constraints-code.c relative-pointer-code.c -o gnosis-compositor-probe \
+    $CC -std=gnu11 -O2 -Wall -Wextra -I. compositor.c wayland-source.c outer-pointer.c clipboard-bridge.c profile.c compositor-probe.c pointer-constraints-code.c relative-pointer-code.c -o gnosis-compositor-probe \
       $(pkg-config --cflags --libs gtk4-wayland libadwaita-1 json-glib-1.0 gio-unix-2.0 libxml-2.0 wlroots-0.19 wayland-server wayland-client xkbcommon libdrm pixman-1)
   '';
   installPhase = ''

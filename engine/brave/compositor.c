@@ -6,6 +6,7 @@
 #include "compositor.h"
 #include "outer-pointer.h"
 #include "clipboard-bridge.h"
+#include "wayland-source.h"
 #include <glib-unix.h>
 #include <fcntl.h>
 #include <unistd.h>
@@ -691,12 +692,6 @@ static void key_released(GtkEventControllerKey *controller, guint value, guint c
   if (self->vim_field && gnosis_compositor_vim_key(value, modifiers)) return;
   if (!gnosis_compositor_is_host_shortcut(value, modifiers)) key(controller, code, FALSE, self);
 }
-static gboolean dispatch(gint fd, GIOCondition condition, gpointer data) {
-  (void)fd; GnosisCompositor *self = data;
-  if (condition & (G_IO_ERR | G_IO_HUP)) { self->dispatch = 0; return G_SOURCE_REMOVE; }
-  wl_event_loop_dispatch(wl_display_get_event_loop(self->display), 0); wl_display_flush_clients(self->display);
-  return G_SOURCE_CONTINUE;
-}
 #include "drag-bridge.inc"
 static void server_dispose(GObject *object) {
   GnosisCompositor *self = GNOSIS_COMPOSITOR(object);
@@ -841,8 +836,7 @@ GnosisCompositor *gnosis_compositor_new(GError **error) {
   if (!g_mkdtemp(self->directory)) goto failed;
   self->socket = g_build_filename(self->directory, "wayland", NULL);
   if (wl_display_add_socket(self->display, self->socket) < 0) goto failed;
-  int fd = wl_event_loop_get_fd(wl_display_get_event_loop(self->display));
-  self->dispatch = g_unix_fd_add(fd, G_IO_IN | G_IO_ERR | G_IO_HUP, dispatch, self);
+  self->dispatch = gnosis_wayland_source_attach(self->display);
   return self;
 failed:
   g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_FAILED, "Could not initialize Gnosis's GPU Wayland compositor");
