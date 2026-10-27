@@ -109,6 +109,8 @@ private:
   void dismiss_script_dialog(bool cancel);
   void show_install_dialog(JsonObject*);
   void dismiss_install_dialog(bool cancel);
+  void dismiss_http_retry();
+  void offer_http_retry(const std::string&);
   void theme_document(const std::string&, const std::string&);
   void update_web_theme();
   void update_vim(int context);

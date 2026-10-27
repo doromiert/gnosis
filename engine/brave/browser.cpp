@@ -6,6 +6,7 @@
 #include "profile.h"
 #include "private-profile.hpp"
 #include "bundled-extension.hpp"
+#include "../loopback.h"
 #include <gdk/x11/gdkx.h>
 #include <gdk/wayland/gdkwayland.h>
 #include <glib-unix.h>
@@ -187,6 +188,8 @@ struct Page::State {
   GCancellable* passkey_provider = nullptr;
   std::string passkey_provider_id;
   AdwDialog* install_dialog = nullptr;
+  AdwDialog* http_retry = nullptr;
+  std::string document_request, document_request_url;
   gulong install_response = 0;
   gint64 install_id = 0;
   guint install_delay = 0;
@@ -1699,7 +1702,34 @@ void Page::request_favicon() {
         });
     });
 }
+void Page::dismiss_http_retry() {
+  auto* dialog = std::exchange(state_->http_retry, nullptr);
+  if (!dialog) return;
+  g_signal_handlers_disconnect_by_data(dialog, this);
+  adw_dialog_force_close(dialog); g_object_unref(dialog);
+}
+void Page::offer_http_retry(const std::string& address) {
+  auto* root = gtk_widget_get_root(widget());
+  if (is_closed() || state_->http_retry || !state_->mapped || !GTK_IS_WINDOW(root) ||
+      !address.starts_with("https://") || !gnosis_uri_is_loopback(address.c_str())) return;
+  auto* dialog = adw_alert_dialog_new(_("Use HTTP for Local Site?"),
+    _("This local server does not appear to support HTTPS. Open it without encryption?"));
+  state_->http_retry = ADW_DIALOG(g_object_ref_sink(dialog));
+  g_object_set_data_full(G_OBJECT(dialog), "http-address", g_strdup(("http://" + address.substr(8)).c_str()), g_free);
+  adw_alert_dialog_add_responses(ADW_ALERT_DIALOG(dialog), "cancel", _("_Cancel"), "http", _("Use _HTTP"), nullptr);
+  adw_alert_dialog_set_default_response(ADW_ALERT_DIALOG(dialog), "http");
+  adw_alert_dialog_set_close_response(ADW_ALERT_DIALOG(dialog), "cancel");
+  g_signal_connect(dialog, "response", G_CALLBACK(+[](AdwAlertDialog* dialog, const char* response, gpointer data) {
+    auto* page = static_cast<Page*>(data);
+    const std::string address = static_cast<const char*>(g_object_get_data(G_OBJECT(dialog), "http-address"));
+    page->state_->http_retry = nullptr;
+    if (!strcmp(response, "http") && !page->is_closed() && page->state_->mapped) page->navigate(address);
+    g_object_unref(dialog);
+  }), this);
+  adw_dialog_present(ADW_DIALOG(dialog), GTK_WIDGET(root));
+}
 void Page::navigate(const std::string& value) {
+  dismiss_http_retry();
   dismiss_passkey_provider();
   dismiss_authenticator(true);
   dismiss_context_menu();
@@ -1990,6 +2020,15 @@ void Page::handle(const std::string& method, JsonObject* params, bool frame_even
       state_->tls_errors = GTlsCertificateFlags(flags);
     }
     if (tls_changed) tls_changed();
+  } else if (method == "Network.requestWillBeSent" && state_->attached &&
+             std::string(text(params, "type")) == "Document" &&
+             std::string(text(params, "frameId")) == state_->main_frame) {
+    state_->document_request = text(params, "requestId");
+    state_->document_request_url = text(object(params, "request"), "url");
+  } else if (method == "Network.loadingFailed" && state_->attached &&
+             std::string(text(params, "requestId")) == state_->document_request &&
+             std::string(text(params, "errorText")) == "net::ERR_SSL_PROTOCOL_ERROR") {
+    offer_http_retry(state_->document_request_url);
   } else if (method == "Page.windowOpen") {
     const std::string value = text(params, "url");
     if ((value.starts_with("https://") || value.starts_with("http://")) &&
@@ -3330,6 +3369,7 @@ void Page::show_context_menu(JsonObject* hit, int context) {
   gtk_popover_popup(GTK_POPOVER(popover));
 }
 void Page::set_visible(bool visible) {
+  if (!visible) dismiss_http_retry();
   if (!visible) { dismiss_context_menu(); dismiss_script_dialog(true); dismiss_install_dialog(true); dismiss_authenticator(true); dismiss_passkey_provider(); }
   state_->mapped = visible;
   if (visible) update_portal_parent();
@@ -3384,6 +3424,7 @@ void Page::show_devtools() {
     });
 }
 void Page::close() {
+  dismiss_http_retry();
   dismiss_passkey_provider();
   stop_find();
   const bool approved_close = close_is_approved();
