@@ -1723,18 +1723,21 @@ void Page::offer_http_retry(const std::string& address) {
   auto* dialog = adw_alert_dialog_new(_("Use HTTP for Local Site?"),
     _("This local server does not appear to support HTTPS. Open it without encryption?"));
   state_->http_retry = ADW_DIALOG(g_object_ref_sink(dialog));
-  g_object_set_data_full(G_OBJECT(dialog), "http-address", g_strdup(("http://" + address.substr(8)).c_str()), g_free);
   adw_alert_dialog_add_responses(ADW_ALERT_DIALOG(dialog), "cancel", _("_Cancel"), "http", _("Use _HTTP"), nullptr);
   adw_alert_dialog_set_default_response(ADW_ALERT_DIALOG(dialog), "http");
   adw_alert_dialog_set_close_response(ADW_ALERT_DIALOG(dialog), "cancel");
-  g_signal_connect(dialog, "response", G_CALLBACK(+[](AdwAlertDialog* dialog, const char* response, gpointer data) {
-    auto* page = static_cast<Page*>(data);
-    const std::string address = static_cast<const char*>(g_object_get_data(G_OBJECT(dialog), "http-address"));
-    page->state_->http_retry = nullptr;
-    if (!strcmp(response, "http") && !page->is_closed() && page->state_->mapped) page->navigate(address);
-    g_object_unref(dialog);
-  }), this);
-  adw_dialog_present(ADW_DIALOG(dialog), GTK_WIDGET(root));
+  struct Retry { std::weak_ptr<Page> page; std::string address; guint64 generation; };
+  adw_alert_dialog_choose(ADW_ALERT_DIALOG(dialog), GTK_WIDGET(root), nullptr,
+    +[](GObject* source, GAsyncResult* result, gpointer data) {
+      std::unique_ptr<Retry> retry(static_cast<Retry*>(data));
+      const char* response = adw_alert_dialog_choose_finish(ADW_ALERT_DIALOG(source), result);
+      auto page = retry->page.lock();
+      if (!page || page->state_->http_retry != ADW_DIALOG(source)) return;
+      page->state_->http_retry = nullptr;
+      g_object_unref(source);
+      if (!strcmp(response, "http") && !page->is_closed() && page->state_->mapped &&
+          page->state_->navigation_generation == retry->generation) page->navigate(retry->address);
+    }, new Retry{weak_from_this(), "http://" + address.substr(8), state_->navigation_generation});
 }
 void Page::navigate(const std::string& value) {
   dismiss_http_retry();
