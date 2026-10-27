@@ -89,6 +89,8 @@ const vm = require('node:vm');
     api.resolvePasskey(prompt.id, 'keepassxc');
     assert.equal((await pending).gnosisProvider, 'keepassxc');
     assert.deepEqual(upstream, ['unlock', 'associate', 'register']);
+    sandbox.page.settings.passkeys = false;
+    assert.equal((await startPasskey()).gnosisProvider, 'device');
     privateTab = true;
     assert.equal((await startPasskey()).gnosisProvider, 'cancel');
     console.log('KEEPASSXC_SERVICE_PASS private isolation, website checks, sanitized labels, entry validation, top-frame fill, settings validation');

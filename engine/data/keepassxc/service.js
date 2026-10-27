@@ -121,8 +121,9 @@ for (const [action, method] of [['passkeys_register', 'passkeysRegister'], ['pas
         if (typeof globalThis.__gnosisPasskeyProvider !== 'function') return keepass[method](tab, args);
         const current = await browser.tabs.get(tab.id);
         if (current.incognito || !/^https?:\/\//.test(current.url || '') || args.length < 2 ||
-            !page.settings.passkeys || globalThis.gnosisPasskeyRequests.size >= 8)
+            globalThis.gnosisPasskeyRequests.size >= 8)
             return {gnosisProvider: 'cancel'};
+        if (!page.settings.passkeys) return {gnosisProvider: 'device'};
         const id = crypto.randomUUID();
         const timeout = Math.min(120000, Math.max(15000, Number(args[0]?.timeout) || 60000));
         const provider = await new Promise(resolve => {

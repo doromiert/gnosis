@@ -3,8 +3,9 @@
 void Page::dismiss_passkey_provider() {
   state_->passkey_provider_id.clear();
   if (!state_->passkey_provider) return;
-  g_cancellable_cancel(state_->passkey_provider);
-  g_clear_object(&state_->passkey_provider);
+  auto* cancel = std::exchange(state_->passkey_provider, nullptr);
+  g_cancellable_cancel(cancel);
+  g_object_unref(cancel);
 }
 void Page::show_passkey_provider(JsonObject* request) {
   dismiss_passkey_provider();
