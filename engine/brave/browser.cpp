@@ -492,7 +492,7 @@ public:
       // CustomScrollbar's class-local overlay patch also needs the native
       // overlay theme so visibility, hit testing and fade timers agree.
       std::string("--enable-features=FileSystemAccessAPI,BraveWebBluetoothAPI,AcceleratedVideoDecodeLinuxGL,AcceleratedVideoEncoder,OverlayScrollbar:mode/overlay") + (composited() ? ",WaylandExternalBeginFrameSource" : ""),
-      "--enable-blink-features=WebBluetooth",
+      "--enable-blink-features=WebBluetooth,MiddleClickAutoscroll",
       "--password-store=basic", "--window-size=1000,700", "--window-position=-16000,-16000"};
     if (!automation_mode) args.push_back("--disable-blink-features=AutomationControlled");
     // Consume the nested compositor's actual frame callbacks with upstream
