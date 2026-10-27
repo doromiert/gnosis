@@ -374,7 +374,7 @@ create_desktop_file (const char  *id,
   }
 
   file = g_key_file_new ();
-  exec_string_raw = g_strdup_printf ("epiphany --application-mode \"--profile=%s\" %s",
+  exec_string_raw = g_strdup_printf ("\"" GNOSIS_EXECUTABLE "\" --application-mode \"--profile=%s\" %s",
                                      profile_dir,
                                      address);
   exec_string = escape_exec_string (exec_string_raw);

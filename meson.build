@@ -40,6 +40,7 @@ endif
 
 conf = configuration_data()
 conf.set_quoted('APPLICATION_ID', application_id)
+conf.set_quoted('GNOSIS_EXECUTABLE', join_paths(prefix, get_option('bindir'), 'gnosis'))
 conf.set_quoted('BUILD_ROOT', meson.project_build_root())
 developer_mode = get_option('developer_mode')
 conf.set10('DEVELOPER_MODE', developer_mode)

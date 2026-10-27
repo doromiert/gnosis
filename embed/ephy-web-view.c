@@ -2721,13 +2721,24 @@ get_best_web_app_icon_cb (EphyEngineView *view,
 
     data = g_new0 (GetBestWebAppIconAsyncData, 1);
     data->icon_uri = icon ? ephy_json_object_dup_string (icon, "url") : NULL;
-    data->icon_color = icon ? ephy_json_object_dup_string (icon, "icon") : NULL;
+    data->icon_color = icon ? ephy_json_object_dup_string (icon, "color") : NULL;
 
     g_task_return_pointer (task, data, (GDestroyNotify)get_best_web_app_icon_async_data_free);
   } else
     g_task_return_error (task, error);
 
   g_object_unref (task);
+}
+
+static char *
+web_app_metadata_script (const char *method)
+{
+  g_autoptr (GBytes) source = g_resources_lookup_data ("/com/neg_zero/Gnosis/web-app-metadata.js",
+                                                     G_RESOURCE_LOOKUP_FLAGS_NONE, NULL);
+  gsize length;
+  const char *code = g_bytes_get_data (source, &length);
+
+  return g_strdup_printf ("(%.*s).%s()", (int)length, code, method);
 }
 
 void
@@ -2739,15 +2750,13 @@ ephy_web_view_get_best_web_app_icon (EphyWebView         *view,
   EphyEngineView *wk_view;
   GTask *task;
   char *script;
-  g_autofree char *encoded_url = NULL;
 
   g_assert (EPHY_IS_WEB_VIEW (view));
   wk_view = EPHY_ENGINE_VIEW (view);
 
   task = g_task_new (view, cancellable, callback, user_data);
   g_task_set_source_tag (task, ephy_web_view_get_best_web_app_icon);
-  encoded_url = ephy_encode_for_js_quoted_data_value (ephy_engine_web_view_get_uri (wk_view));
-  script = g_strdup_printf ("Ephy.getWebAppIcon(\"%s\");", encoded_url);
+  script = web_app_metadata_script ("getWebAppIcon");
   ephy_engine_web_view_evaluate_javascript (wk_view,
                                        script, -1,
                                        ephy_embed_shell_get_guid (ephy_embed_shell_get_default ()),
@@ -2812,13 +2821,14 @@ ephy_web_view_get_web_app_title (EphyWebView         *view,
                                  gpointer             user_data)
 {
   GTask *task;
+  g_autofree char *script = web_app_metadata_script ("getWebAppTitle");
 
   g_assert (EPHY_IS_WEB_VIEW (view));
 
   task = g_task_new (view, cancellable, callback, user_data);
   g_task_set_source_tag (task, ephy_web_view_get_web_app_title);
   ephy_engine_web_view_evaluate_javascript (EPHY_ENGINE_VIEW (view),
-                                       "Ephy.getWebAppTitle();", -1,
+                                       script, -1,
                                        ephy_embed_shell_get_guid (ephy_embed_shell_get_default ()),
                                        NULL,
                                        cancellable,
@@ -2862,13 +2872,14 @@ ephy_web_view_get_web_app_mobile_capable (EphyWebView         *view,
                                           gpointer             user_data)
 {
   GTask *task;
+  g_autofree char *script = web_app_metadata_script ("getAppleMobileWebAppCapable");
 
   g_assert (EPHY_IS_WEB_VIEW (view));
 
   task = g_task_new (view, cancellable, callback, user_data);
   g_task_set_source_tag (task, ephy_web_view_get_web_app_mobile_capable);
   ephy_engine_web_view_evaluate_javascript (EPHY_ENGINE_VIEW (view),
-                                       "Ephy.getAppleMobileWebAppCapable();", -1,
+                                       script, -1,
                                        ephy_embed_shell_get_guid (ephy_embed_shell_get_default ()),
                                        NULL,
                                        cancellable,
@@ -3699,13 +3710,14 @@ ephy_web_view_get_web_app_manifest_url (EphyWebView         *view,
                                         gpointer             user_data)
 {
   GTask *task;
+  g_autofree char *script = web_app_metadata_script ("getWebAppManifestURL");
 
   g_assert (EPHY_IS_WEB_VIEW (view));
 
   task = g_task_new (view, cancellable, callback, user_data);
   g_task_set_source_tag (task, ephy_web_view_get_web_app_manifest_url);
   ephy_engine_web_view_evaluate_javascript (EPHY_ENGINE_VIEW (view),
-                                       "Ephy.getWebAppManifestURL();",
+                                       script,
                                        -1,
                                        ephy_embed_shell_get_guid (ephy_embed_shell_get_default ()),
                                        NULL,

@@ -1568,8 +1568,8 @@ window_cmd_open (GSimpleAction *action,
 
 typedef struct {
   EphyWebView *view;
-  const char *display_address;
-  const char *url;
+  char *display_address;
+  char *url;
   char *manifest_url;
   char *icon_href;
   char *title;
@@ -1652,6 +1652,8 @@ ephy_application_dialog_data_free (EphyApplicationDialogData *data)
   if (data->icon_v)
     g_variant_unref (data->icon_v);
   g_free (data->manifest_url);
+  g_free (data->display_address);
+  g_free (data->url);
   g_free (data->icon_href);
   g_free (data->title);
   g_free (data->chosen_name);
@@ -2346,8 +2348,8 @@ window_cmd_save_as_application (GSimpleAction *action,
   data = g_new0 (EphyApplicationDialogData, 1);
   data->window = g_object_ref (window);
   data->view = EPHY_WEB_VIEW (EPHY_GET_WEBKIT_WEB_VIEW_FROM_EMBED (embed));
-  data->display_address = ephy_web_view_get_display_address (data->view);
-  data->url = ephy_engine_web_view_get_uri (EPHY_ENGINE_VIEW (data->view));
+  data->display_address = g_strdup (ephy_web_view_get_display_address (data->view));
+  data->url = g_strdup (ephy_engine_web_view_get_uri (EPHY_ENGINE_VIEW (data->view)));
   data->cancellable = g_cancellable_new ();
 
   ephy_web_view_get_web_app_manifest_url (data->view, data->cancellable, got_manifest_url_cb, data);
