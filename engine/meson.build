@@ -67,6 +67,11 @@ if get_option('unit_tests').enabled()
     include_directories: include_directories('brave'),
     dependencies: [dependency('glib-2.0'), dependency('wayland-server')])
   test('Nested Wayland idle dispatch', wayland_source_test)
+  foreach name : ['web-app-config', 'loopback']
+    check = executable(name + '-test', 'tests/' + name + '-test.c',
+      include_directories: include_directories('.'), dependencies: dependency('gio-2.0'))
+    test(name, check)
+  endforeach
 endif
 engine = static_library('gnosis-engine',
   ['brave/browser.cpp', 'brave/debug-adapters.cpp', 'ephy-engine-download.cpp', 'ephy-engine-authentication.cpp', 'ephy-engine-client-certificate.cpp', 'ephy-engine-extensions.cpp', 'ephy-engine-permission.cpp', 'ephy-engine-session.cpp', 'ephy-engine-response.cpp', 'ephy-engine-settings.cpp', 'ephy-engine-origin.cpp', 'ephy-engine-certificate.cpp', 'ephy-engine-favicon.c', 'ephy-engine-view.cpp', 'ephy-engine-scheme.cpp', 'ephy-engine-print.cpp', 'select/application.cpp', 'select/browser.cpp', 'select/file-dialog.cpp', 'select/page-messages.cpp', 'select/webstore-guard.cpp', 'select/clipboard.cpp',

@@ -7,6 +7,8 @@
 #include "private-profile.hpp"
 #include "bundled-extension.hpp"
 #include "../loopback.h"
+#include "../web-app-config.h"
+#include "../select/extensions.hpp"
 #include <gdk/x11/gdkx.h>
 #include <gdk/wayland/gdkwayland.h>
 #include <glib-unix.h>
@@ -252,7 +254,9 @@ public:
   struct ParkedPage { std::string target, session; ::Window child; GtkWidget* surface = nullptr; };
   std::vector<ParkedPage> parked;
   std::map<std::string, gint64> routed_windows;
+#include "web-app-extensions.inc"
   explicit Process(bool ephemeral, const std::string& reuse_profile = "") : private_profile(ephemeral) {
+    read_webapp_extensions();
     configure_debug_adapters(native_preferences);
     debug_startup_pending = adapter_overridden("keepassxc") || adapter_overridden("ublock");
     if (composited()) {
@@ -273,7 +277,7 @@ public:
     if (!gnosis_brave_profile_prepare(profile.c_str(), &profile_error)) {
       g_warning("Brave profile preparation: %s", profile_error->message); g_error_free(profile_error); return;
     }
-    if (!ephemeral && adapter_enabled("keepassxc") && *GNOSIS_KEEPASSXC_DIR) {
+    if (!ephemeral && webapp_keepassxc && adapter_enabled("keepassxc") && *GNOSIS_KEEPASSXC_DIR) {
       if (!gnosis_brave_profile_prepare_keepassxc(profile.c_str(), &profile_error)) {
         g_warning("KeePassXC integration: %s", profile_error->message); g_clear_error(&profile_error);
       }
@@ -631,11 +635,15 @@ public:
         }
         auto* value = object(result, "result");
         if (value && json_object_get_boolean_member_with_default(value, "value", false)) {
-          apply_debug_extensions([weak = weak_from_this()] {
-            auto self = weak.lock(); if (!self || self->closing) return;
-            self->integration_ready = true;
-            self->apply_preferences();
-            for (auto& [token, weak] : self->pages) if (auto page = weak.lock()) page->surface_ready();
+          apply_webapp_extensions([weak = weak_from_this()] {
+            auto owner = weak.lock(); if (!owner || owner->closing) return;
+            owner->apply_debug_extensions([weak] {
+              auto self = weak.lock(); if (!self || self->closing) return;
+              self->integration_ready = true;
+              self->apply_preferences();
+              if (self->extensions_ready) self->load_keepassxc();
+              for (auto& [token, weak] : self->pages) if (auto page = weak.lock()) page->surface_ready();
+            });
           });
           g_message("Brave download UI disabled: GTK owns download feedback");
           if (!private_profile) {
@@ -660,8 +668,8 @@ public:
     std::string expression = "(async()=>{";
     if (!adapter_enabled("downloads")) expression += "await chrome.downloads.setUiOptions({enabled:true});";
     if (keepass_override) expression += "const item=(await chrome.management.getAll()).find(x=>x.id==='giohadoodmdcadnkcpdmhmmdnaidnckm');if(item&&item.enabled!==" +
-      (adapter_enabled("keepassxc") ? std::string("true") : std::string("false")) + ")await chrome.management.setEnabled(item.id," +
-      (adapter_enabled("keepassxc") ? "true" : "false") + ");";
+      (adapter_enabled("keepassxc") && webapp_keepassxc ? std::string("true") : std::string("false")) + ")await chrome.management.setEnabled(item.id," +
+      (adapter_enabled("keepassxc") && webapp_keepassxc ? "true" : "false") + ");";
     expression += "return true})()";
     command("Runtime.evaluate", "{\"expression\":" + quote(expression) + ",\"awaitPromise\":true,\"returnByValue\":true}", integration_session,
       [done = std::move(done)](JsonObject* result, const std::string& error) {
@@ -719,7 +727,7 @@ public:
     if (!g_file_get_contents(path, &source, &size, nullptr) || size > 64 * 1024) { preferences_done(); return; }
     auto parser = json_parser_new(); json_parser_load_from_data(parser, native_preferences.c_str(), -1, nullptr);
     auto* prefs = json_parser_get_root(parser);
-    bool blocking = adapter_enabled("ublock") && prefs && JSON_NODE_HOLDS_OBJECT(prefs) && json_object_get_boolean_member_with_default(json_node_get_object(prefs), "adblock", true);
+    bool blocking = webapp_ublock && adapter_enabled("ublock") && prefs && JSON_NODE_HOLDS_OBJECT(prefs) && json_object_get_boolean_member_with_default(json_node_get_object(prefs), "adblock", true);
     g_object_unref(parser);
     const auto expression = std::string(source, size) + (adapter_enabled("browser-preferences") ? ";gnosisBrowserSettings.apply(" + native_preferences + ")" : ";Promise.resolve()") + ".then(()=>gnosisBrowserSettings.adblock(" + (blocking ? "true" : "false") + ")).then(()=>chrome.management.getAll())";
     command("Runtime.evaluate", "{\"expression\":" + quote(expression) + ",\"awaitPromise\":true,\"returnByValue\":true}", integration_session,
@@ -745,7 +753,7 @@ public:
           extensions_ready = true;
           g_message("Brave native extension manager ready");
           if (extensions_changed) extensions_changed();
-          load_keepassxc();
+          if (integration_ready) load_keepassxc();
           return;
         }
         if (g_get_monotonic_time() >= extensions_deadline) {
@@ -760,7 +768,7 @@ public:
       });
   }
   void load_keepassxc() {
-    if (private_profile || !adapter_enabled("keepassxc") || !*GNOSIS_KEEPASSXC_DIR) return;
+    if (private_profile || !webapp_keepassxc || !adapter_enabled("keepassxc") || !*GNOSIS_KEEPASSXC_DIR) return;
     extension_operation("inventory", "", [this](JsonObject* result, const std::string& error) {
       if (closing || !error.empty()) return;
       auto* value = object(result, "result");
