@@ -130,9 +130,9 @@ static void publish_native_preferences(EphyEngineSettings* settings) {
   }
   g_autoptr(JsonNode) node = json_node_new(JSON_NODE_OBJECT); json_node_set_object(node, root);
   g_autofree char* json = json_to_string(node, false);
-  JupiterBrave::update_preferences(json);
+  GnosisBrave::update_preferences(json);
 }
-gboolean ephy_engine_debug_adapter_enabled(const char *id) { return JupiterBrave::adapter_enabled(id); }
+gboolean ephy_engine_debug_adapter_enabled(const char *id) { return GnosisBrave::adapter_enabled(id); }
 static void ephy_engine_settings_init(EphyEngineSettings *settings) {
   for (guint i = 1; i < N_PROPERTIES; ++i) {
     g_value_init(&settings->values[i], G_PARAM_SPEC_VALUE_TYPE(properties[i]));
@@ -191,11 +191,11 @@ void ephy_engine_settings_apply_context(CefRefPtr<CefRequestContext> context) {
 }
 
 static const EphyEngineFeature features[] = {
-  {"webgl", "WebGL", "Graphics", "Hardware accelerated 3D graphics. Changes take effect after restarting Jupiter.", true, nullptr, "disable-webgl", nullptr},
-  {"webgpu", "WebGPU", "Graphics", "GPU rendering and compute. Changes take effect after restarting Jupiter.", true, nullptr, nullptr, "WebGPUService"},
-  {"back-forward-cache", "Back/forward cache", "Navigation", "Keep pages in memory for faster history navigation. Changes take effect after restarting Jupiter.", true, nullptr, nullptr, "BackForwardCache"},
-  {"smooth-scrolling", "Smooth scrolling", "Navigation", "Animate page scrolling. Changes take effect after restarting Jupiter.", true, "enable-smooth-scrolling", "disable-smooth-scrolling", nullptr},
-  {"experimental-web-platform", "Experimental web platform features", "Web Platform", "Enable experimental Chromium web APIs. Changes take effect after restarting Jupiter.", false, "enable-experimental-web-platform-features", nullptr, nullptr},
+  {"webgl", "WebGL", "Graphics", "Hardware accelerated 3D graphics. Changes take effect after restarting Gnosis.", true, nullptr, "disable-webgl", nullptr},
+  {"webgpu", "WebGPU", "Graphics", "GPU rendering and compute. Changes take effect after restarting Gnosis.", true, nullptr, nullptr, "WebGPUService"},
+  {"back-forward-cache", "Back/forward cache", "Navigation", "Keep pages in memory for faster history navigation. Changes take effect after restarting Gnosis.", true, nullptr, nullptr, "BackForwardCache"},
+  {"smooth-scrolling", "Smooth scrolling", "Navigation", "Animate page scrolling. Changes take effect after restarting Gnosis.", true, "enable-smooth-scrolling", "disable-smooth-scrolling", nullptr},
+  {"experimental-web-platform", "Experimental web platform features", "Web Platform", "Enable experimental Chromium web APIs. Changes take effect after restarting Gnosis.", false, "enable-experimental-web-platform-features", nullptr, nullptr},
 };
 const EphyEngineFeature *ephy_engine_settings_get_features(gsize *length) { *length = G_N_ELEMENTS(features); return features; }
 gboolean ephy_engine_settings_get_feature_enabled(EphyEngineSettings *settings, const EphyEngineFeature *feature) {

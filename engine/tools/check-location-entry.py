@@ -17,8 +17,8 @@ parser.add_argument('--schemas', type=Path, required=True)
 parser.add_argument('--clean-app-environment', action='store_true')
 parser.add_argument('--expected-gtk', type=Path, help='Assert the actual browser loads this GTK library')
 args = parser.parse_args()
-base = os.environ['JUPITER_TEST_URL']
-artifacts = Path(tempfile.mkdtemp(prefix='jupiter-location-entry-'))
+base = os.environ['GNOSIS_TEST_URL']
+artifacts = Path(tempfile.mkdtemp(prefix='gnosis-location-entry-'))
 print('Location entry artifacts:', artifacts, flush=True)
 env = dict(os.environ, GSETTINGS_BACKEND='keyfile', GSETTINGS_SCHEMA_DIR=str(args.schemas.resolve()),
            XDG_CONFIG_HOME=str(artifacts/'config'), XDG_CACHE_HOME=str(artifacts/'cache'),
@@ -56,7 +56,7 @@ def wait(predicate, description):
     deadline = time.monotonic()+20
     while time.monotonic() < deadline:
         if browser and browser.poll() is not None:
-            raise RuntimeError('Jupiter exited while waiting for '+description)
+            raise RuntimeError('Gnosis exited while waiting for '+description)
         if predicate():
             return
         time.sleep(.05)
@@ -108,15 +108,15 @@ def copy_entry():
 
 try:
     gtk.gtk_init()
-    run('gsettings', 'set', 'io.github.doromiert.Jupiter', 'ask-for-default', 'false')
-    run('gsettings', 'set', 'io.github.doromiert.Jupiter', 'restore-session-policy', "'crashed'")
+    run('gsettings', 'set', 'com.neg-zero.Gnosis', 'ask-for-default', 'false')
+    run('gsettings', 'set', 'com.neg-zero.Gnosis', 'restore-session-policy', "'crashed'")
     with (artifacts/'browser.log').open('w') as log:
         browser = subprocess.Popen([str(args.binary.resolve()), '--profile='+str(artifacts/'profile'),
                                     address('initial-long-history-entry')], env=app_env, stdout=log, stderr=subprocess.STDOUT)
         wait(lambda: report('initial-long-history-entry'), 'initial real fixture')
         window = run('xdotool', 'search', '--onlyvisible', '--pid', browser.pid).splitlines()[-1]
         run('xdotool', 'windowfocus', '--sync', window)
-        wait(lambda: 'Jupiter OpenURI initial-long-history-entry' in run('xdotool', 'getwindowname', window),
+        wait(lambda: 'Gnosis OpenURI initial-long-history-entry' in run('xdotool', 'getwindowname', window),
              'initial committed page title')
         gtk_libraries = sorted({line.split()[-1] for line in Path('/proc/'+str(browser.pid)+'/maps').read_text().splitlines()
                                 if '/libgtk-4.so' in line})
@@ -161,7 +161,7 @@ try:
         results[-1]['pageURL'] = report(case)['pageURL']
         assert results[-1]['pageURL'] == expected, 'Completed URL changed in navigation'
         key('ctrl+q')
-        assert browser.wait(timeout=15) == 0, 'Jupiter did not quit normally'
+        assert browser.wait(timeout=15) == 0, 'Gnosis did not quit normally'
     print('LOCATION_ENTRY:PASS (exact GTK text/committed URLs, changing history/query lengths, raw-URL inline completion)', flush=True)
 finally:
     (artifacts/'results.json').write_text(json.dumps(results, indent=2)+'\n')

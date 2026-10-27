@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Installed only in Jupiter's own privileged worker through the private pipe.
-globalThis.jupiterBrowserSettings = Object.freeze({
+// Installed only in Gnosis's own privileged worker through the private pipe.
+globalThis.gnosisBrowserSettings = Object.freeze({
     async apply(settings) {
         const genericFonts = new Set(['serif', 'sans-serif', 'monospace', 'sans']);
         for (const [genericFamily, font] of Object.entries(settings.fonts || {})) {

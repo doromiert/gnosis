@@ -25,12 +25,12 @@ if not args.schemas:
     parser.error('Provide --schemas or GSETTINGS_SCHEMA_DIR for the actual app')
 if not args.inspect_prompt and (not args.switch_offset or not args.open_offset):
     parser.error('Inspect the prompt first, then provide --switch-offset and --open-offset')
-scratch = Path(os.environ['JUPITER_TEST_SCRATCH'])
-artifacts = Path(tempfile.mkdtemp(prefix='jupiter-open-uri-ui-', dir='/tmp'))
+scratch = Path(os.environ['GNOSIS_TEST_SCRATCH'])
+artifacts = Path(tempfile.mkdtemp(prefix='gnosis-open-uri-ui-', dir='/tmp'))
 print('OpenURI artifacts:', artifacts, flush=True)
 env = dict(os.environ, GSETTINGS_BACKEND='keyfile', GSETTINGS_SCHEMA_DIR=str(args.schemas.resolve()), LC_ALL='C.UTF-8')
-base = os.environ['JUPITER_TEST_URL']
-web_schema = 'io.github.doromiert.Jupiter.web:/io/github/doromiert/jupiter/web/'
+base = os.environ['GNOSIS_TEST_URL']
+web_schema = 'com.neg-zero.Gnosis.web:/com/neg_zero/gnosis/web/'
 processes, logs = [], []
 browser = None
 window = None
@@ -144,14 +144,14 @@ def launch(private=False):
         command.append('--incognito-mode')
     browser = subprocess.Popen(command + [address('private-start' if private else 'start', mode='inert')], env=env, stdout=log, stderr=subprocess.STDOUT)
     processes.append(browser)
-    wait(lambda: windows(), 'actual Jupiter window')
+    wait(lambda: windows(), 'actual Gnosis window')
     window = sorted(windows())[-1]
     xdo('windowfocus', '--sync', window)
     wait(lambda: report('private-start' if private else 'start'), 'initial actual page')
 
 def quit_browser():
     xdo('windowfocus', '--sync', window); key('ctrl+q')
-    assert browser.wait(timeout=10) == 0, 'Jupiter failed normal quit'
+    assert browser.wait(timeout=10) == 0, 'Gnosis failed normal quit'
 
 def desktop_close(w):
     # A real window manager sends WM_DELETE_WINDOW; XDestroyWindow is not equivalent.
@@ -186,9 +186,9 @@ try:
     handler = artifacts / 'record-handler.py'
     handler.write_text('#!/run/current-system/sw/bin/python3\nimport json,sys\nwith open(' + repr(str(artifacts/'handler.jsonl')) + ", 'a') as log: log.write(json.dumps(sys.argv[1:],ensure_ascii=False)+'\\n')\n")
     handler.chmod(0o755)
-    (applications / 'jupiter-uri-test.desktop').write_text('[Desktop Entry]\nType=Application\nName=Jupiter Disposable URI Test\nExec=' + str(handler) + ' %u\nTerminal=false\nMimeType=x-scheme-handler/jupiter-test;\n')
-    run('gio', 'mime', 'x-scheme-handler/jupiter-test', 'jupiter-uri-test.desktop')
-    assert 'jupiter-uri-test.desktop' in run('gio', 'mime', 'x-scheme-handler/jupiter-test')
+    (applications / 'gnosis-uri-test.desktop').write_text('[Desktop Entry]\nType=Application\nName=Gnosis Disposable URI Test\nExec=' + str(handler) + ' %u\nTerminal=false\nMimeType=x-scheme-handler/gnosis-test;\n')
+    run('gio', 'mime', 'x-scheme-handler/gnosis-test', 'gnosis-uri-test.desktop')
+    assert 'gnosis-uri-test.desktop' in run('gio', 'mime', 'x-scheme-handler/gnosis-test')
     for name in ('org.freedesktop.impl.portal.desktop.gtk', 'org.freedesktop.portal.Desktop'):
         entry = Path('/run/current-system/sw/share/dbus-1/services') / (name + '.service')
         command = next(line[5:] for line in entry.read_text().splitlines() if line.startswith('Exec='))
@@ -202,8 +202,8 @@ try:
     wait(portal_ready, 'real OpenURI portal interface')
     monitor = (artifacts / 'portal-bus.log').open('w'); logs.append(monitor)
     processes.append(subprocess.Popen(['dbus-monitor', '--session', "interface='org.freedesktop.portal.OpenURI'", "interface='org.freedesktop.portal.Request'"], env=env, stdout=monitor, stderr=subprocess.STDOUT))
-    run('gsettings', 'set', 'io.github.doromiert.Jupiter', 'ask-for-default', 'false')
-    run('gsettings', 'set', 'io.github.doromiert.Jupiter', 'restore-session-policy', "'crashed'")
+    run('gsettings', 'set', 'com.neg-zero.Gnosis', 'ask-for-default', 'false')
+    run('gsettings', 'set', 'com.neg-zero.Gnosis', 'restore-session-policy', "'crashed'")
     assert grants() == '@a(ss) []' or grants() == '[]', grants()
     launch(); navigate('cancel'); prompt('cancel')
     if args.inspect_prompt:
@@ -223,7 +223,7 @@ try:
         navigate('once'); prompt('once'); key('alt+o'); launched('once', window, 1)
         assert grants() in ('[]', '@a(ss) []')
         navigate('remember'); prompt('remember'); click(window, args.switch_offset); key('alt+o'); launched('remember', window, 2)
-        wait(lambda: 'jupiter-test' in grants(), 'grant persisted only after portal success'); saved = grants()
+        wait(lambda: 'gnosis-test' in grants(), 'grant persisted only after portal success'); saved = grants()
         navigate('reuse'); click(window); launched('reuse', window, 3)
         navigate('direct', target='direct'); prompt('direct'); unchanged(3); key('alt+o'); launched('direct', window, 4)
         assert grants() == saved
@@ -244,7 +244,7 @@ try:
         assert grants() == saved
         navigate('stale-close', cross=True); prompt('stale-close'); desktop_close(window)
         try:
-            assert browser.wait(timeout=5) == 0, 'Jupiter failed desktop close'
+            assert browser.wait(timeout=5) == 0, 'Gnosis failed desktop close'
             close_proof = 'pending consent closed by actual WM_DELETE_WINDOW'
         except subprocess.TimeoutExpired:
             screenshot('desktop-close-pending')

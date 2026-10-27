@@ -13,7 +13,7 @@ parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('binary', type=Path)
 parser.add_argument('--schemas', type=Path, help='Compiled schemas for an uninstalled build')
 args = parser.parse_args()
-root = Path(tempfile.mkdtemp(prefix='jupiter-download-ui-', dir='/tmp'))
+root = Path(tempfile.mkdtemp(prefix='gnosis-download-ui-', dir='/tmp'))
 config = root / 'config'
 config.mkdir()
 downloads = root / 'Downloads'
@@ -28,13 +28,13 @@ def no_memory_cores():
     Path('/proc/self/coredump_filter').write_text('0')
 log = (root / 'app.log').open('w')
 process = subprocess.Popen([str(args.binary.resolve()), '--profile=' + str(root / 'profile'),
-                            os.environ['JUPITER_TEST_URL'] + 'download-slow', os.environ['JUPITER_TEST_URL'] + 'download'], env=env, stdout=log,
+                            os.environ['GNOSIS_TEST_URL'] + 'download-slow', os.environ['GNOSIS_TEST_URL'] + 'download'], env=env, stdout=log,
                             stderr=subprocess.STDOUT, preexec_fn=no_memory_cores, start_new_session=True)
 try:
     deadline = time.monotonic() + 30
     while len(list(downloads.glob('*.bin'))) < 2:
         if process.poll() is not None:
-            raise RuntimeError('Jupiter exited before downloading: ' + (root / 'app.log').read_text())
+            raise RuntimeError('Gnosis exited before downloading: ' + (root / 'app.log').read_text())
         if time.monotonic() >= deadline:
             raise TimeoutError('Download did not reach Epiphany manager: ' + (root / 'app.log').read_text())
         time.sleep(.1)

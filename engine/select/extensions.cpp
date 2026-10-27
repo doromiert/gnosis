@@ -232,14 +232,14 @@ Extensions::Extensions(std::string data) : directory_(data + "/extensions") {
       g_warning("Extension %s: %s", path.c_str(), error.what());
     }
   };
-  const char* ubo = g_getenv("JUPITER_UBLOCK_DIR");
-  add(ubo ? ubo : JUPITER_UBLOCK_DIR, true);
+  const char* ubo = g_getenv("GNOSIS_UBLOCK_DIR");
+  add(ubo ? ubo : GNOSIS_UBLOCK_DIR, true);
   for (const auto& p : fs::directory_iterator(directory_ + "/installed"))
     if (!p.path().filename().string().starts_with('.') && p.is_directory() && !p.is_symlink())
       add(p.path().string(), false);
 }
 std::string Extensions::load_paths() const {
-  std::string paths = std::string(JUPITER_BRIDGE_DIR) + "," + JUPITER_MANAGER_DIR;
+  std::string paths = std::string(GNOSIS_BRIDGE_DIR) + "," + GNOSIS_MANAGER_DIR;
   for (const auto& e : installed)
     if (e.enabled)
       paths += "," + e.path;

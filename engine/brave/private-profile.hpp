@@ -13,7 +13,7 @@
 #include <string>
 #include <utility>
 
-namespace JupiterBrave {
+namespace GnosisBrave {
 class PrivateProfile {
   std::string path_, name_;
   int parent_ = -1;
@@ -55,7 +55,7 @@ class PrivateProfile {
 public:
   static std::shared_ptr<PrivateProfile> create() {
     g_autoptr(GError) error = nullptr;
-    g_autofree char* path = g_dir_make_tmp("jupiter-brave-private-XXXXXX",&error);
+    g_autofree char* path = g_dir_make_tmp("gnosis-brave-private-XXXXXX",&error);
     if (!path) { g_warning("Cannot create private browsing profile: %s",error->message); return {}; }
     auto result = std::shared_ptr<PrivateProfile>(new PrivateProfile(path));
     if (result->parent_ < 0 || !result->inode_) { g_warning("Cannot identify the owned private browsing profile"); return {}; }

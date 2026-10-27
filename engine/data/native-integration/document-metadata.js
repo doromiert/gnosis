@@ -2,7 +2,7 @@
 // Top-frame metadata and trusted interaction invalidation. Installed in its own isolated world; pages
 // cannot call the private binding or replace this world's DOM prototypes.
 (() => {
-    const send = globalThis.__jupiterDocumentMetadata;
+    const send = globalThis.__gnosisDocumentMetadata;
     if (typeof send !== 'function') return;
     for (const type of ['pointerdown', 'keydown', 'input'])
         addEventListener(type, event => {

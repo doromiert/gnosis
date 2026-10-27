@@ -95,11 +95,11 @@ static GtkWindow *exercise_popup(GtkApplication *app, EphyEngineSession *session
   wait_for([&] { return loaded; });
   g_signal_handler_disconnect(view, load_handler);
 
-  const auto initial_storage = evaluate(view, "localStorage.getItem('jupiterPopupBoundary')");
+  const auto initial_storage = evaluate(view, "localStorage.getItem('gnosisPopupBoundary')");
   if (ephemeral) g_assert_true(initial_storage == "null");
   g_assert_true(evaluate(view, ephemeral
-    ? "localStorage.setItem('jupiterPopupBoundary','private');true"
-    : "localStorage.setItem('jupiterPopupBoundary','regular');true") == "true");
+    ? "localStorage.setItem('gnosisPopupBoundary','private');true"
+    : "localStorage.setItem('gnosisPopupBoundary','regular');true") == "true");
   Popup popup{app};
   const auto create_handler = g_signal_connect(view, "create-popup", G_CALLBACK(create_popup), &popup);
   unsigned main_bounds = 0;
@@ -149,7 +149,7 @@ static GtkWindow *exercise_popup(GtkApplication *app, EphyEngineSession *session
   wait_for([&] {
     return evaluate(popup.view, "document.body.textContent==='written through original opener' && retainedValue==='retained child global' && opener.popupOwner==='native opener'") == "true";
   });
-  g_assert_true(evaluate(popup.view, "localStorage.getItem('jupiterPopupBoundary')") == (ephemeral ? "private" : "regular"));
+  g_assert_true(evaluate(popup.view, "localStorage.getItem('gnosisPopupBoundary')") == (ephemeral ? "private" : "regular"));
   EphyEngineSession *child_session = nullptr;
   g_object_get(popup.view, "network-session", &child_session, nullptr);
   g_assert_true(child_session == session);
@@ -190,22 +190,22 @@ int main(int argc, char **argv) {
   if (!cef_api_hash(CEF_API_VERSION, 0)) return 1;
   const int child = ephy_engine_execute_process(argc, argv);
   if (child >= 0) return child;
-  auto *app = adw_application_new("io.github.doromiert.Jupiter.PopupTest", G_APPLICATION_NON_UNIQUE);
+  auto *app = adw_application_new("com.neg-zero.Gnosis.PopupTest", G_APPLICATION_NON_UNIQUE);
   GError *error = nullptr;
   g_assert_true(g_application_register(G_APPLICATION(app), nullptr, &error));
   g_assert_no_error(error);
-  char profile[] = "/tmp/jupiter-native-popup-XXXXXX";
+  char profile[] = "/tmp/gnosis-native-popup-XXXXXX";
   g_assert_nonnull(mkdtemp(profile));
   g_assert_true(ephy_engine_initialize(argc, argv, profile, true));
   disable_diagnostic_core_dumps();
-  const char *url = g_getenv("JUPITER_TEST_URL");
+  const char *url = g_getenv("GNOSIS_TEST_URL");
   g_assert_nonnull(url);
   auto *regular = ephy_engine_session_get_default();
   auto *normal_window = exercise_popup(GTK_APPLICATION(app), regular, url, nullptr);
   auto *private_session = ephy_engine_session_new(true);
   auto *private_window = exercise_popup(GTK_APPLICATION(app), private_session, url, ephy_engine_session_context(regular));
   auto *normal_view = EPHY_ENGINE_VIEW(adw_application_window_get_content(ADW_APPLICATION_WINDOW(normal_window)));
-  g_assert_true(evaluate(normal_view, "localStorage.getItem('jupiterPopupBoundary')") == "regular");
+  g_assert_true(evaluate(normal_view, "localStorage.getItem('gnosisPopupBoundary')") == "regular");
   gtk_window_destroy(private_window);
   gtk_window_destroy(normal_window);
   wait_for([] { return Browser::active_count == 0; });

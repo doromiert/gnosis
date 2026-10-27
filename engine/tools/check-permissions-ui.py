@@ -14,13 +14,13 @@ parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('binary', type=Path)
 parser.add_argument('--schemas', type=Path, required=True)
 args = parser.parse_args()
-root = Path(tempfile.mkdtemp(prefix='jupiter-permissions-ui-', dir='/tmp'))
+root = Path(tempfile.mkdtemp(prefix='gnosis-permissions-ui-', dir='/tmp'))
 env = dict(os.environ, XDG_CONFIG_HOME=str(root/'config'), XDG_DATA_HOME=str(root/'data'),
            XDG_CACHE_HOME=str(root/'cache'), GSETTINGS_BACKEND='keyfile',
            GSETTINGS_SCHEMA_DIR=str(args.schemas.resolve()))
 for setting, value in [('ask-for-default', 'false'), ('restore-session-policy', "'crashed'")]:
-    subprocess.run(['gsettings', 'set', 'io.github.doromiert.Jupiter', setting, value], env=env, check=True)
-base = os.environ['JUPITER_TEST_URL']
+    subprocess.run(['gsettings', 'set', 'com.neg-zero.Gnosis', setting, value], env=env, check=True)
+base = os.environ['GNOSIS_TEST_URL']
 host = base.split('/')[2]
 log = (root/'app.log').open('w')
 process = None

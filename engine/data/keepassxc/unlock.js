@@ -7,7 +7,7 @@
     let lastPrompt = 0;
     const rescanned = new WeakSet();
     document.addEventListener('focusin', async event => {
-        if (kpxc.settings?.jupiterAutoUnlock === false || !event.isTrusted || !navigator.userActivation.isActive ||
+        if (kpxc.settings?.gnosisAutoUnlock === false || !event.isTrusted || !navigator.userActivation.isActive ||
             window !== window.top || pending || Date.now() - lastPrompt < 30000)
             return;
         const field = event.composedPath()[0];

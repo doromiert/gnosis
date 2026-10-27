@@ -13,23 +13,23 @@ parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('binary', type=Path)
 parser.add_argument('--schemas', type=Path, required=True)
 args = parser.parse_args()
-root = Path(tempfile.mkdtemp(prefix='jupiter-preferences-ui-', dir='/tmp'))
+root = Path(tempfile.mkdtemp(prefix='gnosis-preferences-ui-', dir='/tmp'))
 env = dict(os.environ, XDG_CONFIG_HOME=str(root/'config'), XDG_DATA_HOME=str(root/'data'),
            XDG_CACHE_HOME=str(root/'cache'), GSETTINGS_BACKEND='keyfile',
            GSETTINGS_SCHEMA_DIR=str(args.schemas.resolve()))
 def setting(group, key, value):
-    schema = 'io.github.doromiert.Jupiter.'+group
+    schema = 'com.neg-zero.Gnosis.'+group
     if group == 'web':
-        schema += ':/io/github/doromiert/jupiter/web/'
+        schema += ':/com/neg_zero/gnosis/web/'
     subprocess.run(['gsettings', 'set', schema, key, value], env=env, check=True)
 setting('web', 'use-gnome-fonts', 'false')
 setting('web', 'serif-font', "'DejaVu Serif 15'")
-setting('web', 'user-agent', "'JupiterAppFixture/1.0'")
+setting('web', 'user-agent', "'GnosisAppFixture/1.0'")
 setting('web', 'language', "['fr-FR','fr']")
 setting('web', 'chromium-feature-overrides', "{'webgl': false}")
 setting('ui', 'webkit-features-page', 'true')
-subprocess.run(['gsettings', 'set', 'io.github.doromiert.Jupiter', 'ask-for-default', 'false'], env=env, check=True)
-base = os.environ['JUPITER_TEST_URL']
+subprocess.run(['gsettings', 'set', 'com.neg-zero.Gnosis', 'ask-for-default', 'false'], env=env, check=True)
+base = os.environ['GNOSIS_TEST_URL']
 log = (root/'app.log').open('w')
 process = subprocess.Popen([str(args.binary.resolve()), '--profile='+str(root/'profile'),
                             base+'settings-fixture?report'], env=env, stdout=log, stderr=subprocess.STDOUT)
@@ -48,15 +48,15 @@ def report(agent, size, language):
         time.sleep(.1)
     raise TimeoutError('Native app preferences did not reach Chromium: '+str(reports[-3:])+'\n'+(root/'app.log').read_text())
 try:
-    initial = report('JupiterAppFixture/1.0', '20px', 'fr-FR')
-    assert initial['initialHeaders']['userAgent']=='JupiterAppFixture/1.0', initial
+    initial = report('GnosisAppFixture/1.0', '20px', 'fr-FR')
+    assert initial['initialHeaders']['userAgent']=='GnosisAppFixture/1.0', initial
     assert initial['initialHeaders']['language'].startswith('fr-FR'), initial
     assert 'DejaVu Serif' in initial['family'], initial
     assert not initial['webgl'], initial
     setting('web', 'serif-font', "'DejaVu Serif 21'")
-    setting('web', 'user-agent', "'JupiterAppFixture/2.0'")
+    setting('web', 'user-agent', "'GnosisAppFixture/2.0'")
     setting('web', 'language', "['pl-PL','pl']")
-    report('JupiterAppFixture/2.0', '28px', 'pl-PL')
+    report('GnosisAppFixture/2.0', '28px', 'pl-PL')
     print('Actual app GSettings control startup and live fonts, identity, language, and restart feature overrides: PASS', flush=True)
     window = subprocess.check_output(['xdotool','search','--onlyvisible','--pid',str(process.pid)],text=True).splitlines()[-1]
     subprocess.run(['xdotool','windowfocus','--sync',window,'key','Escape'],check=True)
@@ -74,7 +74,7 @@ try:
     subprocess.run(['xdotool','key','Return'],check=True)
     deadline = time.monotonic()+3
     while True:
-        current = subprocess.check_output(['gsettings','get','io.github.doromiert.Jupiter.web:/io/github/doromiert/jupiter/web/', 'chromium-feature-overrides'],env=env,text=True).strip()
+        current = subprocess.check_output(['gsettings','get','com.neg-zero.Gnosis.web:/com/neg_zero/gnosis/web/', 'chromium-feature-overrides'],env=env,text=True).strip()
         if current in ('@a{sb} {}','{}') or time.monotonic() >= deadline:
             break
         time.sleep(.05)

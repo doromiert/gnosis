@@ -8,7 +8,7 @@ install_data(
 
 icondir = join_paths('icons', 'hicolor', 'symbolic', 'apps')
 install_data(
-  join_paths(icondir, 'io.github.doromiert.Jupiter-symbolic.svg'),
+  join_paths(icondir, 'com.neg-zero.Gnosis-symbolic.svg'),
   install_dir: join_paths(datadir, icondir),
   rename: '@0@-symbolic.svg'.format(application_id)
 )
@@ -17,8 +17,8 @@ desktop_conf = configuration_data()
 desktop_conf.set('icon', application_id)
 desktop = i18n.merge_file(
   input: configure_file(
-    input: files('io.github.doromiert.Jupiter.desktop.in.in'),
-    output: 'io.github.doromiert.Jupiter.desktop.in',
+    input: files('com.neg-zero.Gnosis.desktop.in.in'),
+    output: 'com.neg-zero.Gnosis.desktop.in',
     configuration: desktop_conf
   ),
   output: '@0@.desktop'.format(application_id),
@@ -32,8 +32,8 @@ metainfo_conf = configuration_data()
 metainfo_conf.set('appid', application_id)
 metainfo = i18n.merge_file(
   input: configure_file(
-    input: files('io.github.doromiert.Jupiter.metainfo.xml.in.in'),
-    output: 'io.github.doromiert.Jupiter.metainfo.xml.in',
+    input: files('com.neg-zero.Gnosis.metainfo.xml.in.in'),
+    output: 'com.neg-zero.Gnosis.metainfo.xml.in',
     configuration: metainfo_conf
   ),
   output: '@0@.metainfo.xml'.format(application_id),
@@ -54,14 +54,14 @@ metainfo = i18n.merge_file(
 # https://github.com/mesonbuild/meson/issues/1687
 generate_enums = custom_target('gsettings-enums',
   input: '../lib/ephy-prefs.h',
-  output: 'io.github.doromiert.Jupiter.enums.xml',
+  output: 'com.neg-zero.Gnosis.enums.xml',
   install: true,
   install_dir: join_paths(datadir, 'glib-2.0', 'schemas'),
   capture: true,
   command: [find_program('glib-mkenums'),
     '--comments', '<!-- @comment@ -->',
     '--fhead', '<schemalist>',
-    '--vhead', '  <@type@ id="io.github.doromiert.Jupiter.@EnumName@">',
+    '--vhead', '  <@type@ id="com.neg-zero.Gnosis.@EnumName@">',
     '--vprod', '    <value nick="@valuenick@" value="@valuenum@"/>',
     '--vtail', '  </@type@>',
     '--ftail', '</schemalist>',
@@ -69,7 +69,7 @@ generate_enums = custom_target('gsettings-enums',
   ]
 )
 copy_gschema = custom_target('copy-gschema-to-builddir',
-  input: 'io.github.doromiert.jupiter.gschema.xml',
+  input: 'com.neg-zero.gnosis.gschema.xml',
   output: 'renamed-hack.gschema.xml',
   command: ['cp', '@INPUT@', '@OUTPUT@']
 )
@@ -81,7 +81,7 @@ compile_schemas = custom_target('glib-compile-schemas',
   ],
   depends: [generate_enums, copy_gschema]
 )
-install_data('io.github.doromiert.jupiter.gschema.xml',
+install_data('com.neg-zero.gnosis.gschema.xml',
   install_dir: join_paths(datadir, 'glib-2.0', 'schemas')
 )
 
@@ -89,15 +89,15 @@ service_conf = configuration_data()
 service_conf.set('appid', application_id)
 service_conf.set('libexecdir', libexecdir)
 configure_file(
-  input: 'io.github.doromiert.Jupiter.SearchProvider.service.in',
+  input: 'com.neg-zero.Gnosis.SearchProvider.service.in',
   output: '@0@.SearchProvider.service'.format(application_id),
   configuration: service_conf,
   install_dir: servicedir
 )
 
 configure_file(
-  input: 'io.github.doromiert.Jupiter.WebAppProvider.service.in',
-  output: 'io.github.doromiert.Jupiter.WebAppProvider.service',
+  input: 'com.neg-zero.Gnosis.WebAppProvider.service.in',
+  output: 'com.neg-zero.Gnosis.WebAppProvider.service',
   configuration: service_conf,
   install_dir: servicedir
 )
@@ -107,7 +107,7 @@ search_provider_conf.set('appid', application_id)
 search_provider_conf.set('profile', profile != '' ? '/' + profile : '')
 configure_file(
   configuration: search_provider_conf,
-  input: files('io.github.doromiert.Jupiter.SearchProvider.ini.in'),
+  input: files('com.neg-zero.Gnosis.SearchProvider.ini.in'),
   install_dir: join_paths(datadir, 'gnome-shell', 'search-providers'),
   output: '@0@.SearchProvider.ini'.format(application_id)
 )

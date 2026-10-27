@@ -1,13 +1,13 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<schemalist gettext-domain="epiphany">
-	<schema path="/io/github/doromiert/jupiter/" id="io.github.doromiert.Jupiter">
-		<child schema="io.github.doromiert.Jupiter.ui" name="ui"/>
-		<child schema="io.github.doromiert.Jupiter.web" name="web"/>
-		<child schema="io.github.doromiert.Jupiter.state" name="state"/>
-		<child schema="io.github.doromiert.Jupiter.lockdown" name="lockdown"/>
-		<child schema="io.github.doromiert.Jupiter.permissions" name="permissions"/>
-		<child schema="io.github.doromiert.Jupiter.sync" name="sync"/>
-		<child schema="io.github.doromiert.Jupiter.reader" name="reader"/>
+<schemalist gettext-domain="gnosis">
+	<schema path="/com/neg_zero/gnosis/" id="com.neg-zero.Gnosis">
+		<child schema="com.neg-zero.Gnosis.ui" name="ui"/>
+		<child schema="com.neg-zero.Gnosis.web" name="web"/>
+		<child schema="com.neg-zero.Gnosis.state" name="state"/>
+		<child schema="com.neg-zero.Gnosis.lockdown" name="lockdown"/>
+		<child schema="com.neg-zero.Gnosis.permissions" name="permissions"/>
+		<child schema="com.neg-zero.Gnosis.sync" name="sync"/>
+		<child schema="com.neg-zero.Gnosis.reader" name="reader"/>
         <key type="a{sb}" name="brave-adapter-overrides">
             <default>{}</default>
             <summary>Debugging overrides for Brave integration adapters</summary>
@@ -63,7 +63,7 @@
 		<key type="b" name="warn-on-close-unsubmitted-data">
 			<default>true</default>
 		</key>
-                <key name="restore-session-policy" enum="io.github.doromiert.Jupiter.EphyPrefsRestoreSessionPolicy">
+                <key name="restore-session-policy" enum="com.neg-zero.Gnosis.EphyPrefsRestoreSessionPolicy">
                         <default>'always'</default>
                         <summary>Whether to automatically restore the last session</summary>
                         <description>Defines how the session will be restored during startup. Allowed values are “always” (the previous state of the application is always restored) and “crashed” (the session is only restored if the application crashes).</description>
@@ -99,7 +99,7 @@
 			<description>Selection (bitmask) which clear data items should be active by default. 1 = Cookies, 2 = HTTP disk cache, 4 = Local storage data, 8 = Offline web application cache, 16 = IndexDB databases, 32 = WebSQL databases, 64 = Plugins data, 128 = HSTS policies cache, 256 = Intelligent Tracking Prevention data.</description>
 		</key>
 	</schema>
-	<schema path="/io/github/doromiert/jupiter/ui/" id="io.github.doromiert.Jupiter.ui">
+	<schema path="/com/neg_zero/gnosis/ui/" id="com.neg-zero.Gnosis.ui">
 		<key type="b" name="expand-tabs-bar">
 			<default>true</default>
 			<summary>Expand tabs size to fill the available space on the tabs bar.</summary>
@@ -110,7 +110,7 @@
 			<summary>Show url bar at bottom</summary>
 			<description>Whether to show url bar on bottom.</description>
 		</key>
-		<key name="tabs-bar-visibility-policy" enum="io.github.doromiert.Jupiter.EphyPrefsUITabsBarVisibilityPolicy">
+		<key name="tabs-bar-visibility-policy" enum="com.neg-zero.Gnosis.EphyPrefsUITabsBarVisibilityPolicy">
 			<default>'more-than-one'</default>
 			<summary>The visibility policy for the tabs  bar.</summary>
 			<description>Controls when the tabs bar is shown. Possible values are “always” (the tabs bar is always shown), “more-than-one” (the tabs bar is only shown if there’s two or more tabs) and “never” (the tabs bar is never shown). This setting is ignored in Pantheon desktop, and “always” value is used.</description>
@@ -131,19 +131,19 @@
 			<description>Controls whether the features page in the preferences window shows internal WebKit features.</description>
 		</key>
 	</schema>
-	<schema path="/io/github/doromiert/jupiter/reader/" id="io.github.doromiert.Jupiter.reader">
-		<key name="font-style" enum="io.github.doromiert.Jupiter.EphyPrefsReaderFontStyle">
+	<schema path="/com/neg_zero/gnosis/reader/" id="com.neg-zero.Gnosis.reader">
+		<key name="font-style" enum="com.neg-zero.Gnosis.EphyPrefsReaderFontStyle">
 			<default>'sans'</default>
 			<summary>Reader mode article font style.</summary>
 			<description>Chooses the style of the main body text for articles in reader mode. Possible values are “sans” and “serif”.</description>
 		</key>
-		<key name="color-scheme" enum="io.github.doromiert.Jupiter.EphyPrefsReaderColorScheme">
+		<key name="color-scheme" enum="com.neg-zero.Gnosis.EphyPrefsReaderColorScheme">
 			<default>'light'</default>
 			<summary>Reader mode color scheme.</summary>
 			<description>Selects the style of colors for articles displayed in reader mode. Possible values are “light” (dark text on light background) and “dark” (light text on dark background). This setting is ignored on systems that provide a system-wide dark style preference, such as GNOME 42 and newer.</description>
 		</key>
 	</schema>
-	<schema id="io.github.doromiert.Jupiter.web">
+	<schema id="com.neg-zero.Gnosis.web">
 		<key type="i" name="min-font-size">
 			<default>0</default>
 			<summary>Minimum font size</summary>
@@ -206,7 +206,7 @@
 		<key type="a{sb}" name="chromium-feature-overrides">
 			<default>{}</default>
 			<summary>Chromium feature overrides</summary>
-			<description>Feature settings that take effect after restarting Jupiter.</description>
+			<description>Feature settings that take effect after restarting Gnosis.</description>
 		</key>
 		<key type="s" name="user-agent">
 			<default>''</default>
@@ -282,7 +282,7 @@
 			<summary>Last download directory</summary>
 			<description>Keep track of last download directory</description>
 		</key>
-		<key name="hardware-acceleration-policy" enum="io.github.doromiert.Jupiter.EphyPrefsWebHardwareAccelerationPolicy">
+		<key name="hardware-acceleration-policy" enum="com.neg-zero.Gnosis.EphyPrefsWebHardwareAccelerationPolicy">
 			<default>'always'</default>
 			<summary>Hardware acceleration policy</summary>
 			<description>Whether to enable hardware acceleration. Possible values are “always” and “never”. Hardware acceleration may be required to achieve acceptable performance on embedded devices, but increases memory usage requirements and could expose severe hardware-specific graphics driver bugs.</description>
@@ -323,7 +323,7 @@
 			<description>This is a permission map of security origins to URL schemes.</description>
 		</key>
 	</schema>
-	<schema id="io.github.doromiert.Jupiter.webapp">
+	<schema id="com.neg-zero.Gnosis.webapp">
 		<key type="as" name="additional-urls">
 			<default>[]</default>
 			<summary>Web application additional URLs</summary>
@@ -345,7 +345,7 @@
 			<description>If enabled, application cannot be edited or removed.</description>
 		</key>
 	</schema>
-	<schema id="io.github.doromiert.Jupiter.state">
+	<schema id="com.neg-zero.Gnosis.state">
 		<key type="s" name="download-dir">
 			<default>'Downloads'</default>
 			<summary>The downloads folder</summary>
@@ -370,7 +370,7 @@
 			<description>Whether a new window that is not restored from a previous session should be initially maximized.</description>
 		</key>
 	</schema>
-	<schema path="/io/github/doromiert/jupiter/lockdown/" id="io.github.doromiert.Jupiter.lockdown">
+	<schema path="/com/neg_zero/gnosis/lockdown/" id="com.neg-zero.Gnosis.lockdown">
 		<key type="b" name="disable-fullscreen">
 			<default>false</default>
 		</key>
@@ -398,7 +398,7 @@
 			<default>false</default>
 		</key>
 	</schema>
-	<schema path="/io/github/doromiert/jupiter/sync/" id="io.github.doromiert.Jupiter.sync">
+	<schema path="/com/neg_zero/gnosis/sync/" id="com.neg-zero.Gnosis.sync">
 		<key type="s" name="sync-token-server">
 			<default>'https://token.services.mozilla.com/1.0/sync/1.5'</default>
 			<summary>Firefox Sync Token Server URL</summary>
@@ -515,48 +515,48 @@
 			<description>Whether to log detailed sync record changes to sync-changes.log in the profile directory for debugging.</description>
 		</key>
 	</schema>
-	<enum id="io.github.doromiert.Jupiter.Permission">
+	<enum id="com.neg-zero.Gnosis.Permission">
 		<value nick="undecided" value="-1"/>
 		<value nick="deny" value="0"/>
 		<value nick="allow" value="1"/>
 	</enum>
-	<schema id="io.github.doromiert.Jupiter.permissions">
-		<key name="audio-device-permission" enum="io.github.doromiert.Jupiter.Permission">
+	<schema id="com.neg-zero.Gnosis.permissions">
+		<key name="audio-device-permission" enum="com.neg-zero.Gnosis.Permission">
 			<default>'undecided'</default>
 			<summary>Decision to apply when microphone permission is requested for this host</summary>
 			<description>This option is used to save whether a given host has been given permission to access the user’s microphone. The “undecided” default means the browser needs to ask the user for permission, while “allow” and “deny” tell it to automatically make the decision upon request.</description>
 		</key>
-		<key name="geolocation-permission" enum="io.github.doromiert.Jupiter.Permission">
+		<key name="geolocation-permission" enum="com.neg-zero.Gnosis.Permission">
 			<default>'undecided'</default>
 			<summary>Decision to apply when geolocation permission is requested for this host</summary>
 			<description>This option is used to save whether a given host has been given permission to access the user’s location. The “undecided” default means the browser needs to ask the user for permission, while “allow” and “deny” tell it to automatically make the decision upon request.</description>
 		</key>
-		<key name="notifications-permission" enum="io.github.doromiert.Jupiter.Permission">
+		<key name="notifications-permission" enum="com.neg-zero.Gnosis.Permission">
 			<default>'undecided'</default>
 			<summary>Decision to apply when notification permission is requested for this host</summary>
 			<description>This option is used to save whether a given host has been given permission to show notifications. The “undecided” default means the browser needs to ask the user for permission, while “allow” and “deny” tell it to automatically make the decision upon request.</description>
 		</key>
-		<key name="save-password-permission" enum="io.github.doromiert.Jupiter.Permission">
+		<key name="save-password-permission" enum="com.neg-zero.Gnosis.Permission">
 			<default>'undecided'</default>
 			<summary>Decision to apply when save password permission is requested for this host</summary>
 			<description>This option is used to save whether a given host has been given permission to save passwords. The “undecided” default means the browser needs to ask the user for permission, while “allow” and “deny” tell it to automatically make the decision upon request.</description>
 		</key>
-		<key name="video-device-permission" enum="io.github.doromiert.Jupiter.Permission">
+		<key name="video-device-permission" enum="com.neg-zero.Gnosis.Permission">
 			<default>'undecided'</default>
 			<summary>Decision to apply when webcam permission is requested for this host</summary>
 			<description>This option is used to save whether a given host has been given permission to access the user’s webcam. The “undecided” default means the browser needs to ask the user for permission, while “allow” and “deny” tell it to automatically make the decision upon request.</description>
 		</key>
-		<key name="display-device-permission" enum="io.github.doromiert.Jupiter.Permission">
+		<key name="display-device-permission" enum="com.neg-zero.Gnosis.Permission">
 			<default>'undecided'</default>
 			<summary>Decision to apply when display permission is requested for this host</summary>
 			<description>This option is used to save whether a given host has been given permission to access the user’s display. The “undecided” default means the browser needs to ask the user for permission, while “allow” and “deny” tell it to automatically make the decision upon request.</description>
 		</key>
-		<key name="advertisement-permission" enum="io.github.doromiert.Jupiter.Permission">
+		<key name="advertisement-permission" enum="com.neg-zero.Gnosis.Permission">
 			<default>'undecided'</default>
 			<summary>Decision to apply when advertisement permission is requested for this host</summary>
 			<description>This option is used to save whether a given host has been given permission to allow advertisements. The “undecided” default means the browser global setting is used, while “allow” and “deny” tell it to automatically make the decision upon request.</description>
 		</key>
-		<key name="autoplay-permission" enum="io.github.doromiert.Jupiter.Permission">
+		<key name="autoplay-permission" enum="com.neg-zero.Gnosis.Permission">
 			<default>'undecided'</default>
 			<summary>Decision to apply when an autoplay policy is requested for this host</summary>
 			<description>This option is used to save whether a given host has been given permission to autoplay. The “undecided” default means to allow autoplay of muted media, while “allow” and “deny” tell it to allow / deny all requests to autoplay media respectively.</description>

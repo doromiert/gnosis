@@ -1223,7 +1223,7 @@ window_cmd_show_about (GSimpleAction *action,
     authors[author_index++] = g_strdup (contributors[index]);
   }
 
-  dialog = ADW_ABOUT_DIALOG (adw_about_dialog_new_from_appdata ("/org/gnome/Epiphany/io.github.doromiert.Jupiter.metainfo.xml", NULL));
+  dialog = ADW_ABOUT_DIALOG (adw_about_dialog_new_from_appdata ("/org/gnome/Epiphany/com.neg-zero.Gnosis.metainfo.xml", NULL));
 
   if (g_str_equal (PROFILE, "Canary"))
     adw_about_dialog_set_application_name (dialog, _("Gnosis Canary"));

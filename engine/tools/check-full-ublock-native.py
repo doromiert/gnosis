@@ -14,10 +14,10 @@ resource.setrlimit(resource.RLIMIT_CORE,(0,0))
 a,b=os.pipe();c,d=os.pipe();native_parent,native_child=socket.socketpair(socket.AF_UNIX,socket.SOCK_SEQPACKET)
 def child_setup():
  os.dup2(a,3);os.dup2(d,4);os.dup2(native_child.fileno(),5)
-with tempfile.TemporaryDirectory(prefix='jupiter-extension-probe-') as profile:
+with tempfile.TemporaryDirectory(prefix='gnosis-extension-probe-') as profile:
  os.makedirs(profile+'/Default')
  Path(profile+'/Default/Preferences').write_text(json.dumps({'extensions':{'ui':{'developer_mode':True}}}))
- p=subprocess.Popen([str(args.browser.resolve()),'--ozone-platform=wayland','--no-first-run','--enable-blink-features=WebBluetooth','--no-default-browser-check','--enable-unsafe-extension-debugging','--remote-debugging-pipe','--user-data-dir='+profile,'--headless=new','about:blank'],env=dict(os.environ,JUPITER_NATIVE_UI_FD='5'),pass_fds=tuple(set((a,b,c,d,3,4,5,native_child.fileno()))),preexec_fn=child_setup,start_new_session=True,stdout=subprocess.DEVNULL,stderr=args.log.open('w'))
+ p=subprocess.Popen([str(args.browser.resolve()),'--ozone-platform=wayland','--no-first-run','--enable-blink-features=WebBluetooth','--no-default-browser-check','--enable-unsafe-extension-debugging','--remote-debugging-pipe','--user-data-dir='+profile,'--headless=new','about:blank'],env=dict(os.environ,GNOSIS_NATIVE_UI_FD='5'),pass_fds=tuple(set((a,b,c,d,3,4,5,native_child.fileno()))),preexec_fn=child_setup,start_new_session=True,stdout=subprocess.DEVNULL,stderr=args.log.open('w'))
  os.close(a);os.close(d)
  buf=b'';seq=0;events=[];replies={}
  def receive(timeout=10):
@@ -54,16 +54,16 @@ with tempfile.TemporaryDirectory(prefix='jupiter-extension-probe-') as profile:
   helper_session=call('Target.attachToTarget',{'targetId':workers[0]['targetId'],'flatten':True})['sessionId']
   call('Runtime.enable',{},helper_session)
   call('Runtime.runIfWaitingForDebugger',{},helper_session)
-  call('Runtime.addBinding',{'name':'__jupiterExtensionsChanged'},helper_session)
+  call('Runtime.addBinding',{'name':'__gnosisExtensionsChanged'},helper_session)
   def management(expression):
    reply=call('Runtime.evaluate',{'expression':expression,'awaitPromise':True,'returnByValue':True,'userGesture':True},helper_session)
    if 'exceptionDetails' in reply:raise RuntimeError(reply)
    return reply['result'].get('value')
   deadline=time.monotonic()+10
-  while management('typeof globalThis.jupiterExtensions?.inventory')!='function':
+  while management('typeof globalThis.gnosisExtensions?.inventory')!='function':
    if time.monotonic()>deadline:raise TimeoutError('manager worker startup')
    time.sleep(.1)
-  assert helper not in [x['id'] for x in management('jupiterExtensions.inventory()')]
+  assert helper not in [x['id'] for x in management('gnosisExtensions.inventory()')]
 
   deadline=time.monotonic()+10
   while True:
@@ -85,7 +85,7 @@ with tempfile.TemporaryDirectory(prefix='jupiter-extension-probe-') as profile:
   server=http.server.ThreadingHTTPServer(('127.0.0.1',0),functools.partial(Handler,directory=str(fixture)))
   threading.Thread(target=server.serve_forever,daemon=True).start();port=server.server_port
   ubo=call('Extensions.loadUnpacked',{'path':str(args.ublock.resolve())})['id']
-  actual=management('jupiterExtensions.inventory()');entry=next(x for x in actual if x['id']==ubo)
+  actual=management('gnosisExtensions.inventory()');entry=next(x for x in actual if x['id']==ubo)
   assert entry['enabled'] and entry['name']=='uBlock Origin',entry
   call('Page.navigate',{'url':f'chrome-extension://{ubo}/dashboard.html'},session)
   deadline=time.monotonic()+20
@@ -93,21 +93,21 @@ with tempfile.TemporaryDirectory(prefix='jupiter-extension-probe-') as profile:
    ready=call('Runtime.evaluate',{'expression':"Boolean(globalThis.vAPI?.messaging)",'returnByValue':True},session)['result'].get('value')
    if ready:break
    time.sleep(.1)
-  setup=(fixture/'configure-ublock.js').read_text().replace('JUPITER_NETWORK_CONFIG','null').replace('JUPITER_FIXTURE_PORT',str(port))
+  setup=(fixture/'configure-ublock.js').read_text().replace('GNOSIS_NETWORK_CONFIG','null').replace('GNOSIS_FIXTURE_PORT',str(port))
   call('Runtime.evaluate',{'expression':setup},session)
   deadline=time.monotonic()+30
   while time.monotonic()<deadline:
-   result=call('Runtime.evaluate',{'expression':"({url:location.href,cosmetic:document.querySelector('.jupiter-ad')?getComputedStyle(document.querySelector('.jupiter-ad')).display:null,scriptlet:globalThis.jupiterSentinel})",'returnByValue':True},session)['result'].get('value',{})
+   result=call('Runtime.evaluate',{'expression':"({url:location.href,cosmetic:document.querySelector('.gnosis-ad')?getComputedStyle(document.querySelector('.gnosis-ad')).display:null,scriptlet:globalThis.gnosisSentinel})",'returnByValue':True},session)['result'].get('value',{})
    if result.get('url','').startswith(f'http://127.0.0.1:{port}/ublock.html') and result.get('cosmetic')=='none' and result.get('scriptlet')==True:break
    time.sleep(.2)
   assert result.get('cosmetic')=='none' and result.get('scriptlet')==True,result
   time.sleep(5)
   assert '/blocked.gif' not in requests,requests
-  frame=call('Runtime.evaluate',{'expression':"getComputedStyle(document.querySelector('iframe').contentDocument.querySelector('.jupiter-frame-ad')).display",'returnByValue':True},session)['result'].get('value')
+  frame=call('Runtime.evaluate',{'expression':"getComputedStyle(document.querySelector('iframe').contentDocument.querySelector('.gnosis-frame-ad')).display",'returnByValue':True},session)['result'].get('value')
   assert frame=='none',frame
   print('FULL_UBLOCK_PASS native MV2, network blocked before server, cosmetic main/frame, real scriptlet',flush=True)
   for enabled in [False,True]:
-   actual=management('jupiterExtensions.setEnabled('+json.dumps(ubo)+','+str(enabled).lower()+')')
+   actual=management('gnosisExtensions.setEnabled('+json.dumps(ubo)+','+str(enabled).lower()+')')
    assert next(x for x in actual if x['id']==ubo)['enabled']==enabled
   print('FULL_UBLOCK_TOGGLE_PASS',flush=True)
   server.shutdown()

@@ -18,11 +18,11 @@ parser.add_argument('--pdftotext', default=shutil.which('pdftotext'))
 args = parser.parse_args()
 if not args.pdftotext:
     parser.error('Supply --pdftotext or put Poppler pdftotext on PATH')
-root = Path(tempfile.mkdtemp(prefix='jupiter-print-portals-'))
+root = Path(tempfile.mkdtemp(prefix='gnosis-print-portals-'))
 output = root / 'print-δ.pdf'
 env = dict(os.environ, GTK_USE_PORTAL='1', GDK_DEBUG='portals', GTK_PRINT_BACKENDS='file',
            XDG_CONFIG_HOME=str(root/'config'), XDG_DATA_HOME=str(root/'data'),
-           XDG_CACHE_HOME=str(root/'cache'), JUPITER_TEST_PRINT_FILE=str(output))
+           XDG_CACHE_HOME=str(root/'cache'), GNOSIS_TEST_PRINT_FILE=str(output))
 config = root/'config/xdg-desktop-portal'
 config.mkdir(parents=True)
 (config/'portals.conf').write_text('[preferred]\ndefault=gtk\norg.freedesktop.impl.portal.Print=gtk\n')

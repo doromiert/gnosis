@@ -5,7 +5,7 @@ const timer=setInterval(()=>{
   pending=true;
   chrome.runtime.sendMessage({probe:true},reply=>{
     pending=false;
-    document.documentElement.dataset.jupiterExtension=JSON.stringify(reply||{error:chrome.runtime.lastError?.message});
+    document.documentElement.dataset.gnosisExtension=JSON.stringify(reply||{error:chrome.runtime.lastError?.message});
     if (reply?.script && reply?.storage && reply?.css) clearInterval(timer);
   });
 },500);

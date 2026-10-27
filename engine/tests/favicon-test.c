@@ -19,7 +19,7 @@ static void favicon_cache(void) {
   const char *icon = "https://example.test/favicon.png";
   const guint8 pixels[] = {255, 0, 0, 255, 0, 255, 0, 255};
   g_autoptr(GError) error = NULL;
-  g_autofree char *directory = g_dir_make_tmp("jupiter-favicons-XXXXXX", &error);
+  g_autofree char *directory = g_dir_make_tmp("gnosis-favicons-XXXXXX", &error);
   g_autoptr(GBytes) bytes = g_bytes_new_static(pixels, sizeof pixels);
   g_autoptr(GdkTexture) texture = gdk_memory_texture_new(2, 1, GDK_MEMORY_R8G8B8A8, bytes, 8);
   g_autoptr(EphyEngineFaviconDatabase) writer = ephy_engine_favicon_database_new(directory);

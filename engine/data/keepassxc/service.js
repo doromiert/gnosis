@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Private GTK-shell adapter. No external messaging listener and no credential
 // values leave the upstream worker/content-script boundary.
-globalThis.jupiterKeePassXC = Object.freeze({
+globalThis.gnosisKeePassXC = Object.freeze({
     resolvePasskey(id, provider) {
         globalThis.gnosisPasskeyRequests?.get(id)?.(provider);
     },
@@ -68,7 +68,7 @@ globalThis.jupiterKeePassXC = Object.freeze({
         } else if (operation === 'lock') await keepass.lockDatabase(tab);
         else if (operation === 'passkeys' || operation === 'auto-unlock') {
             if (typeof argument !== 'boolean') throw new Error('Invalid setting');
-            page.settings[operation === 'passkeys' ? 'passkeys' : 'jupiterAutoUnlock'] = argument;
+            page.settings[operation === 'passkeys' ? 'passkeys' : 'gnosisAutoUnlock'] = argument;
             await browser.storage.local.set({ settings: page.settings });
             if (website) await sendToPage({ action: 'redetect_fields' }).catch(() => {});
         } else if (operation === 'redetect') {
@@ -103,7 +103,7 @@ globalThis.jupiterKeePassXC = Object.freeze({
             connected: !!keepass.isConnected, available: !!keepass.isKeePassXCAvailable,
             locked: !!keepass.isDatabaseClosed, associated: !!keepass.isAssociated(),
             version: String(keepass.currentKeePassXC || ''),
-            passkeys: !!page.settings.passkeys, autoUnlock: page.settings.jupiterAutoUnlock !== false,
+            passkeys: !!page.settings.passkeys, autoUnlock: page.settings.gnosisAutoUnlock !== false,
             website, redetected: operation === 'redetect'
         };
     }

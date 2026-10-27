@@ -13,7 +13,7 @@
 #include <vector>
 
 CefRefPtr<CefBrowser> ephy_engine_view_browser(EphyEngineView *);
-static constexpr const char *username = "jupiter-user", *password = "fixture-password";
+static constexpr const char *username = "gnosis-user", *password = "fixture-password";
 static void wait_for(const std::function<bool()>& predicate,
                      const std::source_location location = std::source_location::current()) {
   auto deadline = g_get_monotonic_time() + 15 * G_TIME_SPAN_SECOND;
@@ -170,10 +170,10 @@ int main(int argc, char **argv) {
   disable_diagnostic_core_dumps();
   if (!cef_api_hash(CEF_API_VERSION, 0)) return 1;
   int sub = ephy_engine_execute_process(argc, argv); if (sub >= 0) return sub;
-  auto *app = adw_application_new("io.github.doromiert.Jupiter.AuthenticationTest", G_APPLICATION_NON_UNIQUE);
+  auto *app = adw_application_new("com.neg-zero.Gnosis.AuthenticationTest", G_APPLICATION_NON_UNIQUE);
   GError *error = nullptr;
   g_assert_true(g_application_register(G_APPLICATION(app), nullptr, &error)); g_assert_no_error(error);
-  char scratch[] = "/tmp/jupiter-authentication-test-XXXXXX";
+  char scratch[] = "/tmp/gnosis-authentication-test-XXXXXX";
   std::string prepared_profile;
   constexpr const char *prepare_option = "--prepare-proxy-profile=";
   for (int i = 1; i < argc; ++i) {
@@ -186,7 +186,7 @@ int main(int argc, char **argv) {
   const char *profile = prepared_profile.empty() ? mkdtemp(scratch) : prepared_profile.c_str();
   g_assert_nonnull(profile);
   g_assert_true(ephy_engine_initialize(argc, argv, profile, true)); disable_diagnostic_core_dumps();
-  const char *fixture = g_getenv("JUPITER_TEST_URL"); g_assert_nonnull(fixture);
+  const char *fixture = g_getenv("GNOSIS_TEST_URL"); g_assert_nonnull(fixture);
   std::string base = fixture;
   g_autoptr(GUri) fixture_uri = g_uri_parse(fixture, G_URI_FLAGS_NONE, &error); g_assert_no_error(error);
   const int port = g_uri_get_port(fixture_uri);

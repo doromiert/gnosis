@@ -199,8 +199,8 @@ executable('epiphany-search-provider',
 )
 
 webapp_codegen = gnome.gdbus_codegen('ephy-webapp-provider-generated',
-  'webapp-provider/io.github.doromiert.Jupiter.WebAppProvider.xml',
-  interface_prefix: 'io.github.doromiert.Jupiter',
+  'webapp-provider/com.neg-zero.Gnosis.WebAppProvider.xml',
+  interface_prefix: 'com.neg_zero.Gnosis',
   namespace: 'Ephy'
 )
 

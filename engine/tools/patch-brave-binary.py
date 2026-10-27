@@ -89,7 +89,7 @@ def main():
                 # Only the actual browser ELF loads the shim. Preloading shell
                 # utilities would mix their older glibc with the browser's SDK.
                 script = script.replace(invocation,
-                    'if [ "${JUPITER_NATIVE_UI_FD-}" = 5 ]; then\n  LD_PRELOAD=' +
+                    'if [ "${GNOSIS_NATIVE_UI_FD-}" = 5 ]; then\n  LD_PRELOAD=' +
                     shlex.quote(str(args.native_install_shim.resolve(strict=True))) + ' ' + invocation +
                     '\nelse\n  ' + invocation + '\nfi')
             target.write_text(script)

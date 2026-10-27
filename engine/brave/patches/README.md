@@ -1,14 +1,14 @@
 # Native Brave integration patches
 
 Keep this series small: add an opt-in hook at a stable browser component,
-leave GTK UI and policy in Jupiter, and preserve ordinary Brave behavior when
+leave GTK UI and policy in Gnosis, and preserve ordinary Brave behavior when
 the switch is absent. Do not copy Views layouts into the GTK shell. The user
 now prefers a version/hash-gated binary patch or native shim to a full Chromium
 build; this source series remains a reference, not a prerequisite for that route.
 
 `series.json` records the Brave/Chromium release pair, pristine source hashes,
 and ordered patch hashes. The first patch changes one component file to honor
-`--jupiter-native-ui` when deciding whether to show zoom feedback. Native zoom,
+`--gnosis-native-ui` when deciding whether to show zoom feedback. Native zoom,
 layout, events, and per-tab settings remain intact. The mode-transition path
 also respects the visibility flag; suppressing extension zoom alone missed it.
 
@@ -112,8 +112,8 @@ Probe a release upgrade before changing the pin:
 
 ```sh
 nix run .#check-brave-patches -- --fetch --brave-version 1.100.31 --upgrade \
-  --report /tmp/jupiter-brave-upgrade.json \
-  --candidate-pin /tmp/jupiter-brave-series-next.json
+  --report /tmp/gnosis-brave-upgrade.json \
+  --candidate-pin /tmp/gnosis-brave-series-next.json
 ```
 
 The checker resolves Chromium from that Brave release's own `package.json`.
@@ -129,21 +129,21 @@ After source checks, review the proposed pin and build the patched Brave release
 Apply from its Chromium `src` root, after Brave initialization:
 
 ```sh
-patch --batch --fuzz=0 --forward -p1 < /path/to/jupiter/engine/brave/patches/0001-native-zoom-feedback.patch
+patch --batch --fuzz=0 --forward -p1 < /path/to/gnosis/engine/brave/patches/0001-native-zoom-feedback.patch
 ```
 
 Required runtime checks before accepting an upgrade: GTK zoom buttons,
 Ctrl+plus/minus/reset, Ctrl+wheel, normal/private profiles, reload/navigation,
 actual page reflow, and absence of the native popup. Also launch Brave without
-the Jupiter switch to verify its normal zoom feedback remains available.
+the Gnosis switch to verify its normal zoom feedback remains available.
 Source checks never establish compilation or runtime compatibility.
 
 The Nix package accepts a `brave` package argument for the production build.
 For a local patched executable, the launcher also honors explicit overrides:
 
 ```sh
-JUPITER_BRAVE_EXECUTABLE=/path/to/patched/brave \
-JUPITER_BRAVE_VERSION=1.97.56 nix run .
+GNOSIS_BRAVE_EXECUTABLE=/path/to/patched/brave \
+GNOSIS_BRAVE_VERSION=1.97.56 nix run .
 ```
 
 This does not build or patch Brave for you. The executable must already contain
@@ -170,8 +170,8 @@ checks verified alert/confirm/prompt decisions; beforeunload coverage is pending
 | Site permissions | `chrome/browser/ui/views/permissions/permission_prompt_factory.cc`: `CreatePermissionPrompt`, then `CreateNormalPrompt` / `CreatePwaPrompt` / `CreateQuietPrompt` | Replace the prompt factory with a GTK bridge that retains the request delegate and implements prompt lifecycle; returning null alone is not a replacement. |
 | Permission bubble rendering | `chrome/browser/ui/views/permissions/permission_prompt_bubble.cc`: `PermissionPromptBubble::ShowBubble`; `permission_prompt_bubble_base_view.cc`: `CreateWidget` / `ShowWidget` | Own the visual presentation separately from permission decisions. Chip, quiet and embedded prompt variants must also be covered. |
 | Extension install / extra-permission confirmation | `chrome/browser/ui/views/extensions/extension_install_dialog_view.cc`: `ShowExtensionInstallDialogImpl`, supplied by `ExtensionInstallPrompt::GetDefaultShowDialogCallback` | Route prompt data and the owned `DoneCallback` to GTK; preserve acceptance, cancellation, permission withholding and parent destruction. `ExtensionInstallPrompt::ShowConfirmation` prepares the data upstream. |
-| Extension action popup, e.g. uBlock | `chrome/browser/ui/views/extensions/extension_popup.cc`: `ExtensionPopup::ShowPopup`, then `ShowBubble` | Keep the real `ExtensionViewHost` / extension WebContents, render that content in Jupiter's GTK popup, replace only the native Views wrapper. Do not suppress the extension page itself. |
-| Extension list menu | `chrome/browser/ui/views/extensions/extensions_menu_view.cc`: `ExtensionsMenuView::ShowBubble`; newer access-control branch: `extensions_menu_coordinator.cc`: `ExtensionsMenuCoordinator::Show` | Keep Jupiter's GTK extension menu; avoid opening the native Views menu. There are two feature-dependent entry paths. |
+| Extension action popup, e.g. uBlock | `chrome/browser/ui/views/extensions/extension_popup.cc`: `ExtensionPopup::ShowPopup`, then `ShowBubble` | Keep the real `ExtensionViewHost` / extension WebContents, render that content in Gnosis's GTK popup, replace only the native Views wrapper. Do not suppress the extension page itself. |
+| Extension list menu | `chrome/browser/ui/views/extensions/extensions_menu_view.cc`: `ExtensionsMenuView::ShowBubble`; newer access-control branch: `extensions_menu_coordinator.cc`: `ExtensionsMenuCoordinator::Show` | Keep Gnosis's GTK extension menu; avoid opening the native Views menu. There are two feature-dependent entry paths. |
 | USB / HID / serial and other device chooser callers | `chrome/browser/ui/views/permissions/chooser_bubble_ui.cc`: `ShowDeviceChooserDialog` | Bridge the `permissions::ChooserController` choice list, updates and accept/cancel callbacks. This is separate from the ordinary permission factory and is not an exhaustive map of every device-specific chooser. |
 | Passkeys / security keys | `chrome/browser/ui/views/webauthn/authenticator_request_dialog_view.cc`: `AuthenticatorRequestDialogView::Show` / `ReplaceCurrentSheetWith` | The controller at `chrome/browser/webauthn/authenticator_request_dialog_controller.cc` drives a multi-step model. GTK must handle model transitions and responses, not just hide the dialog. |
 | JavaScript alert / confirm / prompt | `chrome/browser/ui/views/javascript_tab_modal_dialog_view_views.cc`: `JavaScriptTabModalDialogViewViews` | Replace the native view and preserve success/cancel/text and forced-close callbacks. Separate app-modal paths may also need coverage. |
@@ -207,7 +207,7 @@ Pinned sources can be opened at:
 - Brave: `https://github.com/brave/brave-core/blob/v1.97.56/<path-without-brave-prefix>`
 
 Investigation copies and a SHA-256 inventory are in
-`/tmp/jupiter-popup-source-map/` (temporary; upstream links above are durable).
+`/tmp/gnosis-popup-source-map/` (temporary; upstream links above are durable).
 The identified zoom `Show` binary entry is: VA `0x0bab39d0`, file offset `0x0bab29d0` in the pinned Nix x86-64
 ELF. A diagnostic-only write-and-return stub was reached twice by actual graphical
 zoom requests; the final one-byte return patch preserves real 125% DPR, zoom
@@ -225,11 +225,11 @@ and `Page.handleJavaScriptDialog` carry the decision to/from GTK. Graphical
 protocol checks verify `hasBrowserHandler=false`, alert continuation, confirm
 cancellation and Unicode prompt input. The GTK adapter handles tab visibility,
 requesting frame origin, prompts and pending-dialog disposal. This hook affects
-only the private overlay and needs Jupiter's attached Page session; do not use
+only the private overlay and needs Gnosis's attached Page session; do not use
 that overlay as a standalone browser without a dialog client. Extension native
 popups and permission decisions are not patched by this change.
 
-Full-shell GTK verification passed using accessibility actions scoped to Jupiter:
+Full-shell GTK verification passed using accessibility actions scoped to Gnosis:
 alert OK continues JavaScript, confirm Cancel returns false, prompt OK returns
 Unicode input, and prompt Cancel returns null. Native manager absence was also
 verified independently via hasBrowserHandler=false. Navigation beforeunload

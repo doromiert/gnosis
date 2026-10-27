@@ -14,7 +14,7 @@ import subprocess
 import sys
 import time
 
-root = Path(os.environ['JUPITER_TEST_SCRATCH'])
+root = Path(os.environ['GNOSIS_TEST_SCRATCH'])
 services = Path('/run/current-system/sw/share/dbus-1/services')
 
 def service(name):
@@ -48,7 +48,7 @@ def run_folder_memory(command, monitor_log, monitor_out):
     """Observe real portal options across two independently started Chromium processes."""
     profile = root / 'upload-folder-profile'
     profile.mkdir()
-    env = dict(os.environ, JUPITER_PORTAL_PROFILE=str(profile))
+    env = dict(os.environ, GNOSIS_PORTAL_PROFILE=str(profile))
     phases = [
         ('write', [
             ('MEMORY_REGULAR_PICK', Path.home(), native_filter / 'alpha.JUP'),
@@ -66,7 +66,7 @@ def run_folder_memory(command, monitor_log, monitor_out):
     ]
     observed = []
     previous_dialog = None
-    artifacts = Path(tempfile.mkdtemp(prefix='jupiter-upload-memory-', dir='/tmp'))
+    artifacts = Path(tempfile.mkdtemp(prefix='gnosis-upload-memory-', dir='/tmp'))
     print('UPLOAD_FOLDER_ARTIFACTS ' + str(artifacts), flush=True)
     commands = []
     def xdo(*args, check=True):
@@ -190,7 +190,7 @@ try:
     if '--folder-memory' in sys.argv[1:]:
         run_folder_memory(sys.argv[1:], monitor_log, monitor_out)
         raise SystemExit(0)
-    artifacts = Path(tempfile.mkdtemp(prefix='jupiter-file-portals-', dir='/tmp'))
+    artifacts = Path(tempfile.mkdtemp(prefix='gnosis-file-portals-', dir='/tmp'))
     print('FILE_PORTAL_ARTIFACTS ' + str(artifacts), flush=True)
     command_trace = []
     browser = subprocess.Popen(sys.argv[1:], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
@@ -231,7 +231,7 @@ try:
                 pass
             time.sleep(.1)
         subprocess.run(['xdotool', 'search', '--onlyvisible', '--name', '.*', 'getwindowname', '%@'])
-        subprocess.run(['magick', 'import', '-window', 'root', '/tmp/jupiter-portal-failure.png'])
+        subprocess.run(['magick', 'import', '-window', 'root', '/tmp/gnosis-portal-failure.png'])
         raise RuntimeError('The real GTK portal chooser did not appear')
 
     while time.monotonic() < deadline:
@@ -257,7 +257,7 @@ try:
                         raise RuntimeError('The previous portal chooser did not close')
                     time.sleep(.05)
             if stage != 'FILTER':
-                window = xdo('search', '--onlyvisible', '--name', '^Jupiter Portal Test$').splitlines()[-1]
+                window = xdo('search', '--onlyvisible', '--name', '^Gnosis Portal Test$').splitlines()[-1]
                 xdo('windowfocus', '--sync', window)
                 xdo('mousemove', '--window', window, 60, 35)
                 xdo('click', 1)
@@ -302,7 +302,7 @@ try:
         else:
             status = browser.wait(timeout=5)
             if status:
-                subprocess.run(['magick', 'import', '-window', 'root', '/tmp/jupiter-portal-failure.png'])
+                subprocess.run(['magick', 'import', '-window', 'root', '/tmp/gnosis-portal-failure.png'])
                 raise subprocess.CalledProcessError(status, browser.args)
             break
     else:
@@ -320,9 +320,9 @@ try:
     # filter metadata and GTK's case-insensitive suffix serialization.
     filter_call = traffic.split('member=OpenFile', 1)[1].split('\nmethod ', 1)[0]
     selected_filter = filter_call.split('string "current_filter"', 1)[1].split('dict entry(', 1)[0]
-    assert 'string "Jupiter native filter fixture"' in selected_filter, selected_filter
+    assert 'string "Gnosis native filter fixture"' in selected_filter, selected_filter
     patterns = re.findall(r'uint32 0\s+string "([^"]*)"', selected_filter)
-    for filename in ('alpha.jup', 'alpha.JUP', 'alpha.jupiter', 'alpha.JUPITER'):
+    for filename in ('alpha.jup', 'alpha.JUP', 'alpha.gnosis', 'alpha.GNOSIS'):
         assert any(fnmatch.fnmatchcase(filename, pattern) for pattern in patterns), (filename, patterns)
     assert not any(fnmatch.fnmatchcase('alpha.txt', pattern) for pattern in patterns), patterns
     print('Verified named Chromium extension rules, upper-case matching and unrelated-type exclusion in the real portal request: PASS')

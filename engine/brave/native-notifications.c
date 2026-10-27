@@ -41,7 +41,7 @@ static dbus_bool_t copy_value(DBusMessageIter *from, DBusMessageIter *to, const 
     if (notification && type == DBUS_TYPE_DICT_ENTRY && index == 1 && key && !strcmp(key, "desktop-entry") &&
         dbus_message_iter_get_arg_type(&input) == DBUS_TYPE_VARIANT) {
       DBusMessageIter value;
-      const char *application = "io.github.doromiert.Jupiter";
+      const char *application = "com.neg-zero.Gnosis";
       ok = dbus_message_iter_open_container(&output, DBUS_TYPE_VARIANT, "s", &value) &&
            dbus_message_iter_append_basic(&value, DBUS_TYPE_STRING, &application) &&
            dbus_message_iter_close_container(&output, &value);
@@ -53,9 +53,9 @@ static dbus_bool_t copy_value(DBusMessageIter *from, DBusMessageIter *to, const 
   return dbus_message_iter_close_container(to, &output);
 }
 
-extern int jupiter_adapter_enabled(const char *id);
+extern int gnosis_adapter_enabled(const char *id);
 static DBusMessage *notification_message(DBusMessage *source) {
-  if (!jupiter_adapter_enabled("notifications")) return NULL;
+  if (!gnosis_adapter_enabled("notifications")) return NULL;
   if (!dbus_message_is_method_call(source, "org.freedesktop.Notifications", "Notify") ||
       !dbus_message_has_path(source, "/org/freedesktop/Notifications")) return NULL;
   DBusMessageIter input, output;
@@ -76,8 +76,8 @@ static DBusMessage *notification_message(DBusMessage *source) {
       const char *icon = NULL;
       dbus_message_iter_get_basic(&input, &icon);
       if (icon && (!*icon || !strcmp(icon,"brave-browser") || !strcmp(icon,"brave"))) {
-        replacement = getenv("JUPITER_NOTIFICATION_ICON");
-        if (!replacement || !*replacement) replacement = "io.github.doromiert.Jupiter";
+        replacement = getenv("GNOSIS_NOTIFICATION_ICON");
+        if (!replacement || !*replacement) replacement = "com.neg-zero.Gnosis";
       }
     }
     if (!copy_value(&input, &output, replacement, 0, TRUE)) { dbus_message_unref(message); return NULL; }
@@ -86,7 +86,7 @@ static DBusMessage *notification_message(DBusMessage *source) {
   return message;
 }
 
-extern char *jupiter_portal_parent(void);
+extern char *gnosis_portal_parent(void);
 static DBusMessage *portal_message(DBusMessage *source) {
   if (!dbus_message_has_destination(source, "org.freedesktop.portal.Desktop") ||
       !dbus_message_has_path(source, "/org/freedesktop/portal/desktop") ||
@@ -94,7 +94,7 @@ static DBusMessage *portal_message(DBusMessage *source) {
         dbus_message_is_method_call(source, "org.freedesktop.portal.FileChooser", "SaveFile") ||
         dbus_message_is_method_call(source, "org.freedesktop.portal.FileChooser", "SaveFiles")) ||
       !dbus_message_has_signature(source, "ssa{sv}")) return NULL;
-  g_autofree char *parent = jupiter_portal_parent();
+  g_autofree char *parent = gnosis_portal_parent();
   if (!parent || !*parent) return NULL;
   DBusMessage *message = dbus_message_new_method_call(dbus_message_get_destination(source),
     dbus_message_get_path(source), dbus_message_get_interface(source), dbus_message_get_member(source));

@@ -4,7 +4,7 @@
 #include <glib/gstdio.h>
 #include <string>
 CefRefPtr<CefBrowser> ephy_engine_view_browser(EphyEngineView*);
-std::shared_ptr<JupiterBrave::Page> ephy_engine_view_brave_page(EphyEngineView*);
+std::shared_ptr<GnosisBrave::Page> ephy_engine_view_brave_page(EphyEngineView*);
 namespace {
 struct Print {
   GTask* task;
@@ -60,7 +60,7 @@ void ephy_engine_web_view_print(EphyEngineView* view,GtkPageSetup* page,GtkPrint
     auto* view=EPHY_ENGINE_VIEW(g_task_get_source_object(job->task));auto browser=ephy_engine_view_browser(view);
     auto brave=ephy_engine_view_brave_page(view);
     if(!browser&&!brave){job->fail(g_error_new_literal(G_IO_ERROR,G_IO_ERROR_CLOSED,"The tab was closed"));return;}
-    char* directory=g_dir_make_tmp("jupiter-print-XXXXXX",&error);
+    char* directory=g_dir_make_tmp("gnosis-print-XXXXXX",&error);
     if(!directory){job->fail(error);return;}
     job->directory=directory;g_free(directory);job->path=job->directory+"/document.pdf";
     auto* setup=gtk_print_setup_get_page_setup(job->setup);

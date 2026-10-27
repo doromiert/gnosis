@@ -50,7 +50,7 @@
  *  - Name: the user-visible pretty app name
  *  - Normalized name: lowercase name
  *  - ID: SHA-1 of name
- *  - Epiphany App ID: io.github.doromiert.Jupiter or io.github.doromiert.Jupiter.Devel or io.github.doromiert.Jupiter.Canary
+ *  - Epiphany App ID: com.neg-zero.Gnosis or com.neg-zero.Gnosis.Devel or com.neg-zero.Gnosis.Canary
  *  - GApplication ID: <epiphany-app-id>.WebApp_<id>
  *  - Profile directory: <user-data-dir>/<gapplication-id>
  *  - Desktop file: <user-data-dir>/xdg-desktop-portal/applications/<gapplication-id>.desktop

@@ -1,10 +1,10 @@
-<!doctype html><meta charset="utf-8"><title>Jupiter OpenURI</title>
+<!doctype html><meta charset="utf-8"><title>Gnosis OpenURI</title>
 <style>a{position:fixed;inset:0;display:grid;place-items:center;font:24px sans-serif}iframe{position:fixed;inset:0;width:100%;height:100%;border:0}</style>
 <a id="link">Open disposable test handler</a>
 <script>
 const params = new URL(location).searchParams, test = params.get('case'), mode = params.get('mode');
-document.title = 'Jupiter OpenURI ' + test;
-link.href = 'jupiter-test:δ/żółć?escaped=%252F&space=%20&quote=%22&case=' + encodeURIComponent(test) + '#fragment';
+document.title = 'Gnosis OpenURI ' + test;
+link.href = 'gnosis-test:δ/żółć?escaped=%252F&space=%20&quote=%22&case=' + encodeURIComponent(test) + '#fragment';
 if (params.get('target') !== 'direct') link.target = '_blank';
 const report = (event, details={}) => fetch('/settings-report', {method:'POST',body:JSON.stringify({openURI:test,event,expected:link.href,pageURL:location.href,...details})});
 link.onclick = () => {

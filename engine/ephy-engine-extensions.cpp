@@ -89,8 +89,8 @@ JsonArray* native_inventory(JsonObject* result) {
         }
       }
     }
-    if (id == "giohadoodmdcadnkcpdmhmmdnaidnckm" && *JUPITER_KEEPASSXC_DIR) {
-      path = JUPITER_KEEPASSXC_DIR;
+    if (id == "giohadoodmdcadnkcpdmhmmdnaidnckm" && *GNOSIS_KEEPASSXC_DIR) {
+      path = GNOSIS_KEEPASSXC_DIR;
       json_object_set_boolean_member(item, "builtin", true);
     }
     g_autoptr(JsonParser) manifest_parser = json_parser_new();
@@ -157,7 +157,7 @@ void native_request(EphyEngineSession* session, GCancellable* cancellable, GAsyn
       g_task_return_new_error(request->task, G_IO_ERROR, G_IO_ERROR_TIMED_OUT, "Brave's extension manager did not respond");
       return G_SOURCE_REMOVE;
     }
-    if (!request->sent) request->sent = JupiterBrave::extensions_call(request->method, request->arguments,
+    if (!request->sent) request->sent = GnosisBrave::extensions_call(request->method, request->arguments,
       [request](JsonObject* result, const std::string& error) {
         if (request->completed) return;
         request->completed = true;
@@ -275,7 +275,7 @@ public:
     auto requested = ephy_engine_session_context(session);
     if (!context || !requested || !context->IsSame(requested)) {
       g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_PERMISSION_DENIED,
-                          "The extension request is not in Jupiter's normal profile");
+                          "The extension request is not in Gnosis's normal profile");
       return false;
     }
     if (closed || closing) {
@@ -287,7 +287,7 @@ public:
 
   bool owned(const std::string &id) const {
     if (id.empty() || !catalog) return false;
-    if (helper_origin == "chrome-extension://" + id || id == Extensions::id_for_path(JUPITER_BRIDGE_DIR)) return false;
+    if (helper_origin == "chrome-extension://" + id || id == Extensions::id_for_path(GNOSIS_BRIDGE_DIR)) return false;
     for (guint i = 0; i < json_array_get_length(catalog); ++i) {
       auto *item = json_array_get_object_element(catalog, i);
       if (item && id == json_object_get_string_member_with_default(item, "id", "")) return true;
@@ -449,12 +449,12 @@ public:
       if (request->complete) continue;
       if (g_task_return_error_if_cancelled(request->task)) { complete(request); continue; }
       if (request->mutate && !owned(request->id)) {
-        fail(request, G_IO_ERROR_PERMISSION_DENIED, "This extension is not managed by Jupiter"); continue;
+        fail(request, G_IO_ERROR_PERMISSION_DENIED, "This extension is not managed by Gnosis"); continue;
       }
       auto params = CefDictionaryValue::Create();
       std::string expression = request->mutate
-        ? "JupiterExtensionManager.setEnabled(" + quote(request->id) + "," + (request->enabled ? "true" : "false") + ")"
-        : "JupiterExtensionManager.inventory()";
+        ? "GnosisExtensionManager.setEnabled(" + quote(request->id) + "," + (request->enabled ? "true" : "false") + ")"
+        : "GnosisExtensionManager.inventory()";
       params->SetString("expression", expression);
       params->SetBool("awaitPromise", true); params->SetBool("returnByValue", true);
       params->SetString("uniqueContextId", context_unique);
@@ -676,7 +676,7 @@ void ephy_engine_extensions_initialize(JsonArray *owned, CefRefPtr<CefRequestCon
   service->context = context;
   service->changed = std::move(changed);
   try {
-    auto manager = Extensions::read_manifest(JUPITER_MANAGER_DIR);
+    auto manager = Extensions::read_manifest(GNOSIS_MANAGER_DIR);
     service->helper_origin = "chrome-extension://" + manager.id;
     service->helper_uri = service->helper_origin + "/helper.html";
     service->client = new ManagementClient(service.get());
@@ -702,7 +702,7 @@ void ephy_engine_extensions_shutdown() {
 
 void ephy_engine_extensions_query_async(EphyEngineSession *session, GCancellable *cancellable,
                                         GAsyncReadyCallback callback, gpointer user_data) {
-  if (JupiterBrave::enabled()) {
+  if (GnosisBrave::enabled()) {
     native_request(session, cancellable, callback, user_data,
       reinterpret_cast<gpointer>(ephy_engine_extensions_query_async), "inventory", "");
     return;
@@ -721,11 +721,11 @@ JsonArray *ephy_engine_extensions_query_finish(EphyEngineSession *session, GAsyn
 }
 void ephy_engine_extensions_set_enabled_async(EphyEngineSession *session, const char *id, gboolean enabled,
                                               GCancellable *cancellable, GAsyncReadyCallback callback, gpointer user_data) {
-  if (JupiterBrave::enabled()) {
+  if (GnosisBrave::enabled()) {
     const std::string target = id ? id : "";
     native_request(session, cancellable, callback, user_data,
       reinterpret_cast<gpointer>(ephy_engine_extensions_set_enabled_async), "setEnabled",
-      JupiterBrave::quote(target) + (enabled ? ",true" : ",false"));
+      GnosisBrave::quote(target) + (enabled ? ",true" : ",false"));
     return;
   }
   auto request = make_request(session, cancellable, callback, user_data,
@@ -799,7 +799,7 @@ void native_install(EphyEngineSession* session, GFile* directory, GCancellable* 
       native_store->commit_install(*installation);
       auto* metadata = installation_metadata(installation->extension);
       auto task = std::shared_ptr<GTask>(G_TASK(g_object_ref(pending->task)), g_object_unref);
-      if (!JupiterBrave::extensions_load(installation->extension.path, [task, metadata](JsonObject* result, const std::string& error) {
+      if (!GnosisBrave::extensions_load(installation->extension.path, [task, metadata](JsonObject* result, const std::string& error) {
         if (result) {
           json_object_set_string_member(metadata, "id", json_object_get_string_member_with_default(result, "id", ""));
           for (const char* key : {"loaded", "available", "enabled"}) json_object_set_boolean_member(metadata, key, true);
@@ -813,7 +813,7 @@ void native_install(EphyEngineSession* session, GFile* directory, GCancellable* 
       })) {
         json_object_unref(metadata);
         g_task_return_new_error(task.get(), G_IO_ERROR, G_IO_ERROR_NOT_CONNECTED,
-          "Extension saved; restart Jupiter to load it when Brave is available");
+          "Extension saved; restart Gnosis to load it when Brave is available");
       }
     } catch (const std::exception& error) {
       g_task_return_new_error(pending->task, G_IO_ERROR, G_IO_ERROR_FAILED, "%s", error.what());
@@ -854,7 +854,7 @@ void installation_prepared(GObject *source, GAsyncResult *result, gpointer user_
   }
   const auto &id = pending->extension.id;
   if (service->owned(id) || service->helper_origin == "chrome-extension://" + id ||
-      id == Extensions::id_for_path(JUPITER_BRIDGE_DIR)) {
+      id == Extensions::id_for_path(GNOSIS_BRIDGE_DIR)) {
     g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_EXISTS, "An extension with this ID is already installed");
     return;
   }
@@ -878,7 +878,7 @@ void ephy_engine_extensions_install_unpacked_async(EphyEngineSession *session, G
                                                   GCancellable *cancellable, GAsyncReadyCallback callback,
                                                   gpointer user_data) {
   g_return_if_fail(EPHY_IS_ENGINE_SESSION(session));
-  if (JupiterBrave::enabled()) { native_install(session, directory, cancellable, callback, user_data); return; }
+  if (GnosisBrave::enabled()) { native_install(session, directory, cancellable, callback, user_data); return; }
   auto *task = g_task_new(session, cancellable, callback, user_data);
   g_task_set_source_tag(task, reinterpret_cast<gpointer>(ephy_engine_extensions_install_unpacked_async));
   g_task_set_check_cancellable(task, false);

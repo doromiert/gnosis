@@ -1,8 +1,8 @@
 // Executed by the native backend in a private CDP isolated world, not as a
 // page script. No native command binding is exposed to webpage JavaScript.
 (() => {
-  const send = globalThis.__jupiterContextMenu;
-  delete globalThis.__jupiterContextMenu;
+  const send = globalThis.__gnosisContextMenu;
+  delete globalThis.__gnosisContextMenu;
   if (typeof send !== 'function' || typeof globalThis.__gnosisContextMenuAction === 'function') return;
   let sequence = 0;
   let target = null;

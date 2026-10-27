@@ -31,7 +31,7 @@ class ScriptEvaluation;
 class Protocol final : public CefDevToolsMessageObserver {
 public:
   CefRefPtr<CefBrowser> browser;
-  std::weak_ptr<JupiterBrave::Page> brave;
+  std::weak_ptr<GnosisBrave::Page> brave;
   CefRefPtr<CefRegistration> registration;
   std::map<int, Reply> pending;
   std::map<ScriptEvaluation*, std::weak_ptr<ScriptEvaluation>> evaluations;
@@ -254,7 +254,7 @@ struct ViewData {
   double progress = 0, zoom = 1;
   explicit ViewData(EphyEngineView* view) : self(view), host(*runtime) {
     g_weak_ref_init(&extension_owner, nullptr);
-    browser = new Browser("about:blank", g_getenv("JUPITER_SOFTWARE_RENDERING") || !ephy_engine_settings_get_hardware_acceleration());
+    browser = new Browser("about:blank", g_getenv("GNOSIS_SOFTWARE_RENDERING") || !ephy_engine_settings_get_hardware_acceleration());
     browser->host = &host;
     settings = EPHY_ENGINE_SETTINGS(g_object_ref(ephy_engine_settings_get_default()));
     protocol = new Protocol;
@@ -555,7 +555,7 @@ struct ViewData {
       };
       page->set_zoom(zoom);
       page->download_begin = [this](const std::string& uri, const std::string& name, const std::string& staging,
-                                     std::function<void()> cancel) -> JupiterBrave::DownloadProgress {
+                                     std::function<void()> cancel) -> GnosisBrave::DownloadProgress {
         if (disposed || detached) return {};
         auto* download = ephy_engine_download_native_begin(host.session ? host.session : ephy_engine_session_get_default(),
           uri, name, staging, std::move(cancel));
@@ -564,15 +564,15 @@ struct ViewData {
           ephy_engine_download_native_update(keep.get(), received, total, state);
         };
       };
-      page->internal_resource = [this](const std::string& uri, bool main, JupiterBrave::ResourceReply reply) {
+      page->internal_resource = [this](const std::string& uri, bool main, GnosisBrave::ResourceReply reply) {
         if (disposed || detached) { reply(nullptr, "", "The view is closed"); return; }
         ephy_engine_uri_scheme_fetch_async(self, uri.c_str(), main, nullptr,
           +[](GObject*, GAsyncResult* result, gpointer user) {
-            std::unique_ptr<JupiterBrave::ResourceReply> reply(static_cast<JupiterBrave::ResourceReply*>(user));
+            std::unique_ptr<GnosisBrave::ResourceReply> reply(static_cast<GnosisBrave::ResourceReply*>(user));
             g_autoptr(GError) error = nullptr; g_autofree char* mime = nullptr;
             g_autoptr(GBytes) bytes = ephy_engine_uri_scheme_fetch_finish(result, &mime, &error);
             (*reply)(bytes, mime ? mime : "application/octet-stream", error ? error->message : "");
-          }, new JupiterBrave::ResourceReply(std::move(reply)));
+          }, new GnosisBrave::ResourceReply(std::move(reply)));
       };
       page->page_message = [this](const std::string& uri, const std::string& name, const std::string& payload) {
         if (!disposed && !detached && browser->on_page_message) browser->on_page_message(uri, name, payload);
@@ -822,7 +822,7 @@ public:
   CefRefPtr<CefResourceBundleHandler> GetResourceBundleHandler() override { return this; }
   bool GetLocalizedString(int id, CefString& value) override {
     if (id != IDS_PRODUCT_NAME) return false;
-    value = "Jupiter";
+    value = "Gnosis";
     return true;
   }
   bool GetDataResource(int, void*&, size_t&) override { return false; }
@@ -861,7 +861,7 @@ char* ephy_engine_dup_version_info() {
     version.chrome_version_build, version.chrome_version_patch);
 }
 JsonArray *ephy_engine_extensions_dup_installed(void) {
-  if (JupiterBrave::enabled()) return ephy_engine_extensions_dup_native_snapshot();
+  if (GnosisBrave::enabled()) return ephy_engine_extensions_dup_native_snapshot();
   auto *catalog = json_array_new();
   if (!runtime) return catalog;
   for (const auto& extension : runtime->extensions.installed) {
@@ -965,8 +965,8 @@ NO_STACK_PROTECTOR NOINLINE int ephy_engine_execute_process(int argc, char** arg
     g_printerr("Cannot disable Chromium memory core dumps; refusing to start.\n");
     return 1;
   }
-  if (JupiterBrave::enabled()) {
-    if (!JupiterBrave::composited()) g_setenv("GDK_BACKEND", "x11", true);
+  if (GnosisBrave::enabled()) {
+    if (!GnosisBrave::composited()) g_setenv("GDK_BACKEND", "x11", true);
     return -1;
   }
   engine = new Engine;
@@ -980,10 +980,10 @@ gboolean ephy_engine_initialize(int argc, char** argv, const char* profile, gboo
   catch (const std::exception& error) { g_printerr("Extensions: %s\n", error.what()); return false; }
   runtime->gtk_app = g_application_get_default();
   runtime->render_test = self_test;
-  if (JupiterBrave::enabled()) {
-    JupiterBrave::initialize(profile);
+  if (GnosisBrave::enabled()) {
+    GnosisBrave::initialize(profile);
     ephy_engine_extensions_initialize_brave(&runtime->extensions);
-    JupiterBrave::initialize_extensions([] {
+    GnosisBrave::initialize_extensions([] {
       g_signal_emit_by_name(ephy_engine_session_get_default(), "extensions-changed");
     });
     return true;
@@ -994,7 +994,7 @@ gboolean ephy_engine_initialize(int argc, char** argv, const char* profile, gboo
     runtime->extension_host->permissions[ext.id] = ext.permissions;
     runtime->extension_host->extension_paths[ext.id] = ext.path;
   }
-  runtime->extension_host->tab_bridge_id = Extensions::id_for_path(JUPITER_BRIDGE_DIR);
+  runtime->extension_host->tab_bridge_id = Extensions::id_for_path(GNOSIS_BRIDGE_DIR);
   runtime->extension_host->tabs = [](CefRefPtr<CefBrowser> source) {
     std::vector<ExtensionTab> tabs;
     GtkRoot *current = nullptr;
@@ -1022,8 +1022,8 @@ gboolean ephy_engine_initialize(int argc, char** argv, const char* profile, gboo
       if (view->disposed || view->host.private_mode || b->is_extension_popup || !root ||
           !b->cef_browser() || b->native_tab_id < 0) continue;
       if (!current) current = root;
-      int window = GPOINTER_TO_INT(g_object_get_data(G_OBJECT(root), "jupiter-extension-window-id"));
-      if (!window) { window = ++next_window; g_object_set_data(G_OBJECT(root), "jupiter-extension-window-id", GINT_TO_POINTER(window)); }
+      int window = GPOINTER_TO_INT(g_object_get_data(G_OBJECT(root), "gnosis-extension-window-id"));
+      if (!window) { window = ++next_window; g_object_set_data(G_OBJECT(root), "gnosis-extension-window-id", GINT_TO_POINTER(window)); }
       bool active = gtk_widget_get_mapped(widget);
       for (auto *parent = gtk_widget_get_parent(widget); parent; parent = gtk_widget_get_parent(parent)) {
         if (!ADW_IS_TAB_VIEW(parent)) continue;
@@ -1133,13 +1133,13 @@ gboolean ephy_engine_initialize(int argc, char** argv, const char* profile, gboo
   json_array_unref(catalog);
   return true;
 }
-void ephy_engine_set_automation_mode(gboolean enabled) { JupiterBrave::set_automation_mode(enabled); }
+void ephy_engine_set_automation_mode(gboolean enabled) { GnosisBrave::set_automation_mode(enabled); }
 gboolean ephy_engine_prepare_shutdown() {
   if (!runtime) return true;
-  if (JupiterBrave::enabled()) {
+  if (GnosisBrave::enabled()) {
     for (auto* view : views) view->browser->shutdown();
     ephy_engine_extensions_close();
-    JupiterBrave::shutdown();
+    GnosisBrave::shutdown();
     return true;
   }
   ephy_engine_downloads_shutdown();
@@ -1157,7 +1157,7 @@ gboolean ephy_engine_prepare_shutdown() {
   return false;
 }
 void ephy_engine_shutdown() {
-  if (JupiterBrave::enabled()) {
+  if (GnosisBrave::enabled()) {
     ephy_engine_prepare_shutdown();
     delete runtime; runtime = nullptr;
     ephy_engine_clear_scheme_handlers();
@@ -1201,7 +1201,7 @@ void ephy_engine_web_view_try_close(EphyEngineView* v) { data(v)->browser->close
 namespace {
 struct NativeCloseCall {
   GTask* task;
-  std::weak_ptr<JupiterBrave::Page> page;
+  std::weak_ptr<GnosisBrave::Page> page;
   gulong cancel_handler = 0;
   bool complete = false;
   ~NativeCloseCall() { g_object_unref(task); }
@@ -1302,7 +1302,7 @@ void ephy_engine_web_view_load_alternate_html(EphyEngineView* v, const gchar* co
   // unique document token inside the opaque payload so every event has the
   // same lookup key and session saving never sees the data-URL transport.
   g_autofree char *id = g_uuid_string_random();
-  const std::string document = "<!--jupiter-alternate-" + std::string(id) + "-->\n" + content;
+  const std::string document = "<!--gnosis-alternate-" + std::string(id) + "-->\n" + content;
   char* encoded = g_base64_encode(reinterpret_cast<const guchar*>(document.data()), document.size());
   std::string url = "data:text/html;charset=utf-8;base64," + std::string(encoded); g_free(encoded);
   auto *d = data(v);
@@ -1371,11 +1371,11 @@ const EphyEnginePopupProperties* ephy_engine_web_view_get_popup_properties(EphyE
 namespace { std::string native_user_css, native_user_js; }
 void ephy_engine_set_user_stylesheet(const char* source) {
   native_user_css = source ? source : "";
-  JupiterBrave::set_user_content(native_user_css, native_user_js);
+  GnosisBrave::set_user_content(native_user_css, native_user_js);
 }
 void ephy_engine_set_user_javascript(const char* source) {
   native_user_js = source ? source : "";
-  JupiterBrave::set_user_content(native_user_css, native_user_js);
+  GnosisBrave::set_user_content(native_user_css, native_user_js);
 }
 gboolean ephy_engine_web_view_show_password_manager(EphyEngineView* view) {
   if (auto page = data(view)->browser->brave_page()) { page->show_password_manager(); return true; }
@@ -1474,7 +1474,7 @@ void ephy_engine_find_controller_count_matches(EphyEngineFind* f,const gchar* te
   g_free(f->text); f->text=g_strdup(text); f->options=options; ++f->generation;
   native_find(f, !(options&WEBKIT_FIND_OPTIONS_BACKWARDS), true, false, limit);
 }
-gboolean ephy_engine_find_controller_uses_native_results(EphyEngineFind* f) { return JupiterBrave::enabled() || bool(f->view->browser->brave_page()); }
+gboolean ephy_engine_find_controller_uses_native_results(EphyEngineFind* f) { return GnosisBrave::enabled() || bool(f->view->browser->brave_page()); }
 gboolean ephy_engine_find_controller_supports_word_starts(EphyEngineFind* f) { return !ephy_engine_find_controller_uses_native_results(f); }
 guint32 ephy_engine_find_controller_get_options(EphyEngineFind* f) { return f->options; }
 gboolean ephy_engine_web_inspector_is_open(EphyEngineInspector* i) {
@@ -1581,7 +1581,7 @@ private:
   void create_world(const std::string& frame) {
     auto args = CefDictionaryValue::Create();
     args->SetString("frameId", frame);
-    args->SetString("worldName", "Jupiter page " + world_);
+    args->SetString("worldName", "Gnosis page " + world_);
     args->SetBool("grantUniveralAccess", false);
     auto self = shared_from_this();
     pending_ = protocol_->send("Page.createIsolatedWorld", args, [self](auto reply, const auto& error) {
@@ -1770,4 +1770,4 @@ EphyEngineView* ephy_engine_view_for_browser(int id) {
 
 CefRefPtr<CefBrowser> ephy_engine_view_browser(EphyEngineView* view) {return data(view)->browser->cef_browser();}
 
-std::shared_ptr<JupiterBrave::Page> ephy_engine_view_brave_page(EphyEngineView* view) { return data(view)->browser->brave_page(); }
+std::shared_ptr<GnosisBrave::Page> ephy_engine_view_brave_page(EphyEngineView* view) { return data(view)->browser->brave_page(); }

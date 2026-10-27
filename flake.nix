@@ -17,7 +17,7 @@
         exec python3 ${./engine/tools/check-brave-patches.py} --patches ${./engine/brave/patches} "$@"
       '';
     };
-    bravePatchInputs = pkgs.linkFarm "jupiter-brave-patch-inputs" ([ {
+    bravePatchInputs = pkgs.linkFarm "gnosis-brave-patch-inputs" ([ {
       name = "brave/package.json";
       path = pkgs.fetchurl {
         url = "https://raw.githubusercontent.com/brave/brave-core/v${braveSeries.brave_version}/package.json";
@@ -31,16 +31,17 @@
       };
     }) braveSeries.sources);
   in {
-    packages.${system} = { default = package; gnosis = package; jupiter = package; cef-sdk = package.cefSdk; brave-native-ui = nativeBrave; };
+    packages.${system} = { default = package; gnosis = package; cef-sdk = package.cefSdk; brave-native-ui = nativeBrave; };
     apps.${system} = {
       default = { type = "app"; program = "${package}/bin/gnosis"; };
-      compositor-probe = { type = "app"; program = "${compositorProbe}/bin/jupiter-compositor-probe"; };
+      compositor-probe = { type = "app"; program = "${compositorProbe}/bin/gnosis-compositor-probe"; };
       check-brave-patches = { type = "app"; program = "${bravePatchChecker}/bin/check-brave-patches"; };
     };
+    checks.${system}.rebrand = package.rebrandCheck;
     checks.${system}.brave-patches = assert pkgs.lib.assertMsg
       (pkgs.brave.version == braveSeries.brave_version)
       "Brave version drift: run check-brave-patches --fetch --brave-version <new-version> --upgrade and review the pin.";
-      pkgs.runCommand "jupiter-brave-patches" { nativeBuildInputs = [ pkgs.python3 pkgs.patch ]; } ''
+      pkgs.runCommand "gnosis-brave-patches" { nativeBuildInputs = [ pkgs.python3 pkgs.patch ]; } ''
         python3 ${./engine/tools/check-brave-patches.py} ${bravePatchInputs} \
           --patches ${./engine/brave/patches} --report "$out"
       '';

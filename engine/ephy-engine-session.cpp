@@ -22,8 +22,8 @@
 #include <vector>
 
 namespace {
-constexpr const char *permission_migration_pref = "jupiter.permission_policy_version";
-constexpr const char *upload_folder_pref = "jupiter.last_upload_folder";
+constexpr const char *permission_migration_pref = "gnosis.permission_policy_version";
+constexpr const char *upload_folder_pref = "gnosis.last_upload_folder";
 using PermissionKey = std::pair<EphyEnginePermissionKind, std::pair<std::string, std::string>>;
 std::optional<cef_content_setting_types_t> permission_type(EphyEnginePermissionKind kind) {
   switch (kind) {
@@ -534,7 +534,7 @@ struct NativeCookieDeletion : std::enable_shared_from_this<NativeCookieDeletion>
   void next() {
     if (g_task_return_error_if_cancelled(task)) return;
     if (index == cookies.size()) { g_task_return_boolean(task, true); return; }
-    JupiterBrave::browser_command(private_profile, "Network.deleteCookies", cookies[index++],
+    GnosisBrave::browser_command(private_profile, "Network.deleteCookies", cookies[index++],
       [self = shared_from_this()](JsonObject*, const std::string& error) {
         if (!error.empty()) g_task_return_new_error(self->task, G_IO_ERROR, G_IO_ERROR_FAILED, "%s", error.c_str());
         else self->next();
@@ -550,7 +550,7 @@ void native_delete_cookies(EphyEngineSession* session, GTask* task, const char* 
   deletion->task = task; deletion->private_profile = ephy_engine_session_is_ephemeral(session);
   const std::string wanted_domain = domain ? domain : "", wanted_name = name ? name : "", wanted_path = path ? path : "";
   const bool individual = name != nullptr;
-  JupiterBrave::browser_command(deletion->private_profile, "Storage.getCookies", "{}",
+  GnosisBrave::browser_command(deletion->private_profile, "Storage.getCookies", "{}",
     [deletion, wanted_domain, wanted_name, wanted_path, individual](JsonObject* result, const std::string& error) {
       if (!error.empty()) { g_task_return_new_error(deletion->task, G_IO_ERROR, G_IO_ERROR_FAILED, "%s", error.c_str()); return; }
       auto* cookies = result ? json_object_get_array_member(result, "cookies") : nullptr;
@@ -572,7 +572,7 @@ void native_delete_cookies(EphyEngineSession* session, GTask* task, const char* 
     });
 }
 }
-gboolean ephy_engine_session_uses_brave(EphyEngineSession*) { return JupiterBrave::enabled(); }
+gboolean ephy_engine_session_uses_brave(EphyEngineSession*) { return GnosisBrave::enabled(); }
 void ephy_engine_session_clear_website_storage(EphyEngineSession* session, const char* const* types,
                                                GCancellable* cancel, GAsyncReadyCallback callback, gpointer user) {
   auto* task = g_task_new(session, cancel, callback, user);
@@ -581,7 +581,7 @@ void ephy_engine_session_clear_website_storage(EphyEngineSession* session, const
   for (unsigned i = 0; types && types[i]; ++i) json_array_add_string_element(array, types[i]);
   g_autoptr(JsonNode) node = json_node_new(JSON_NODE_ARRAY); json_node_set_array(node, array);
   g_autofree char* json = json_to_string(node, false);
-  JupiterBrave::clear_website_data(ephy_engine_session_is_ephemeral(session), json,
+  GnosisBrave::clear_website_data(ephy_engine_session_is_ephemeral(session), json,
     [task](JsonObject*, const std::string& error) { native_cookie_done(task, error); });
 }
 gboolean ephy_engine_session_clear_website_storage_finish(EphyEngineSession* session, GAsyncResult* result, GError** error) {
@@ -590,10 +590,10 @@ gboolean ephy_engine_session_clear_website_storage_finish(EphyEngineSession* ses
 }
 void ephy_engine_session_get_cookies(EphyEngineSession *session, const char *uri, GCancellable *cancel, GAsyncReadyCallback callback, gpointer user) {
   auto *task = g_task_new(session, cancel, callback, user);
-  if (JupiterBrave::enabled()) {
+  if (GnosisBrave::enabled()) {
     if (g_task_return_error_if_cancelled(task)) { g_object_unref(task); return; }
     const std::string filter = uri ? uri : "";
-    JupiterBrave::browser_command(ephy_engine_session_is_ephemeral(session), "Storage.getCookies", "{}",
+    GnosisBrave::browser_command(ephy_engine_session_is_ephemeral(session), "Storage.getCookies", "{}",
       [task, filter](JsonObject* result, const std::string& error) {
         if (!error.empty()) { native_cookie_done(task, error); return; }
         GList* list = nullptr;
@@ -633,7 +633,7 @@ GList *ephy_engine_session_get_cookies_finish(EphyEngineSession *session, GAsync
 }
 void ephy_engine_session_add_cookie(EphyEngineSession *session, SoupCookie *source, GCancellable *cancel, GAsyncReadyCallback callback, gpointer user) {
   auto *task = g_task_new(session, cancel, callback, user);
-  if (JupiterBrave::enabled()) {
+  if (GnosisBrave::enabled()) {
     if (g_task_return_error_if_cancelled(task)) { g_object_unref(task); return; }
     g_autoptr(JsonObject) cookie = json_object_new();
     for (auto [key, value] : {std::pair{"name",soup_cookie_get_name(source)}, {"value",soup_cookie_get_value(source)},
@@ -645,7 +645,7 @@ void ephy_engine_session_add_cookie(EphyEngineSession *session, SoupCookie *sour
     if (same_site != SOUP_SAME_SITE_POLICY_NONE || soup_cookie_get_secure(source))
       json_object_set_string_member(cookie, "sameSite", same_site == SOUP_SAME_SITE_POLICY_STRICT ? "Strict" : same_site == SOUP_SAME_SITE_POLICY_LAX ? "Lax" : "None");
     if (auto* expires = soup_cookie_get_expires(source)) json_object_set_double_member(cookie, "expires", g_date_time_to_unix(expires));
-    JupiterBrave::browser_command(ephy_engine_session_is_ephemeral(session), "Storage.setCookies", "{\"cookies\":[" + cookie_json(cookie) + "]}",
+    GnosisBrave::browser_command(ephy_engine_session_is_ephemeral(session), "Storage.setCookies", "{\"cookies\":[" + cookie_json(cookie) + "]}",
       [task](JsonObject*, const std::string& error) { native_cookie_done(task, error); });
     return;
   }
@@ -680,7 +680,7 @@ gboolean ephy_engine_session_add_cookie_finish(EphyEngineSession *session, GAsyn
 }
 void ephy_engine_session_delete_cookie(EphyEngineSession *session, SoupCookie *cookie, GCancellable *cancel, GAsyncReadyCallback callback, gpointer user) {
   auto *task = g_task_new(session, cancel, callback, user);
-  if (JupiterBrave::enabled()) {
+  if (GnosisBrave::enabled()) {
     native_delete_cookies(session, task, soup_cookie_get_domain(cookie), soup_cookie_get_name(cookie), soup_cookie_get_path(cookie)); return;
   }
   auto manager = cookie_manager(session, task);
@@ -699,10 +699,10 @@ void ephy_engine_session_clear_cookies(EphyEngineSession *session, const char *d
     g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT, "Cookie domain must not be empty");
     g_object_unref(task); return;
   }
-  if (JupiterBrave::enabled()) {
+  if (GnosisBrave::enabled()) {
     if (g_task_return_error_if_cancelled(task)) { g_object_unref(task); return; }
     if (domain) native_delete_cookies(session, task, domain);
-    else JupiterBrave::browser_command(ephy_engine_session_is_ephemeral(session), "Storage.clearCookies", "{}",
+    else GnosisBrave::browser_command(ephy_engine_session_is_ephemeral(session), "Storage.clearCookies", "{}",
       [task](JsonObject*, const std::string& error) { native_cookie_done(task, error); });
     return;
   }
@@ -719,8 +719,8 @@ void ephy_engine_session_clear_cache(EphyEngineSession *session, GCancellable *c
   g_return_if_fail(EPHY_IS_ENGINE_SESSION(session));
   auto *task = g_task_new(session, cancel, callback, user);
   if (g_task_return_error_if_cancelled(task)) { g_object_unref(task); return; }
-  if (JupiterBrave::enabled()) {
-    JupiterBrave::browser_command(ephy_engine_session_is_ephemeral(session), "Network.clearBrowserCache", "{}",
+  if (GnosisBrave::enabled()) {
+    GnosisBrave::browser_command(ephy_engine_session_is_ephemeral(session), "Network.clearBrowserCache", "{}",
       [task](JsonObject*, const std::string& error) { native_cookie_done(task, error); });
     return;
   }

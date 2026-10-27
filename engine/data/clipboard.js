@@ -1,5 +1,5 @@
 ((mainWorld, readText, read) => {
-  const post = window.__jupiterClipboardWrite;
+  const post = window.__gnosisClipboardWrite;
   const generation = Math.random().toString(36).slice(2);
   const pending = new Map(); let sequence = 0;
   const limit = 64 * 1024 * 1024;
@@ -14,7 +14,7 @@
     pending.set(id, {resolve, reject, timer});
     post(JSON.stringify({generation, id, items}));
   });
-  Object.defineProperty(window, '__jupiterClipboardResult', {value: (token, id, ok) => {
+  Object.defineProperty(window, '__gnosisClipboardResult', {value: (token, id, ok) => {
     if (token !== generation) return;
     const request = pending.get(id); if (!request) return;
     pending.delete(id); clearTimeout(request.timer);

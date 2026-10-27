@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check Jupiter's small Brave patch series without changing a checkout."""
+"""Check Gnosis's small Brave patch series without changing a checkout."""
 import argparse
 import hashlib
 import json
@@ -32,7 +32,7 @@ def versions(metadata):
 
 
 def download(url, optional=False):
-    request = urllib.request.Request(url, headers={'User-Agent': 'Jupiter-patch-check/1'})
+    request = urllib.request.Request(url, headers={'User-Agent': 'Gnosis-patch-check/1'})
     try:
         with urllib.request.urlopen(request, timeout=30) as response:
             data = response.read(16 * 1024 * 1024 + 1)
@@ -108,7 +108,7 @@ def check(source, patches, upgrade=False):
     if not tool:
         raise ValueError('GNU patch is required')
     operations = []
-    with tempfile.TemporaryDirectory(prefix='jupiter-brave-patches-') as directory:
+    with tempfile.TemporaryDirectory(prefix='gnosis-brave-patches-') as directory:
         root = Path(directory)
         working = root / 'src'
         for name, data in baseline.items():
@@ -162,7 +162,7 @@ def main():
     if any(output and output.resolve() == pin for output in (args.report, args.candidate_pin)):
         parser.error('Reports and proposed pins must not overwrite the real series.json')
     try:
-        with tempfile.TemporaryDirectory(prefix='jupiter-brave-source-') as directory:
+        with tempfile.TemporaryDirectory(prefix='gnosis-brave-source-') as directory:
             source = args.source.resolve() if args.source else Path(directory)
             if args.fetch:
                 manifest = json.loads((args.patches / 'series.json').read_text())

@@ -51,9 +51,9 @@ class Fixture(http.server.BaseHTTPRequestHandler):
         if auth_url.path in ('/auth/basic', '/auth/digest', '/auth/proxy'):
             proxy = auth_url.path == '/auth/proxy'
             digest = auth_url.path == '/auth/digest'
-            realm = urllib.parse.parse_qs(auth_url.query).get('realm', ['Jupiter authentication'])[0]
+            realm = urllib.parse.parse_qs(auth_url.query).get('realm', ['Gnosis authentication'])[0]
             # Fixed fixture credentials; observations deliberately omit credential values.
-            username, password, nonce = 'jupiter-user', 'fixture-password', 'jupiter-native-auth-nonce'
+            username, password, nonce = 'gnosis-user', 'fixture-password', 'gnosis-native-auth-nonce'
             authorization = self.headers.get('Proxy-Authorization' if proxy else 'Authorization', '')
             valid = authorization == 'Basic ' + base64.b64encode(f'{username}:{password}'.encode()).decode()
             if digest:
@@ -112,7 +112,7 @@ class Fixture(http.server.BaseHTTPRequestHandler):
                 self.close_connection = True
                 return
             body = b'''<!doctype html><title>Recovered through native Retry</title><h1>Recovered</h1><script>
-              fetch('/settings-report',{method:'POST',body:JSON.stringify({pageRetryRecovered:true,internalAPI:typeof Jupiter})});
+              fetch('/settings-report',{method:'POST',body:JSON.stringify({pageRetryRecovered:true,internalAPI:typeof Gnosis})});
             </script>'''
             self.send_response(200)
             self.send_header('Content-Type', 'text/html')
@@ -199,7 +199,7 @@ class Fixture(http.server.BaseHTTPRequestHandler):
               <style>body{font:18px sans-serif;margin:20px}article{padding-top:200px;max-width:720px}
               button,input{position:fixed;left:20px;width:400px;height:60px}button{top:20px}input{top:100px}</style>
               <button id=selectText>Select phrase</button><input id=proof placeholder="Paste proof">
-              <article><h1>Native result article</h1><p><span id=phrase>Jupiter native results</span></p><p id=live></p>''' +
+              <article><h1>Native result article</h1><p><span id=phrase>Gnosis native results</span></p><p id=live></p>''' +
                     '<p>Reader session cookie: '+html.escape(self.headers.get('Cookie', 'none'))+'</p>'+
                     ''.join('<p>'+paragraph+'</p>' for _ in range(12)) + '''</article><script>
               document.cookie='reader_scope='+(new URLSearchParams(location.search).get('scope')||'regular')+';SameSite=Lax;Path=/';
@@ -224,7 +224,7 @@ class Fixture(http.server.BaseHTTPRequestHandler):
             self.wfile.write(body)
             return
         if self.path == '/cookies-ui-fixture':
-            body = b'''<!doctype html><title>Jupiter cookies fixture</title><p id=cookies>Waiting for cookies</p><script>
+            body = b'''<!doctype html><title>Gnosis cookies fixture</title><p id=cookies>Waiting for cookies</p><script>
               document.cookie='pageCookie='+location.hostname+'; SameSite=Lax; Path=/';
               localStorage.setItem('keepStorage','preserved');
               setInterval(()=>fetch('/echo-cookie').then(r=>r.text()).then(httpCookies=>{
@@ -240,7 +240,7 @@ class Fixture(http.server.BaseHTTPRequestHandler):
             self.wfile.write(body)
             return
         if self.path == '/cache-ui-fixture':
-            body = b'''<!doctype html><title>Jupiter cache fixture</title><p id=cache>Waiting for cache</p><script>
+            body = b'''<!doctype html><title>Gnosis cache fixture</title><p id=cache>Waiting for cache</p><script>
               setInterval(()=>fetch('/cache-fixture').then(r=>r.text()).then(text=>{
                 cache.textContent=text;return fetch('/settings-report',{method:'POST',body:JSON.stringify({cache:text})});
               }).catch(()=>{}),250);
@@ -359,7 +359,7 @@ class Fixture(http.server.BaseHTTPRequestHandler):
             self.send_header('Content-Type', 'text/html; charset=utf-8')
             self.send_header('Content-Length', str(len(body)))
             self.send_header('Content-Disposition', "inline; filename*=UTF-8''report%20%C3%A9.html")
-            self.send_header('X-Jupiter-Fixture', 'actual-response')
+            self.send_header('X-Gnosis-Fixture', 'actual-response')
             self.end_headers()
             self.wfile.write(body)
             return
@@ -414,7 +414,7 @@ class Fixture(http.server.BaseHTTPRequestHandler):
     def log_message(self, *args):
         pass
 
-with tempfile.TemporaryDirectory(prefix="jupiter-native-check-") as scratch:
+with tempfile.TemporaryDirectory(prefix="gnosis-native-check-") as scratch:
     root = Path(scratch)
     display_file = root / "display"
     with display_file.open("w") as display_out:
@@ -434,18 +434,18 @@ with tempfile.TemporaryDirectory(prefix="jupiter-native-check-") as scratch:
             time.sleep(.05)
         bus = root / "bus.conf"
         bus.write_text('<busconfig><type>session</type><listen>unix:tmpdir=/tmp</listen><auth>EXTERNAL</auth><policy context="default"><allow send_destination="*"/><allow receive_sender="*"/><allow own="*"/></policy></busconfig>')
-        env = dict(os.environ, DISPLAY=":" + display_file.read_text().strip(), GDK_BACKEND="x11", GTK_A11Y="none", GIO_USE_VFS="local", GTK_USE_PORTAL="0", JUPITER_SOFTWARE_RENDERING="1", JUPITER_TEST_URL=f"http://127.0.0.1:{server.server_port}/")
+        env = dict(os.environ, DISPLAY=":" + display_file.read_text().strip(), GDK_BACKEND="x11", GTK_A11Y="none", GIO_USE_VFS="local", GTK_USE_PORTAL="0", GNOSIS_SOFTWARE_RENDERING="1", GNOSIS_TEST_URL=f"http://127.0.0.1:{server.server_port}/")
         if args.desktop:
-            for key in ("DISPLAY", "WAYLAND_DISPLAY", "GDK_BACKEND", "JUPITER_SOFTWARE_RENDERING"):
+            for key in ("DISPLAY", "WAYLAND_DISPLAY", "GDK_BACKEND", "GNOSIS_SOFTWARE_RENDERING"):
                 env.pop(key, None)
                 if key in os.environ:
                     env[key] = os.environ[key]
         else:
             env.pop("WAYLAND_DISPLAY", None)
-        env['JUPITER_RESPONSE_FIXTURE_DIR'] = str(server.response_lifetimes)
+        env['GNOSIS_RESPONSE_FIXTURE_DIR'] = str(server.response_lifetimes)
         command = [str(args.binary.resolve()), *args.browser_args]
         if args.portals or args.open_uri:
-            env.update(GTK_USE_PORTAL="1", GDK_DEBUG="portals", JUPITER_TEST_SCRATCH=str(root),
+            env.update(GTK_USE_PORTAL="1", GDK_DEBUG="portals", GNOSIS_TEST_SCRATCH=str(root),
                        XDG_CONFIG_HOME=str(root / "config"), XDG_CACHE_HOME=str(root / "cache"),
                        XDG_DATA_HOME=str(root / "data"))
             wrapper = "check-open-uri.py" if args.open_uri else "check-portals.py"

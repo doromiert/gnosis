@@ -18,7 +18,15 @@ const vm = require('node:vm');
         kpxcEvent: {messageHandlers: {}}
     };
     vm.runInNewContext(fs.readFileSync(process.argv[2] || 'engine/data/keepassxc/service.js', 'utf8'), sandbox);
-    const api = sandbox.jupiterKeePassXC;
+    const api = sandbox.gnosisKeePassXC;
+    const legacySettings = fs.readFileSync(process.argv[3] || 'engine/data/keepassxc/legacy-settings.js', 'utf8');
+    sandbox.page.settings.jupiterAutoUnlock = false;
+    vm.runInNewContext(legacySettings, sandbox);
+    assert.equal(sandbox.page.settings.gnosisAutoUnlock, false);
+    assert.equal(Object.hasOwn(sandbox.page.settings, 'jupiterAutoUnlock'), false);
+    sandbox.page.settings.jupiterAutoUnlock = true;
+    vm.runInNewContext(legacySettings, sandbox);
+    assert.equal(sandbox.page.settings.gnosisAutoUnlock, false); // retain an explicit new setting
     const entries = JSON.parse(JSON.stringify(await api.invoke(7, 'entries')));
     assert.deepEqual(entries, { entries: [{ id: '123', label: 'Test Login' }] });
     await assert.rejects(api.invoke(7, 'fill', 'stale'), /no longer available/);
@@ -36,7 +44,7 @@ const vm = require('node:vm');
     await assert.rejects(api.invoke(7, 'status'), /private tabs/); privateTab = false;
     privateTab = true; await assert.rejects(api.invoke(7, 'redetect'), /private tabs/); privateTab = false;
     await assert.rejects(api.invoke(7, 'passkeys', 'true'), /Invalid setting/);
-    await api.invoke(7, 'auto-unlock', false); assert.equal(sandbox.page.settings.jupiterAutoUnlock, false);
+    await api.invoke(7, 'auto-unlock', false); assert.equal(sandbox.page.settings.gnosisAutoUnlock, false);
     const injections = [];
     let missing = true;
     sandbox.browser.runtime = { getManifest: () => ({content_scripts: [

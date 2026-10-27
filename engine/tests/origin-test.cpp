@@ -38,7 +38,7 @@ NO_STACK_PROTECTOR int main(int argc, char **argv) {
   if (!cef_api_hash(CEF_API_VERSION, 0)) return 1;
   int sub = CefExecuteProcess(CefMainArgs(argc, argv), nullptr, nullptr);
   if (sub >= 0) return sub;
-  char profile[] = "/tmp/jupiter-origin-check-XXXXXX";
+  char profile[] = "/tmp/gnosis-origin-check-XXXXXX";
   if (!mkdtemp(profile)) return 1;
   CefSettings settings;
   settings.no_sandbox = true; // Isolated diagnostic, never ordinary browsing.

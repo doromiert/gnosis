@@ -12,6 +12,7 @@ enums = gnome.mkenums_simple('ephy-lib-type-builtins',
 )
 
 libephymisc_sources = [
+  'gnosis-rebrand.c',
   'contrib/dzl-fuzzy-mutable-index.c',
   'contrib/dzl-suggestion.c',
   'contrib/gnome-languages.c',

@@ -4,13 +4,13 @@
 <node>
 
   <!--
-      io.github.doromiert.Jupiter.WebAppProvider:
+      com.neg-zero.Gnosis.WebAppProvider:
       @short_description: Webapp provider interface
 
       The interface used for handling Epiphany Webapps in GNOME Software, or other
       clients (version 1).
   -->
-  <interface name="io.github.doromiert.Jupiter.WebAppProvider">
+  <interface name="com.neg_zero.Gnosis.WebAppProvider">
     <!--
         GetInstalledApps:
         @desktop_file_ids: An array of .desktop file names, one for each
@@ -46,8 +46,8 @@
         be used, and the name given to that method should match the @name given here.
 
         If the arguments passed are invalid this method returns the error
-        `io.github.doromiert.Jupiter.WebAppProvider.Error.InvalidArgs`, and otherwise
-        `io.github.doromiert.Jupiter.WebAppProvider.Error.Failed`.
+        `com.neg_zero.Gnosis.WebAppProvider.Error.InvalidArgs`, and otherwise
+        `com.neg_zero.Gnosis.WebAppProvider.Error.Failed`.
     -->
     <method name="Install">
       <arg type="s" name="url" direction="in" />
@@ -65,10 +65,10 @@
         not a full path, and it's the same one returned by the
         GetInstalledWebApps() method.
 
-        The error `io.github.doromiert.Jupiter.WebAppProvider.Error.NotInstalled` will be
+        The error `com.neg_zero.Gnosis.WebAppProvider.Error.NotInstalled` will be
         returned if the specified web app is not installed. The other possible
-        error values are `io.github.doromiert.Jupiter.WebAppProvider.Error.InvalidArgs`
-        and `io.github.doromiert.Jupiter.WebAppProvider.Error.Failed`.
+        error values are `com.neg_zero.Gnosis.WebAppProvider.Error.InvalidArgs`
+        and `com.neg_zero.Gnosis.WebAppProvider.Error.Failed`.
     -->
     <method name="Uninstall">
       <arg type="s" name="desktop_file_id" direction="in" />

@@ -14,8 +14,8 @@ manifest_path = root / 'manifest.json'
 manifest = json.loads(manifest_path.read_text())
 assert manifest['version'] == '1.10.4.1', 'Review the integration when upgrading'
 # Separate integration revision forces Chromium to retire cached worker code.
-manifest['version'] = '1.10.4.107'
-manifest['version_name'] = '1.10.4.1 (Gnosis integration 7)'
+manifest['version'] = '1.10.4.108'
+manifest['version_name'] = '1.10.4.1 (Gnosis integration 8)'
 manifest['permissions'].append('scripting')
 manifest['key'] = (assets / 'public-key.txt').read_text().strip()
 manifest.pop('update_url', None)
@@ -56,16 +56,16 @@ assert text.count(before) == 1
 text = text.replace(before, 'function(publicKey, errorCode, errorMessage, fallback = kpxcPasskeysUtils?.passkeysFallback) {')
 assert text.count('fallback: kpxcPasskeysUtils?.passkeysFallback') == 2
 utils.write_text(text.replace('fallback: kpxcPasskeysUtils?.passkeysFallback', 'fallback'))
-(root / 'content/jupiter-unlock.js').write_text((assets / 'unlock.js').read_text())
-manifest['content_scripts'][0]['js'].append('content/jupiter-unlock.js')
+(root / 'content/gnosis-unlock.js').write_text((assets / 'unlock.js').read_text())
+manifest['content_scripts'][0]['js'].append('content/gnosis-unlock.js')
 # The GTK shell owns the integration UI; retain upstream as a private service.
 manifest.pop('action', None)
 manifest.pop('options_ui', None)
-(root / 'background/jupiter.js').write_text((assets / 'service.js').read_text())
+(root / 'background/gnosis.js').write_text((assets / 'legacy-settings.js').read_text() + '\n' + (assets / 'service.js').read_text())
 service = root / 'background/background_service.js'
 text = service.read_text()
 assert text.count("        'init.js'\n") == 1
-service.write_text(text.replace("        'init.js'\n", "        'init.js',\n        'jupiter.js'\n"))
+service.write_text(text.replace("        'init.js'\n", "        'init.js',\n        'gnosis.js'\n"))
 # Reject non-credential inputs before any visibility/layout reads.
 observer = root / 'content/observer-helper.js'
 text = observer.read_text()

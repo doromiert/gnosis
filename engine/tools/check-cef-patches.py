@@ -60,7 +60,7 @@ def check(source, patches, report_path=None):
     patch_tool = shutil.which('patch')
     if not patch_tool:
         raise ValueError('GNU patch is required')
-    with tempfile.TemporaryDirectory(prefix='jupiter-cef-patches-') as temporary:
+    with tempfile.TemporaryDirectory(prefix='gnosis-cef-patches-') as temporary:
         root = Path(temporary)
         working = root / 'source'
         working.mkdir()

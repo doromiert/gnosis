@@ -245,12 +245,12 @@ ephy_tab_switcher_model_activate (EphyTabSwitcherModel *self, guint index)
 static void
 append_page (EphyTabSwitcherModel *self, AdwTabPage *page)
 {
-  guint64 *id = g_object_get_data (G_OBJECT (page), "jupiter-switcher-page-id");
+  guint64 *id = g_object_get_data (G_OBJECT (page), "gnosis-switcher-page-id");
   EphyTabSwitcherItem *item = g_object_new (EPHY_TYPE_TAB_SWITCHER_ITEM, NULL);
   if (!id) {
     id = g_new (guint64, 1);
     *id = next_page_id++;
-    g_object_set_data_full (G_OBJECT (page), "jupiter-switcher-page-id", id, g_free);
+    g_object_set_data_full (G_OBJECT (page), "gnosis-switcher-page-id", id, g_free);
   }
   item->id = *id;
   item->title = g_strdup (adw_tab_page_get_title (page));

@@ -1,6 +1,6 @@
 # Bundled KeePassXC integration
 
-Jupiter packages the official KeePassXC-Browser **1.10.4.1** Chromium release,
+Gnosis packages the official KeePassXC-Browser **1.10.4.1** Chromium release,
 pinned by SHA-256 in `package.nix`. Password saving/filling, TOTP, encryption,
 database association, origin checks and WebAuthn/passkeys remain upstream code.
 The package is independent of a separately installed KeePassXC extension:
@@ -12,9 +12,9 @@ anchors before making these adaptations:
 - Enable upstream passkey support by default; preserve saved user settings.
 - Request KeePassXC's own unlock prompt on a user gesture in a detected top-level
   login field. Ignore synthetic events/background frames and coalesce prompts,
-  with a 30-second cooldown after cancellation. No master password enters Jupiter.
-- Remove the extension action/options UI and exclude the backend from Jupiter's
-  extension list. All Jupiter controls live in the native libadwaita panel at
+  with a 30-second cooldown after cancellation. No master password enters Gnosis.
+- Remove the extension action/options UI and exclude the backend from Gnosis's
+  extension list. All Gnosis controls live in the native libadwaita panel at
   **hamburger menu → KeePassXC**: pairing, unlock/lock, login selection, TOTP,
   passkeys and automatic-unlock settings. Only labels and entry IDs leave the
   backend; password/code values are filled by upstream content scripts.
@@ -32,19 +32,19 @@ anchors before making these adaptations:
 The integration loads in the normal profile only. Private profiles do not
 load it or receive a native host registration. Enable KeePassXC's Browser
 Integration and choose **KeePassXC → Connect Database…** once to authorize
-Jupiter. Unlocking an already paired database is separate from association;
+Gnosis. Unlocking an already paired database is separate from association;
 KeePassXC must permit browser unlock requests for its password prompt to open.
 KeePassXC itself must be installed, with `keepassxc-proxy` in PATH.
 
 The bundled manifest uses an integration revision (`1.10.4.106`) and retains the
 upstream version in `version_name`. Existing Chromium profiles can retain older
-worker scripts after unpacked-resource changes. Jupiter resolves only the exact
+worker scripts after unpacked-resource changes. Gnosis resolves only the exact
 internal worker URL, waits for upstream initialization and installs its trusted
 GTK adapter from the pinned package through the private CDP pipe. It does not
 clear worker caches, extension storage, association keys, or browsing data.
 
 Brave searches a fixed default native-host path even with `--user-data-dir`.
-Jupiter gives only its Brave process a profile-owned `native-config` directory.
+Gnosis gives only its Brave process a profile-owned `native-config` directory.
 Its host manifest permits only this bundled extension's origin. The generated
 0700 proxy launcher restores the original desktop config directory and clears
 Brave's foreign library/toolkit paths before executing the installed proxy. This

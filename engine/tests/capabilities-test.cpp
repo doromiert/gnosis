@@ -120,11 +120,11 @@ int main(int argc, char **argv) {
   int sub = ephy_engine_execute_process(argc, argv); if (sub >= 0) return sub;
   const bool clipboard_only = argc == 2 && !strcmp(argv[1], "--clipboard-only");
   const bool gpu_only = argc == 2 && !strcmp(argv[1], "--gpu-only");
-  auto *app = adw_application_new("io.github.doromiert.Jupiter.CapabilitiesTest", G_APPLICATION_NON_UNIQUE);
+  auto *app = adw_application_new("com.neg-zero.Gnosis.CapabilitiesTest", G_APPLICATION_NON_UNIQUE);
   GError *error = nullptr;
   g_assert_true(g_application_register(G_APPLICATION(app), nullptr, &error));
   g_assert_no_error(error);
-  char profile[] = "/tmp/jupiter-capabilities-test-XXXXXX";
+  char profile[] = "/tmp/gnosis-capabilities-test-XXXXXX";
   g_assert_nonnull(mkdtemp(profile));
   g_assert_true(ephy_engine_initialize(argc, argv, profile, true));
   disable_diagnostic_core_dumps();
@@ -136,7 +136,7 @@ int main(int argc, char **argv) {
   auto handler = g_signal_connect(view, "load-changed", G_CALLBACK(+[](EphyEngineView*, WebKitLoadEvent event, bool *loaded) {
     if (event == WEBKIT_LOAD_FINISHED) *loaded = true;
   }), &loaded);
-  ephy_engine_web_view_load_uri(view, g_getenv("JUPITER_TEST_URL"));
+  ephy_engine_web_view_load_uri(view, g_getenv("GNOSIS_TEST_URL"));
   gtk_window_present(GTK_WINDOW(window));
   wait_for([&]{ return loaded; });
   g_signal_handler_disconnect(view, handler);
@@ -153,7 +153,7 @@ int main(int argc, char **argv) {
   };
   if (gpu_only) return finish(check_gpu(view));
   gtk_window_present(GTK_WINDOW(window));
-  if (g_getenv("JUPITER_TEST_COPY"))
+  if (g_getenv("GNOSIS_TEST_COPY"))
     g_print("Native test window focus: active=%s\n", gtk_window_is_active(GTK_WINDOW(window)) ? "yes" : "no");
   wait_for([&]{ return gtk_window_is_active(GTK_WINDOW(window)); });
   gtk_widget_grab_focus(GTK_WIDGET(view));
@@ -200,7 +200,7 @@ int main(int argc, char **argv) {
     g_assert_cmpstr(result.c_str(), ==, "isolated: ąß🪐");
     g_assert_cmpuint(read_prompts, ==, before_read + 1);
     result = evaluate(view, R"JS(navigator.clipboard.write([new ClipboardItem({
-      'web application/x-jupiter-unhandled': new Blob(['rejected'],{type:'application/x-jupiter-unhandled'})
+      'web application/x-gnosis-unhandled': new Blob(['rejected'],{type:'application/x-gnosis-unhandled'})
     })]).then(()=> 'unexpected').catch(e=>e.name+': '+e.message))JS", world);
     g_assert_cmpstr(result.c_str(), ==, "NotAllowedError: Could not write to the native clipboard.");
     g_assert_true(clipboard_text(clipboard) == "isolated: ąß🪐");
@@ -215,7 +215,7 @@ int main(int argc, char **argv) {
   const auto* original_data = static_cast<const char*>(g_bytes_get_data(original_png, &png_size));
   g_assert_cmpuint(png_size, >=, 12);
   // An ancillary chunk distinguishes byte preservation from decoding/re-encoding.
-  static const char metadata[] = "tEXtJupiter\0metadata survived";
+  static const char metadata[] = "tEXtGnosis\0metadata survived";
   const std::string chunk(metadata, sizeof metadata-1);
   uint32_t crc = 0xffffffffU;
   for (unsigned char byte : chunk) {
@@ -286,9 +286,9 @@ int main(int argc, char **argv) {
   g_assert_cmpstr(result.c_str(), ==, "safe");
   g_print("Replacing webpage sanitizer/constructor globals does not bypass the captured native rich-read helpers: PASS\n");
 
-  const std::string resource_html = std::string("<img src=\"") + g_getenv("JUPITER_TEST_URL") +
+  const std::string resource_html = std::string("<img src=\"") + g_getenv("GNOSIS_TEST_URL") +
     "clipboard-read-resource?image\" onerror=\"globalThis.clipboardScriptRan=true\"><style>@import url('" +
-    g_getenv("JUPITER_TEST_URL") + "clipboard-read-resource?style')</style>";
+    g_getenv("GNOSIS_TEST_URL") + "clipboard-read-resource?style')</style>";
   g_autoptr(GBytes) resource_bytes = g_bytes_new(resource_html.data(), resource_html.size());
   g_autoptr(GdkContentProvider) resource_provider = gdk_content_provider_new_for_bytes("text/html", resource_bytes);
   g_assert_true(gdk_clipboard_set_content(clipboard, resource_provider));

@@ -49,7 +49,7 @@ static gboolean prepare_translation_preferences(const char *directory, GError **
   g_autofree char *json = json_to_string(root, TRUE);
   return g_file_set_contents_full(path, json, -1, G_FILE_SET_CONTENTS_CONSISTENT, 0600, error);
 }
-gboolean jupiter_brave_profile_prepare(const char *directory, GError **error) {
+gboolean gnosis_brave_profile_prepare(const char *directory, GError **error) {
   if (g_mkdir_with_parents(directory, 0700) < 0) {
     g_set_error(error, G_IO_ERROR, g_io_error_from_errno(errno), "Cannot create Gnosis's Brave profile directory"); return FALSE;
   }
@@ -80,7 +80,7 @@ gboolean jupiter_brave_profile_prepare(const char *directory, GError **error) {
 }
 
 
-gboolean jupiter_brave_profile_prepare_keepassxc(const char *directory, GError **error) {
+gboolean gnosis_brave_profile_prepare_keepassxc(const char *directory, GError **error) {
   g_autofree char *proxy = g_find_program_in_path("keepassxc-proxy");
   if (!proxy) {
     g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_NOT_FOUND, "Install KeePassXC to connect its browser integration");
@@ -94,7 +94,7 @@ gboolean jupiter_brave_profile_prepare_keepassxc(const char *directory, GError *
   /* Native hosts use their own installed runtime, not Brave's Nix library
    * search path. Restore the desktop config directory before executing the
    * real proxy, so KeePassXC keeps using its own settings and database. */
-  g_autofree char *launcher = g_build_filename(hosts, "jupiter-keepassxc-proxy", NULL);
+  g_autofree char *launcher = g_build_filename(hosts, "gnosis-keepassxc-proxy", NULL);
   g_autofree char *quoted_proxy = g_shell_quote(proxy);
   g_autofree char *quoted_config = g_shell_quote(g_get_user_config_dir());
   g_autofree char *script = g_strdup_printf(

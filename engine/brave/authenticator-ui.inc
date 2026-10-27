@@ -13,7 +13,7 @@ void Page::show_passkey_provider(JsonObject* request) {
   const std::string id = text(request, "id");
   auto* root = gtk_widget_get_root(widget());
   if (!GTK_IS_WINDOW(root)) {
-    process->command("Runtime.evaluate", "{\"expression\":" + quote("jupiterKeePassXC.resolvePasskey(" + quote(id) + ", 'cancel')") + "}", process->keepassxc_session);
+    process->command("Runtime.evaluate", "{\"expression\":" + quote("gnosisKeePassXC.resolvePasskey(" + quote(id) + ", 'cancel')") + "}", process->keepassxc_session);
     return;
   }
   auto* dialog = ADW_ALERT_DIALOG(adw_alert_dialog_new(
@@ -35,14 +35,14 @@ void Page::show_passkey_provider(JsonObject* request) {
     std::clamp<gint64>(json_object_get_int_member_with_default(request, "timeout", 60000), 15000, 120000),
     +[](gpointer data) -> gboolean { g_cancellable_cancel(G_CANCELLABLE(data)); return G_SOURCE_REMOVE; },
     g_object_ref(choice->cancel), g_object_unref);
-  if (state_->surface) jupiter_compositor_view_release_buttons(JUPITER_COMPOSITOR_VIEW(state_->surface));
+  if (state_->surface) gnosis_compositor_view_release_buttons(GNOSIS_COMPOSITOR_VIEW(state_->surface));
   adw_alert_dialog_choose(dialog, GTK_WIDGET(root), choice->cancel, +[](GObject* source, GAsyncResult* result, gpointer data) {
     std::unique_ptr<Choice> choice(static_cast<Choice*>(data));
     const char* response = adw_alert_dialog_choose_finish(ADW_ALERT_DIALOG(source), result);
     // A cancelled timeout source may already have fired.
     if (g_main_context_find_source_by_id(nullptr, choice->timeout)) g_source_remove(choice->timeout);
     if (auto process = choice->process.lock(); process && !process->closing && !process->keepassxc_session.empty()) {
-      const auto expression = "jupiterKeePassXC.resolvePasskey(" + quote(choice->id) + "," + quote(response ? response : "cancel") + ")";
+      const auto expression = "gnosisKeePassXC.resolvePasskey(" + quote(choice->id) + "," + quote(response ? response : "cancel") + ")";
       process->command("Runtime.evaluate", "{\"expression\":" + quote(expression) + "}", process->keepassxc_session);
     }
     if (auto page = choice->page.lock(); page && page->state_->passkey_provider == choice->cancel) {

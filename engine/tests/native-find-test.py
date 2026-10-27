@@ -54,7 +54,7 @@ with tempfile.TemporaryDirectory(prefix='gnosis-native-find-') as profile, args.
         str(args.browser.resolve()), '--headless=new', '--ozone-platform=wayland',
         '--site-per-process', '--no-first-run', '--no-default-browser-check',
         '--remote-debugging-pipe', '--user-data-dir=' + profile, 'about:blank',
-    ], env=dict(os.environ, JUPITER_NATIVE_UI_FD='5'),
+    ], env=dict(os.environ, GNOSIS_NATIVE_UI_FD='5'),
         pass_fds=tuple(set((read_command, write_command, read_result, write_result, native_child.fileno(), 3, 4, 5))),
         preexec_fn=setup_child, start_new_session=True, stdout=subprocess.DEVNULL, stderr=browser_log)
     os.close(read_command)

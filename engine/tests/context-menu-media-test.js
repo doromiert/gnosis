@@ -35,10 +35,10 @@ const sandbox = {
     HTMLTextAreaElement: class extends Element {}, WeakRef, document,
     getSelection: () => '',
     window: {addEventListener(name, callback) { assert.equal(name, 'contextmenu'); onMenu = callback; }},
-    __jupiterContextMenu: message => messages.push(JSON.parse(message))
+    __gnosisContextMenu: message => messages.push(JSON.parse(message))
 };
 vm.runInNewContext(fs.readFileSync('engine/data/native-integration/context-menu.js', 'utf8'), sandbox);
-assert.equal(sandbox.__jupiterContextMenu, undefined, 'raw native binding must be removed');
+assert.equal(sandbox.__gnosisContextMenu, undefined, 'raw native binding must be removed');
 const action = sandbox.__gnosisContextMenuAction;
 function menu(element, extra = {}) {
     let prevented = false;

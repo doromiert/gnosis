@@ -3,7 +3,7 @@
 #include <optional>
 #include <string_view>
 inline std::optional<int> extension_tab_id(std::string_view message) {
-  constexpr std::string_view prefix = "JUPITER_NATIVE_TAB_ID:";
+  constexpr std::string_view prefix = "GNOSIS_NATIVE_TAB_ID:";
   if (!message.starts_with(prefix))
     return {};
   message.remove_prefix(prefix.size());

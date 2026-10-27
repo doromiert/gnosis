@@ -53,7 +53,7 @@ python3 tools/version_manager.py --update
 python3 tools/version_manager.py --check --fast-check
 ```
 
-Ship matching headers, library, resources and wrapper, and rebuild Jupiter with
+Ship matching headers, library, resources and wrapper, and rebuild Gnosis with
 the experimental API. Do not change the stable API hashes or install new headers
 over the current prebuilt library. This patch does not complete the user-content
 manager migration.
@@ -86,7 +86,7 @@ certificate decisions retain Chromium's existing behavior.
 The patch includes explicit GN dependencies for the existing policy and SSL
 helpers. Exact-pin forward/reverse checks and all six generated SSLInfo binding
 checks pass, with the stable layout unchanged. SDK compilation, API hashes,
-actual strict/HSTS/policy tests and Jupiter's acceptance-action guard still need
+actual strict/HSTS/policy tests and Gnosis's acceptance-action guard still need
 the matching rebuilt SDK. The current prebuilt library does not contain this fix.
 
 `cef-extension-management.patch` adds four experimental, trusted-embedder
@@ -106,7 +106,7 @@ explicitly false. Installation/update grants manifest permissions and therefore
 requires the embedder's prior install/update consent. It must never be used as a
 shortcut around enable approval. Mutations are limited to ordinary unpacked or
 command-line entries; components, shared modules and primary kiosk entries are
-refused. The trusted Jupiter adapter must additionally protect its essential
+refused. The trusted Gnosis adapter must additionally protect its essential
 bridge IDs, validate owned inventory paths, and supply its native install/remove
 confirmation. These APIs are not a renderer or DevTools transport.
 

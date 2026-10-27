@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.21)
-project(JupiterCEFWrapper LANGUAGES C CXX)
+project(GnosisCEFWrapper LANGUAGES C CXX)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 list(APPEND CMAKE_MODULE_PATH "${CEF_ROOT}/cmake")
 set(USE_SANDBOX OFF CACHE BOOL "Linux uses the Chromium sandbox")

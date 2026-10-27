@@ -60,9 +60,9 @@ ephy_settings_init (void)
 
   if (ephy_profile_dir_is_web_application ()) {
     const char *web_app_name = ephy_web_application_get_gapplication_id_from_profile_directory (profile_directory);
-    base_path = g_build_path ("/", "/io/github/doromiert/jupiter/web-apps/", web_app_name, NULL);
+    base_path = g_build_path ("/", "/com/neg_zero/gnosis/web-apps/", web_app_name, NULL);
   } else {
-    base_path = g_strdup ("/io/github/doromiert/jupiter/");
+    base_path = g_strdup ("/com/neg_zero/gnosis/");
   }
 
   for (guint i = 0; i < G_N_ELEMENTS (ephy_prefs_relocatable_schemas); i++) {

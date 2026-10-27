@@ -112,17 +112,17 @@
         };
         register_tree(object(result,"frameTree"));
       });
-      command("Runtime.addBinding",R"({"name":"__jupiterContextMenu","executionContextName":"JupiterContextMenu"})",child);
-      command("Runtime.addBinding",R"({"name":"__jupiterDocumentMetadata","executionContextName":"JupiterDocumentMetadata"})",child);
+      command("Runtime.addBinding",R"({"name":"__gnosisContextMenu","executionContextName":"GnosisContextMenu"})",child);
+      command("Runtime.addBinding",R"({"name":"__gnosisDocumentMetadata","executionContextName":"GnosisDocumentMetadata"})",child);
       command("Runtime.enable","{}",child);
-      for (auto item : {std::pair{"JupiterContextMenu","context-menu.js"}}) {
+      for (auto item : {std::pair{"GnosisContextMenu","context-menu.js"}}) {
         if (!adapter_enabled("context-menu")) continue;
-        g_autofree char* path = g_build_filename(JUPITER_NATIVE_INTEGRATION_DIR,item.second,nullptr);
+        g_autofree char* path = g_build_filename(GNOSIS_NATIVE_INTEGRATION_DIR,item.second,nullptr);
         g_autofree char* script = nullptr;
         if (g_file_get_contents(path,&script,nullptr,nullptr))
           command("Page.addScriptToEvaluateOnNewDocument","{\"worldName\":"+quote(item.first)+",\"source\":"+quote(script)+",\"runImmediately\":true}",child);
       }
-      if (adapter_enabled("document-metadata")) command("Page.addScriptToEvaluateOnNewDocument","{\"worldName\":\"JupiterDocumentMetadata\",\"source\":"+quote(document_adapter_source())+",\"runImmediately\":true}",child,
+      if (adapter_enabled("document-metadata")) command("Page.addScriptToEvaluateOnNewDocument","{\"worldName\":\"GnosisDocumentMetadata\",\"source\":"+quote(document_adapter_source())+",\"runImmediately\":true}",child,
         [this,child](JsonObject*,const std::string&){resume_frame(child);});
       return true;
     }
@@ -150,7 +150,7 @@
     } else if (method == "Runtime.executionContextCreated") {
       auto* context=object(params,"context");
       const std::string name=text(context,"name");
-      if (name != "JupiterContextMenu" && name != "JupiterDocumentMetadata") return true;
+      if (name != "GnosisContextMenu" && name != "GnosisDocumentMetadata") return true;
       const int runtime=json_object_get_int_member_with_default(context,"id",0);
       if (runtime <= 0 || frame_context_sequence == G_MAXINT) return true;
       const std::string frame_id=text(object(context,"auxData"),"frameId");

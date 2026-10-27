@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Exercise native extension popup and settings UI in actual Jupiter windows."""
+"""Exercise native extension popup and settings UI in actual Gnosis windows."""
 
 import argparse
 import os
@@ -28,10 +28,10 @@ args = parser.parse_args()
 
 if not args.ublock or not (args.ublock / "manifest.json").is_file():
     parser.error("Set UBLOCK_DIR or --ublock to the official unpacked full uBlock Origin")
-if "JUPITER_TEST_URL" not in os.environ:
-    parser.error("JUPITER_TEST_URL must point at the check-native fixture server")
+if "GNOSIS_TEST_URL" not in os.environ:
+    parser.error("GNOSIS_TEST_URL must point at the check-native fixture server")
 
-artifacts = Path(tempfile.mkdtemp(prefix="jupiter-native-extensions-ui-", dir="/tmp"))
+artifacts = Path(tempfile.mkdtemp(prefix="gnosis-native-extensions-ui-", dir="/tmp"))
 profile = artifacts / "profile"
 env = dict(os.environ,
            LANG="C.UTF-8",
@@ -40,10 +40,10 @@ env = dict(os.environ,
            XDG_CACHE_HOME=str(artifacts / "cache"),
            GSETTINGS_BACKEND="keyfile",
            GSETTINGS_SCHEMA_DIR=str(args.schemas.resolve()),
-           JUPITER_UBLOCK_DIR=str(args.ublock.resolve()))
+           GNOSIS_UBLOCK_DIR=str(args.ublock.resolve()))
 env.pop("WAYLAND_DISPLAY", None)
 
-subprocess.run(["gsettings", "set", "io.github.doromiert.Jupiter", "ask-for-default", "false"],
+subprocess.run(["gsettings", "set", "com.neg-zero.Gnosis", "ask-for-default", "false"],
                env=env, check=True)
 
 
@@ -158,7 +158,7 @@ def click_extension_row(window, settings=False):
 
 log = (artifacts / "app.log").open("w")
 process = subprocess.Popen([str(args.binary.resolve()), "--profile=" + str(profile),
-                            os.environ["JUPITER_TEST_URL"] + "session-fixture?first"],
+                            os.environ["GNOSIS_TEST_URL"] + "session-fixture?first"],
                            env=env, stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
 
 try:
@@ -175,7 +175,7 @@ try:
     xdo("windowsize", second, 960, 700)
     xdo("windowmove", second, 20, 20)
     xdo("windowfocus", "--sync", second)
-    second_base = os.environ["JUPITER_TEST_URL"].replace("127.0.0.1", "localhost")
+    second_base = os.environ["GNOSIS_TEST_URL"].replace("127.0.0.1", "localhost")
     navigate(second_base + "session-fixture?second")
     wait_for(lambda: "Saved tab second" in xdo("getwindowname", second, capture=True),
              "Second owner page did not load")
@@ -199,7 +199,7 @@ try:
     click_extension_row(second, settings=True)
     wait_for_dashboard_content(second)
     assert xdo("getwindowname", first, capture=True) == first_title, \
-        "Opening settings changed the other Jupiter window"
+        "Opening settings changed the other Gnosis window"
     assert set(app_windows()) == {first, second}, "Extension settings escaped into a separate top-level window"
 
     print("Native Extensions menu, embedded uBlock popup, and owning-window dashboard: PASS", flush=True)

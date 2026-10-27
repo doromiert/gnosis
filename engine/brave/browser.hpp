@@ -5,7 +5,7 @@
 #include <functional>
 #include <memory>
 #include <string>
-namespace JupiterBrave {
+namespace GnosisBrave {
 bool enabled();
 void configure_debug_adapters(const std::string&);
 bool adapter_enabled(const char*);

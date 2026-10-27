@@ -32,10 +32,10 @@ iso_codes = dependency('iso-codes')
 iso_codes_prefix = iso_codes.get_variable(pkgconfig: 'prefix')
 
 profile = get_option('profile')
-application_id = 'io.github.doromiert.Jupiter'
+application_id = 'com.neg-zero.Gnosis'
 
 if profile != ''
-  application_id = 'io.github.doromiert.Jupiter.' + profile
+  application_id = 'com.neg-zero.Gnosis.' + profile
 endif
 
 conf = configuration_data()

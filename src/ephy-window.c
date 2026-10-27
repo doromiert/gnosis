@@ -3472,7 +3472,7 @@ setup_tab_switcher (EphyWindow *window)
   gtk_overlay_add_overlay (GTK_OVERLAY (overlay), window->tab_switcher);
   window->zoom_osd = gtk_revealer_new ();
   window->zoom_osd_label = gtk_label_new (NULL);
-  gtk_widget_add_css_class (zoom_box, "jupiter-zoom-osd");
+  gtk_widget_add_css_class (zoom_box, "gnosis-zoom-osd");
   gtk_widget_set_can_target (zoom_box, FALSE);
   gtk_widget_add_css_class (window->zoom_osd_label, "numeric");
   gtk_accessible_update_property (GTK_ACCESSIBLE (zoom_box), GTK_ACCESSIBLE_PROPERTY_LABEL, _("Page Zoom"), -1);

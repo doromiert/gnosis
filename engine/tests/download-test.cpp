@@ -62,14 +62,14 @@ int main(int argc, char **argv) {
   disable_diagnostic_core_dumps();
   if (!cef_api_hash(CEF_API_VERSION, 0)) return 1;
   int sub = ephy_engine_execute_process(argc, argv); if (sub >= 0) return sub;
-  auto *app = adw_application_new("io.github.doromiert.Jupiter.DownloadTest", G_APPLICATION_NON_UNIQUE);
+  auto *app = adw_application_new("com.neg-zero.Gnosis.DownloadTest", G_APPLICATION_NON_UNIQUE);
   g_assert_true(g_application_register(G_APPLICATION(app), nullptr, nullptr));
-  char scratch[] = "/tmp/jupiter-download-test-XXXXXX";
+  char scratch[] = "/tmp/gnosis-download-test-XXXXXX";
   g_assert_nonnull(mkdtemp(scratch));
   g_assert_true(ephy_engine_initialize(argc, argv, scratch, true));
   disable_diagnostic_core_dumps();
   auto *session = ephy_engine_session_get_default();
-  std::string base = g_getenv("JUPITER_TEST_URL"), dir = scratch;
+  std::string base = g_getenv("GNOSIS_TEST_URL"), dir = scratch;
   const std::string payload("CEF download payload\0with binary bytes", 38);
   {
     Result result;
@@ -214,7 +214,7 @@ int main(int argc, char **argv) {
   }
   wait_for([] { return Browser::active_count == 0; });
   for (const auto& item : std::filesystem::directory_iterator(dir))
-    g_assert_false(item.path().filename().string().starts_with(".jupiter-download-"));
+    g_assert_false(item.path().filename().string().starts_with(".gnosis-download-"));
   ephy_engine_shutdown(); g_object_unref(app); std::filesystem::remove_all(dir);
   return 0;
 }

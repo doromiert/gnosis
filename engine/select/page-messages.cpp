@@ -10,14 +10,14 @@
 #include <memory>
 
 namespace {
-constexpr const char* message_name = "jupiter.internal-page";
-constexpr const char* event_name = "jupiter.internal-page.event";
-constexpr const char* release_name = "jupiter.internal-page.release";
+constexpr const char* message_name = "gnosis.internal-page";
+constexpr const char* event_name = "gnosis.internal-page.event";
+constexpr const char* release_name = "gnosis.internal-page.release";
 constexpr size_t payload_limit = 1024 * 1024;
 bool internal_url(const std::string& url) {
   return url.starts_with("ephy-about:") ||
          (url.starts_with("data:text/html;charset=utf-8;base64,") &&
-          url.find("#jupiter-alternate-") != std::string::npos);
+          url.find("#gnosis-alternate-") != std::string::npos);
 }
 std::string document_key(const std::string& token, const std::string& url, CefRefPtr<CefFrame> frame) {
   return token + "\n" + frame->GetIdentifier().ToString() + "\n" + url;
@@ -94,27 +94,27 @@ public:
     state->browser = browser; state->frame = frame; state->value = context; state->url = frame->GetURL();
     g_autofree char* token = g_uuid_string_random();
     state->token = token;
-    context->GetGlobal()->SetValue("__jupiterInternalMessage",
-      CefV8Value::CreateFunction("__jupiterInternalMessage", new MessageHandler(state)),
+    context->GetGlobal()->SetValue("__gnosisInternalMessage",
+      CefV8Value::CreateFunction("__gnosisInternalMessage", new MessageHandler(state)),
       static_cast<cef_v8_propertyattribute_t>(V8_PROPERTY_ATTRIBUTE_READONLY | V8_PROPERTY_ATTRIBUTE_DONTENUM));
     CefRefPtr<CefV8Value> result;
     CefRefPtr<CefV8Exception> exception;
     context->Eval(R"JS((() => {
-      const send = globalThis.__jupiterInternalMessage;
+      const send = globalThis.__gnosisInternalMessage;
       const stringify = JSON.stringify;
       const parse = JSON.parse;
       const CustomEventClass = CustomEvent;
       const events = new EventTarget();
       const dispatch = events.dispatchEvent.bind(events);
-      delete globalThis.__jupiterInternalMessage;
-      Object.defineProperty(globalThis, 'Jupiter', {value: Object.freeze({
+      delete globalThis.__gnosisInternalMessage;
+      Object.defineProperty(globalThis, 'Gnosis', {value: Object.freeze({
         postMessage(name, value) { send(name, stringify(value)); },
         addEventListener: events.addEventListener.bind(events),
         removeEventListener: events.removeEventListener.bind(events)
       })});
       addEventListener('pageshow', () => send());
       return (name, json) => dispatch(new CustomEventClass(name, {detail: parse(json)}));
-    })())JS", "jupiter://internal-page-messages", 1, result, exception);
+    })())JS", "gnosis://internal-page-messages", 1, result, exception);
     if (!exception && result && result->IsFunction()) {
       state->dispatch = result;
       contexts_.emplace(state->token, state);

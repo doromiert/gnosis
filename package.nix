@@ -2,7 +2,7 @@
 let
   lib = pkgs.lib;
   system = "x86_64-linux";
-  jupiterGtk = pkgs.gtk4.overrideAttrs (old: {
+  gnosisGtk = pkgs.gtk4.overrideAttrs (old: {
     patches = (old.patches or []) ++ [
       ./patches/gtk4-x11-ignore-stale-selection-clear.patch
       ./patches/gtk4-wayland-follow-fastest-intersecting-output.patch
@@ -15,8 +15,22 @@ let
     libX11 libXcomposite libXdamage libXext libXfixes libXrandr libxcb
   ];
   buildTools = with pkgs; [ cmake ninja pkg-config sysprof nodejs ];
+  rebrandCheck = pkgs.stdenv.mkDerivation {
+    pname = "gnosis-rebrand-check";
+    version = "1";
+    dontUnpack = true;
+    nativeBuildInputs = [ pkgs.pkg-config pkgs.dbus ];
+    buildInputs = [ pkgs.glib ];
+    buildPhase = ''
+      $CC -Wall -Wextra ${./engine/tests/rebrand-test.c} ${./lib/gnosis-rebrand.c} -I${./lib} \
+        $(pkg-config --cflags --libs gio-2.0) -o rebrand-test
+    '';
+    doCheck = true;
+    checkPhase = "./rebrand-test";
+    installPhase = "mkdir -p $out; touch $out/passed";
+  };
   cefSdk = pkgs.stdenv.mkDerivation {
-    pname = "jupiter-cef-sdk";
+    pname = "gnosis-cef-sdk";
     version = "150.0.22";
     src = pkgs.fetchurl {
       url = "https://cef-builds.spotifycdn.com/cef_binary_150.0.22+gc1a097e+chromium-150.0.7871.256_linux64_minimal.tar.bz2";
@@ -56,7 +70,7 @@ let
     meta.license = lib.licenses.gpl3Plus;
   };
   keepassxcBrowser = pkgs.stdenvNoCC.mkDerivation {
-    pname = "jupiter-keepassxc-browser";
+    pname = "gnosis-keepassxc-browser";
     version = "1.10.4.1";
     src = pkgs.fetchurl {
       url = "https://github.com/keepassxreboot/keepassxc-browser/releases/download/1.10.4.1/keepassxc-browser_1.10.4.1_chromium.zip";
@@ -69,7 +83,7 @@ let
     doCheck = true;
     checkPhase = ''
       node ${./engine/tests/keepassxc-observer-test.js} .
-      node ${./engine/tests/keepassxc-service-test.js} ${./engine/data/keepassxc/service.js}
+      node ${./engine/tests/keepassxc-service-test.js} ${./engine/data/keepassxc/service.js} ${./engine/data/keepassxc/legacy-settings.js}
     '';
     dontConfigure = true;
     dontBuild = true;
@@ -81,35 +95,32 @@ let
     version = "0.1.0";
     src = lib.cleanSourceWith {
       src = lib.cleanSource ./.;
-      filter = path: type: !(builtins.elem (baseNameOf path) [ "JUPITER-TODO.md" "BRAVE-MIGRATION.md" ]);
+      filter = path: type: !(builtins.elem (baseNameOf path) [ "GNOSIS-TODO.md" "BRAVE-MIGRATION.md" ]);
     };
     patches = [];
-    nativeBuildInputs = old.nativeBuildInputs ++ [ pkgs.cmake pkgs.wayland-scanner ];
+    nativeBuildInputs = old.nativeBuildInputs ++ [ pkgs.cmake pkgs.wayland-scanner rebrandCheck ];
     buildInputs = map (input:
-      if input == pkgs.gtk4.dev then jupiterGtk.dev
-      else if input == pkgs.gtk4 then jupiterGtk
+      if input == pkgs.gtk4.dev then gnosisGtk.dev
+      else if input == pkgs.gtk4 then gnosisGtk
       else input
     ) old.buildInputs ++ [ pkgs.libpwquality pkgs.libepoxy pkgs.wlroots_0_19 pkgs.wayland pkgs.wayland-protocols pkgs.libxkbcommon pkgs.libdrm pkgs.libglvnd pkgs.pixman pkgs.qrencode ] ++ chromiumLibraries;
     preConfigure = (old.preConfigure or "") + ''
-      export PKG_CONFIG_PATH="${jupiterGtk.dev}/lib/pkgconfig:''${PKG_CONFIG_PATH-}"
-      test "$(pkg-config --variable=libdir gtk4)" = "${lib.getLib jupiterGtk}/lib"
-      export NIX_LDFLAGS="-rpath ${lib.getLib jupiterGtk}/lib ''${NIX_LDFLAGS-}"
+      export PKG_CONFIG_PATH="${gnosisGtk.dev}/lib/pkgconfig:''${PKG_CONFIG_PATH-}"
+      test "$(pkg-config --variable=libdir gtk4)" = "${lib.getLib gnosisGtk}/lib"
+      export NIX_LDFLAGS="-rpath ${lib.getLib gnosisGtk}/lib ''${NIX_LDFLAGS-}"
     '';
     mesonFlags = [ "-Dgranite=disabled" "-Dunit_tests=disabled" "-Dman-pages=disabled" "-Dcef_root=${cefSdk}" "-Dcef_runtime=linked" "-Dublock_dir=${ublock}" "-Dkeepassxc_dir=${keepassxcBrowser}" ];
     preFixup = (old.preFixup or "") + ''
-      gappsWrapperArgs+=(--set JUPITER_ENGINE brave)
-      gappsWrapperArgs+=(--set-default JUPITER_SURFACE wayland)
-      gappsWrapperArgs+=(--set-default JUPITER_BRAVE_EXECUTABLE ${brave}/bin/brave)
+      gappsWrapperArgs+=(--prefix PATH : ${lib.makeBinPath [ pkgs.dconf ]})
+      gappsWrapperArgs+=(--set GNOSIS_ENGINE brave)
+      gappsWrapperArgs+=(--set-default GNOSIS_SURFACE wayland)
+      gappsWrapperArgs+=(--set-default GNOSIS_BRAVE_EXECUTABLE ${brave}/bin/brave)
       ${lib.optionalString (brave ? stockScrollbars) "gappsWrapperArgs+=(--set-default GNOSIS_BRAVE_STOCK_SCROLLBARS_EXECUTABLE ${brave.stockScrollbars}/bin/brave)"}
-      gappsWrapperArgs+=(--set-default JUPITER_BRAVE_VERSION ${brave.version})
-      gappsWrapperArgs+=(--set JUPITER_NOTIFICATION_ICON "$out/share/icons/hicolor/scalable/apps/io.github.doromiert.Jupiter.svg")
-      ${lib.optionalString (brave ? nativeInstallShim) "gappsWrapperArgs+=(--set-default JUPITER_NATIVE_UI_BRIDGE 1)"}
+      gappsWrapperArgs+=(--set-default GNOSIS_BRAVE_VERSION ${brave.version})
+      gappsWrapperArgs+=(--set GNOSIS_NOTIFICATION_ICON "$out/share/icons/hicolor/scalable/apps/com.neg-zero.Gnosis.svg")
+      ${lib.optionalString (brave ? nativeInstallShim) "gappsWrapperArgs+=(--set-default GNOSIS_NATIVE_UI_BRIDGE 1)"}
     '';
-    postFixup = (old.postFixup or "") + ''
-      # Retain the old command as an alias for existing launch scripts.
-      ln -s gnosis "$out/bin/jupiter"
-    '';
-    passthru = (old.passthru or {}) // { inherit cefSdk ublock jupiterGtk keepassxcBrowser; };
+    passthru = (old.passthru or {}) // { inherit cefSdk ublock gnosisGtk keepassxcBrowser rebrandCheck; };
     meta = old.meta // {
       description = "GNOME Web shell with a composited Brave web-content backend";
       homepage = "https://github.com/doromiert/gnosis";

@@ -2,7 +2,7 @@
 #include "browser.hpp"
 #include "debug-adapters.h"
 #include <map>
-namespace JupiterBrave {
+namespace GnosisBrave {
 namespace {
 std::map<std::string, bool> active_adapters;
 bool configured = false;

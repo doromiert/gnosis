@@ -1,6 +1,6 @@
 /* -*- Mode: C; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /*
- *  Copyright © 2026 The Jupiter Developers
+ *  Copyright © 2026 The Gnosis Developers
  *
  *  This file is part of Epiphany.
  *

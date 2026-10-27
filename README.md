@@ -1,14 +1,22 @@
 # Gnosis
 
-Gnosis (formerly Jupiter) uses GNOME Web's GTK/libadwaita shell with an embedded
+Gnosis uses GNOME Web's GTK/libadwaita shell with an embedded
 Brave backend. Tabs, bookmarks, address entry and application controls are native
 GTK. The supplied `gnosis.svg` is the application artwork.
 Source and issues: [doromiert/gnosis](https://github.com/doromiert/gnosis).
 
-Run `nix run .` or `nix run .#gnosis`. The primary executable is `gnosis`;
-`jupiter` remains a compatibility alias. Existing profile directories, GSettings
-schemas, application identifiers and KeePassXC identity are retained so the
-rename preserves browsing data, settings and database pairing.
+Run `nix run .` or `nix run .#gnosis`. The executable and internal namespaces
+use Gnosis. The application and schema ID is `com.neg-zero.Gnosis`; D-Bus
+interfaces use `com.neg_zero.Gnosis` because interface names cannot contain hyphens.
+
+The first normal launch exposes the existing profile under `gnosis`, moves cache
+and configuration to `gnosis` directories, and copies settings to
+`/com/neg_zero/gnosis/`, preserving any settings already stored there. Existing
+profile storage stays at its original canonical path behind the new directory
+redirect, preserving keyless extension IDs and their settings. Fresh installations
+store their profiles directly in `gnosis`. Bundled extension public keys remain
+unchanged, preserving KeePassXC pairing and extension storage. Migration refuses
+to run while the previous browser is open or overwrite conflicting directories.
 
 Enable **Vim Mode** in **Preferences → General → Browsing** for keyboard navigation.
 It is off by default and takes effect immediately in open tabs.
@@ -40,7 +48,7 @@ The engine migration is **in progress**. Brave provides the active browser
 backend, extensions and native engine services. WebKitGTK/JavaScriptCore and the
 CEF compatibility layer remain linked for services still being migrated. See
 [the current migration notes](BRAVE-MIGRATION.md) and
-[the live checklist](JUPITER-TODO.md) for verified coverage and remaining gaps.
+[the live checklist](GNOSIS-TODO.md) for verified coverage and remaining gaps.
 
 The following sections retain notes from the earlier CEF implementation.
 

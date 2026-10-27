@@ -101,7 +101,7 @@ int main() {
 
   auto *foreign = XOpenDisplay(nullptr); g_assert_nonnull(foreign);
   const Window outsider = XCreateSimpleWindow(foreign, DefaultRootWindow(foreign), 0, 0, 1, 1, 0, 0, 0);
-  const Atom clock = XInternAtom(foreign, "JUPITER_SELECTION_TEST_TIME", False);
+  const Atom clock = XInternAtom(foreign, "GNOSIS_SELECTION_TEST_TIME", False);
   XSelectInput(foreign, outsider, PropertyChangeMask);
   unsigned changes = 0;
   g_signal_connect(primary, "changed", G_CALLBACK(+[](GdkClipboard *, unsigned *count) { ++*count; }), &changes);

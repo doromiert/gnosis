@@ -12,7 +12,7 @@
 static GtkWindow* window;
 static AdwTabView* tabs;
 static AdwDialog* answered;
-static std::shared_ptr<JupiterBrave::Page> page;
+static std::shared_ptr<GnosisBrave::Page> page;
 static int stage;
 static bool testing, busy;
 static gint64 started, changed;
@@ -84,7 +84,7 @@ static gboolean start(gpointer) {
   g_object_add_weak_pointer(G_OBJECT(window),reinterpret_cast<gpointer*>(&window));
   auto embed=reinterpret_cast<void*(*)(void*)>(dlsym(RTLD_DEFAULT,"ephy_window_get_active_embed"));
   auto view=reinterpret_cast<void*(*)(void*)>(dlsym(RTLD_DEFAULT,"ephy_embed_get_web_view"));
-  auto getpage=reinterpret_cast<std::shared_ptr<JupiterBrave::Page>(*)(void*)>(dlsym(RTLD_DEFAULT,"_Z27ephy_engine_view_brave_pageP15_EphyEngineView"));
+  auto getpage=reinterpret_cast<std::shared_ptr<GnosisBrave::Page>(*)(void*)>(dlsym(RTLD_DEFAULT,"_Z27ephy_engine_view_brave_pageP15_EphyEngineView"));
   if (!embed(window)) return G_SOURCE_CONTINUE;
   page=getpage(view(embed(window))); tabs=ADW_TAB_VIEW(find(GTK_WIDGET(window),"AdwTabView"));
   if (!tabs) fail("tab view missing");

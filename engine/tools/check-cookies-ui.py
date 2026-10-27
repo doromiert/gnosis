@@ -15,14 +15,14 @@ parser.add_argument('binary', type=Path)
 parser.add_argument('--schemas', type=Path, required=True)
 parser.add_argument('--incognito', action='store_true')
 args = parser.parse_args()
-root = Path(tempfile.mkdtemp(prefix='jupiter-cookies-ui-', dir='/tmp'))
+root = Path(tempfile.mkdtemp(prefix='gnosis-cookies-ui-', dir='/tmp'))
 env = dict(os.environ, XDG_CONFIG_HOME=str(root/'config'), XDG_DATA_HOME=str(root/'data'),
            XDG_CACHE_HOME=str(root/'cache'), GSETTINGS_BACKEND='keyfile',
            GSETTINGS_SCHEMA_DIR=str(args.schemas.resolve()))
 for key, value in [('ask-for-default', 'false'), ('active-clear-data-items', '1')]:
-    subprocess.run(['gsettings', 'set', 'io.github.doromiert.Jupiter', key, value], env=env, check=True)
+    subprocess.run(['gsettings', 'set', 'com.neg-zero.Gnosis', key, value], env=env, check=True)
 (root/'profile').mkdir()
-base = os.environ['JUPITER_TEST_URL']
+base = os.environ['GNOSIS_TEST_URL']
 log = (root/'app.log').open('w')
 command = [str(args.binary.resolve()), '--profile='+str(root/'profile')]
 if args.incognito:

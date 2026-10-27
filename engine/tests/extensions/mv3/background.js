@@ -4,25 +4,25 @@ chrome.runtime.onMessage.addListener((message,sender,reply)=>{
   await chrome.storage.local.set({fixture:version});
   const stored=await chrome.storage.local.get('fixture');
   let script,css;
-  const values=await chrome.scripting.executeScript({target:{tabId:sender.tab.id,allFrames:true},func:()=>{document.documentElement.dataset.jupiterInjected='yes';return 7;}});
-  await chrome.scripting.insertCSS({target:{tabId:sender.tab.id,allFrames:true},css:'.jupiter-ad{display:none!important}'});
+  const values=await chrome.scripting.executeScript({target:{tabId:sender.tab.id,allFrames:true},func:()=>{document.documentElement.dataset.gnosisInjected='yes';return 7;}});
+  await chrome.scripting.insertCSS({target:{tabId:sender.tab.id,allFrames:true},css:'.gnosis-ad{display:none!important}'});
   const target={tabId:sender.tab.id,allFrames:true};
   await chrome.scripting.executeScript({target,func:()=>{
    const probe=document.createElement('div');
-   probe.id='jupiter-user-origin';
+   probe.id='gnosis-user-origin';
    probe.style.setProperty('color','rgb(11, 22, 33)','important');
    document.documentElement.append(probe);
   }});
-  const userStyle={target,origin:'USER',css:'#jupiter-user-origin{color:rgb(44,55,66)!important}'};
+  const userStyle={target,origin:'USER',css:'#gnosis-user-origin{color:rgb(44,55,66)!important}'};
   let userValues;
   try {
    await chrome.scripting.insertCSS(userStyle);
-   userValues=await chrome.scripting.executeScript({target,func:()=>getComputedStyle(document.getElementById('jupiter-user-origin')).color});
+   userValues=await chrome.scripting.executeScript({target,func:()=>getComputedStyle(document.getElementById('gnosis-user-origin')).color});
   } finally {
    await chrome.scripting.removeCSS(userStyle);
   }
   const restoredValues=await chrome.scripting.executeScript({target,func:()=>{
-   const probe=document.getElementById('jupiter-user-origin');
+   const probe=document.getElementById('gnosis-user-origin');
    const color=getComputedStyle(probe).color;
    probe.remove();
    return color;

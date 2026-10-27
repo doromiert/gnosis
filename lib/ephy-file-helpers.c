@@ -94,7 +94,7 @@ ephy_file_tmp_dir (void)
     char *partial_name;
     char *full_name;
 
-    partial_name = g_strconcat ("jupiter-", g_get_user_name (),
+    partial_name = g_strconcat ("gnosis-", g_get_user_name (),
                                 "-XXXXXX", NULL);
     full_name = g_build_filename (g_get_tmp_dir (), partial_name,
                                   NULL);
@@ -345,7 +345,7 @@ ephy_default_profile_dir (void)
 {
   return profile_dir_type == EPHY_PROFILE_DIR_TEST ?
          g_strdup (ephy_profile_dir ()) :
-         g_build_filename (g_get_user_data_dir (), "jupiter", NULL);
+         g_build_filename (g_get_user_data_dir (), "gnosis", NULL);
 }
 
 /**
@@ -360,7 +360,7 @@ ephy_default_cache_dir (void)
 {
   return profile_dir_type == EPHY_PROFILE_DIR_TEST ?
          g_build_filename (ephy_profile_dir (), "cache", NULL) :
-         g_build_filename (g_get_user_cache_dir (), "jupiter", NULL);
+         g_build_filename (g_get_user_cache_dir (), "gnosis", NULL);
 }
 
 /**
@@ -375,7 +375,7 @@ ephy_default_config_dir (void)
 {
   return profile_dir_type == EPHY_PROFILE_DIR_TEST ?
          g_build_filename (ephy_profile_dir (), "config", NULL) :
-         g_build_filename (g_get_user_config_dir (), "jupiter", NULL);
+         g_build_filename (g_get_user_config_dir (), "gnosis", NULL);
 }
 
 /**
@@ -439,7 +439,7 @@ ephy_file_helpers_init (const char            *profile_dir,
     }
 
     profile_dir_global = g_build_filename (ephy_file_tmp_dir (),
-                                           "jupiter",
+                                           "gnosis",
                                            NULL);
     cache_dir = g_build_filename (profile_dir_global, "cache", NULL);
     config_dir = g_build_filename (profile_dir_global, "config", NULL);

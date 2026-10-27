@@ -37,7 +37,7 @@ if args.public_adblock_probe and (args.fixture or args.network_probes):
 if not args.fixture and (not args.ublock or not (args.ublock / "manifest.json").is_file()):
     parser.error("Set UBLOCK_DIR or --ublock to the official unpacked full uBlock Origin")
 engine = Path(__file__).resolve().parents[1]
-artifacts = Path(tempfile.mkdtemp(prefix="jupiter-extension-check-", dir="/tmp"))
+artifacts = Path(tempfile.mkdtemp(prefix="gnosis-extension-check-", dir="/tmp"))
 print("Artifacts:", artifacts, flush=True)
 display_file = artifacts / "display"
 with display_file.open("w") as display_out:
@@ -96,21 +96,21 @@ try:
     setup = artifacts / "configure.js"
     network_config = {"origin": f"http://127.0.0.1:{cross_server.server_port}", "nonce": run_nonce} if cross_server else None
     setup.write_text((engine / "tests/fixtures/configure-ublock.js").read_text()
-                     .replace("JUPITER_FIXTURE_PORT", str(server.server_port))
-                     .replace("JUPITER_NETWORK_CONFIG", json.dumps(network_config)))
+                     .replace("GNOSIS_FIXTURE_PORT", str(server.server_port))
+                     .replace("GNOSIS_NETWORK_CONFIG", json.dumps(network_config)))
     if args.public_adblock_probe:
         setup.write_text((engine / "tests/fixtures/prepare-public-adblock.js").read_text())
-    env = dict(os.environ, DISPLAY=":" + display_file.read_text().strip(), JUPITER_PROBE_EXTENSION=extension + "," + str(engine / "data/tab-bridge"), JUPITER_PROBE_URL=f"chrome-extension://{ext_id}/1p-filters.html", JUPITER_PROBE_SCRIPT=str(setup))
+    env = dict(os.environ, DISPLAY=":" + display_file.read_text().strip(), GNOSIS_PROBE_EXTENSION=extension + "," + str(engine / "data/tab-bridge"), GNOSIS_PROBE_URL=f"chrome-extension://{ext_id}/1p-filters.html", GNOSIS_PROBE_SCRIPT=str(setup))
     env.pop("WAYLAND_DISPLAY", None)
     if args.fixture:
-        env["JUPITER_PROBE_URL"] = f"http://127.0.0.1:{server.server_port}/extensions.html"
-        env.pop("JUPITER_PROBE_SCRIPT", None)
+        env["GNOSIS_PROBE_URL"] = f"http://127.0.0.1:{server.server_port}/extensions.html"
+        env.pop("GNOSIS_PROBE_SCRIPT", None)
     if args.lifecycle:
-        env["JUPITER_PROBE_LIFECYCLE"] = "1"
+        env["GNOSIS_PROBE_LIFECYCLE"] = "1"
     if args.network_probes:
-        env["JUPITER_PROBE_NETWORK"] = "1"
+        env["GNOSIS_PROBE_NETWORK"] = "1"
     if args.public_adblock_probe:
-        env["JUPITER_PUBLIC_ADBLOCK_SCRIPT"] = str(engine / "tests/fixtures/public-adblock.js")
+        env["GNOSIS_PUBLIC_ADBLOCK_SCRIPT"] = str(engine / "tests/fixtures/public-adblock.js")
     with (artifacts / "ublock.log").open("w") as log:
         process = subprocess.Popen([str(args.binary.resolve())], env=env, stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
         try:

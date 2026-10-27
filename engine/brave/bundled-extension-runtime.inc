@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later; included inside Process. */
   void refresh_bundled_adblock(JsonArray* inventory, bool blocking, std::function<void()> finish) {
     std::string expected;
-    try { expected = BundledExtensionUpdate::packaged_id(profile, JUPITER_UBLOCK_DIR); }
+    try { expected = BundledExtensionUpdate::packaged_id(profile, GNOSIS_UBLOCK_DIR); }
     catch (const std::exception& error) { g_warning("Bundled uBlock: %s", error.what()); finish(); return; }
     std::string installed;
     bool registered = false, external = false;
@@ -72,7 +72,7 @@
     g_task_set_task_data(task, work, nullptr);
     g_task_run_in_thread(task, +[](GTask* task, gpointer, gpointer data, GCancellable*) {
       auto* work = static_cast<Work*>(data);
-      try { work->update = BundledExtensionUpdate::prepare(work->process->profile, JUPITER_UBLOCK_DIR, work->installed); }
+      try { work->update = BundledExtensionUpdate::prepare(work->process->profile, GNOSIS_UBLOCK_DIR, work->installed); }
       catch (const std::exception& error) { work->error = error.what(); }
       g_task_return_boolean(task, TRUE);
     });

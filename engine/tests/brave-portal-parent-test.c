@@ -3,8 +3,8 @@
 #include <string.h>
 #include <glib.h>
 static const char *parent = "wayland:real-gtk-window";
-int jupiter_adapter_enabled(const char *id) { (void)id; return 1; }
-char *jupiter_portal_parent(void) { return g_strdup(parent); }
+int gnosis_adapter_enabled(const char *id) { (void)id; return 1; }
+char *gnosis_portal_parent(void) { return g_strdup(parent); }
 #include "native-notifications.c"
 int main(void) {
   for (unsigned method = 0; method < 3; ++method) {

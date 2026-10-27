@@ -21,6 +21,7 @@
  */
 
 #include "config.h"
+#include "gnosis-rebrand.h"
 #include "ephy-engine-view.h"
 #include "include/cef_api_hash.h"
 
@@ -349,6 +350,13 @@ main (int   argc,
 
   if (application_mode && !profile_directory) {
     g_print ("--profile must be used when --application-mode is requested without desktop file path\n");
+    goto out;
+  }
+
+  if (!profile_directory && !private_instance && !application_mode && !automation_mode && !incognito_mode &&
+      !gnosis_migrate_legacy_profile (&error)) {
+    g_printerr ("Could not migrate the browser profile to Gnosis: %s\n", error->message);
+    g_clear_error (&error);
     goto out;
   }
 

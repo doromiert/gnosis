@@ -1652,7 +1652,7 @@ format_network_error_page (EphyWebView  *view,
 
   /* The button on the network error page. DO NOT ADD MNEMONICS HERE. */
   *button_label = g_strdup (_("Reload"));
-  *button_action = g_strdup_printf ("Jupiter.postMessage('reloadPage', %" G_GUINT64_FORMAT ");",
+  *button_action = g_strdup_printf ("Gnosis.postMessage('reloadPage', %" G_GUINT64_FORMAT ");",
                                     ephy_engine_web_view_get_page_id (EPHY_ENGINE_VIEW (view)));
   /* Mnemonic for the Reload button on browser error pages. */
   *button_accesskey = C_("reload-access-key", "R");
@@ -1705,7 +1705,7 @@ format_crash_error_page (EphyWebView  *view,
 
   /* The button on the page crash error page. DO NOT ADD MNEMONICS HERE. */
   *button_label = g_strdup (_("Reload"));
-  *button_action = g_strdup_printf ("Jupiter.postMessage('reloadPage', %" G_GUINT64_FORMAT ");",
+  *button_action = g_strdup_printf ("Gnosis.postMessage('reloadPage', %" G_GUINT64_FORMAT ");",
                                     ephy_engine_web_view_get_page_id (EPHY_ENGINE_VIEW (view)));
   /* Mnemonic for the Reload button on browser error pages. */
   *button_accesskey = C_("reload-access-key", "R");
@@ -1741,7 +1741,7 @@ format_process_crash_error_page (EphyWebView  *view,
 
   /* The button on the process crash error page. DO NOT ADD MNEMONICS HERE. */
   *button_label = g_strdup (_("Reload"));
-  *button_action = g_strdup_printf ("Jupiter.postMessage('reloadPage', %" G_GUINT64_FORMAT ");",
+  *button_action = g_strdup_printf ("Gnosis.postMessage('reloadPage', %" G_GUINT64_FORMAT ");",
                                     ephy_engine_web_view_get_page_id (EPHY_ENGINE_VIEW (view)));
   /* Mnemonic for the Reload button on browser error pages. */
   *button_accesskey = C_("reload-access-key", "R");
@@ -1777,7 +1777,7 @@ format_unresponsive_process_error_page (EphyWebView  *view,
 
   /* The button on the unresponsive process error page. DO NOT ADD MNEMONICS HERE. */
   *button_label = g_strdup (_("Reload"));
-  *button_action = g_strdup_printf ("Jupiter.postMessage('reloadPage', %" G_GUINT64_FORMAT ");",
+  *button_action = g_strdup_printf ("Gnosis.postMessage('reloadPage', %" G_GUINT64_FORMAT ");",
                                     ephy_engine_web_view_get_page_id (EPHY_ENGINE_VIEW (view)));
   /* Mnemonic for the Reload button on browser error pages. */
   *button_accesskey = C_("reload-access-key", "R");
@@ -1832,7 +1832,7 @@ format_tls_error_page (EphyWebView  *view,
 
   /* The hidden button on the invalid TLS certificate error page. Do not add mnemonics here. */
   *hidden_button_label = g_strdup (_("Accept Risk and Proceed"));
-  *hidden_button_action = g_strdup_printf ("Jupiter.postMessage('tlsErrorPage', %"G_GUINT64_FORMAT ");",
+  *hidden_button_action = g_strdup_printf ("Gnosis.postMessage('tlsErrorPage', %"G_GUINT64_FORMAT ");",
                                            ephy_engine_web_view_get_page_id (EPHY_ENGINE_VIEW (view)));
   /* Mnemonic for the Accept Risk and Proceed button on the invalid TLS certificate error page. */
   *hidden_button_accesskey = C_("proceed-anyway-access-key", "P");

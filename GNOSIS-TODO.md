@@ -84,10 +84,10 @@ Keep Chromium memory core dumps disabled.
   and publish text/link/image addresses during the real GTK activation, before
   destroying the popup's Wayland surface/input serial. Native edit chords still
   wait for the keyboard grab to release. Packaged user check pending.
-- [x] Rebrand native desktop notifications as Jupiter using the freedesktop
+- [x] Rebrand native desktop notifications as Gnosis using the freedesktop
   Notify transport, retaining native IDs/actions and website content. Actual
-  delivery and Jupiter app name/desktop-entry are verified; the packaged icon
-  points to Jupiter's SVG. User confirmed delivery before this branding change.
+  delivery and Gnosis app name/desktop-entry are verified; the packaged icon
+  points to Gnosis's SVG. User confirmed delivery before this branding change.
 - [o] Enable real file/directory pickers: pinned Brave disables
   FileSystemAccessAPI by default, so the methods were absent. Enable that base
   feature; a windowed native probe then invoked XDG FileChooser.OpenFile.
@@ -207,13 +207,13 @@ Keep Chromium memory core dumps disabled.
   withholding checkbox variants still use native UI; broader coverage is pending.
 - [o] Port the extension menu and popup host to Brave's actual extension backend.
   Current GTK menu management still queries CEF, and Brave startup does not load
-  the installed Jupiter catalog. Preserve real ExtensionViewHost popup semantics,
+  the installed Gnosis catalog. Preserve real ExtensionViewHost popup semantics,
   activeTab grants and full uBlock Origin; do not substitute an ordinary tab.
   Isolated Brave successfully loads full uBlock 1.75.0 and reports its native
   inventory. Extensions.triggerAction requires a `tab` target, not a `page`
   target; targeting an actual tab inside the current --app window crashes the
   isolated Brave process. Resolve native app-window popup hosting before wiring
-  the GTK action row. Main Jupiter was not involved in that crash.
+  the GTK action row. Main Gnosis was not involved in that crash.
 - [x] Port find-in-page to Brave's actual FindTabHelper, with native counts,
   ordinals, wrapping, case/Unicode matching and same/cross-process frame search.
   Native and real GTK toolbar tests pass; unsupported whole-word matching is
@@ -261,7 +261,7 @@ Keep Chromium memory core dumps disabled.
 
 - [x] Serve the About page's GNOME icon through native resources instead of a
   blocked local-file URL. Developer/Nix builds and actual packaged rendering pass.
-  Latest package: `/nix/store/payp5a0dn8q96jfqcg3bnjlll2z8xyg6-jupiter-0.1.0`.
+  Latest package: `/nix/store/payp5a0dn8q96jfqcg3bnjlll2z8xyg6-gnosis-0.1.0`.
   Evidence: `build-cef/verification/native-about-resources/`.
 
 - [x] Integrate cold-start extension popup readiness. Persistent MV2 backgrounds
@@ -270,7 +270,7 @@ Keep Chromium memory core dumps disabled.
   Actual two-window uBlock popup shows the correct owner site, options stay in
   the owning window, strict native/private/close checks, full uBlock and MV2/MV3
   gates pass. Packaged two-window popup/settings and normal quit also pass.
-  Package: `/nix/store/5gkwifnsgfzvh9hxw7ipf5bd1drsvf51-jupiter-0.1.0`. Evidence:
+  Package: `/nix/store/5gkwifnsgfzvh9hxw7ipf5bd1drsvf51-gnosis-0.1.0`. Evidence:
   `build-cef/verification/extension-popup-readiness/`.
 - [o] Remove foreign WebKit hit-test commands and empty context_event storage.
   Native CEF menu actions remain authoritative; integrated build passes.
@@ -283,7 +283,7 @@ Keep Chromium memory core dumps disabled.
   consumers, and reconnect OpenSearch discovery to native load completion.
   Native/Nix builds pass; libraries no longer import legacy policy, script-dialog
   or notification functions/types. Packaged OpenSearch menu shows only the valid
-  discovery entry and clears it after navigation. About reports Jupiter and real
+  discovery entry and clears it after navigation. About reports Gnosis and real
   CEF/Chromium versions. Rapid navigation/close OpenSearch cases remain a separate
   follow-up; their replies already check native document identity and cancellation.
 
@@ -299,7 +299,7 @@ Keep Chromium memory core dumps disabled.
 - [o] Fix private/default window relaunches to use the current executable with
   explicit arguments instead of a missing PATH lookup. Source landed; verify
   absolute-path launches and private-window behavior. Developer and packaged
-  GUI pass actual Ctrl+Shift+N with jupiter absent from PATH, distinct private
+  GUI pass actual Ctrl+Shift+N with gnosis absent from PATH, distinct private
   process/window and clean quit. Private-link/argument-boundary cases remain pending.
 - [o] Implement native Chrome Web Store installation. The actual Add button crash
   is reproduced in Chromium's install-dialog creation stack. A temporary guard
@@ -356,7 +356,7 @@ Keep Chromium memory core dumps disabled.
   full-uBlock network/cosmetic/scriptlet/frame checks and the Nix build. Actual
   Firefox Accounts challenge remains pending. Real held/delayed responses now
   verify main/subframe navigation, redirect chains, hide/show, close and stale
-  reply rejection. Evidence: integrated-native-cleanup/jupiter-integrated-response-check.log.
+  reply rejection. Evidence: integrated-native-cleanup/gnosis-integrated-response-check.log.
   Evidence: `build-cef/verification/native-resource-response/`.
 
 - [x] Remove WebKit request allocations from delayed session restore and the URI
@@ -379,7 +379,7 @@ Keep Chromium memory core dumps disabled.
 - [o] Replace WebKit client-certificate authentication with CEF candidate selection
   and a native GNOME chooser. Integrated into the main view/window and both build
   definitions; removed the old WebKit handler and its unused GCK build dependency.
-  Native Jupiter build
+  Native Gnosis build
   and the shared HTTP-authentication lifecycle regression pass. Real client-TLS
   successful client-certificate handshake remains pending. Actual packaged GTK
   empty-candidate chooser and Close pass against a local TLS server; the server
@@ -400,9 +400,9 @@ Keep Chromium memory core dumps disabled.
   reopening a profile configured through native SetPreference/GetPreference.
   The dialog shows the actual proxy recipient. Persistent password saving and
   client-certificate integration remain separate work.
-  Package: `/nix/store/3d7zjy8wcwyynqa0dmgkg6vnz0g39cd1-jupiter-0.1.0`.
-  Logs: `/tmp/jupiter-native-auth-complete.log`, `/tmp/jupiter-http-auth-ui-direct.log`,
-  `/tmp/jupiter-http-auth-final-packaged-ui.log`. Final MV2 lifecycle, MV3 host-isolation
+  Package: `/nix/store/3d7zjy8wcwyynqa0dmgkg6vnz0g39cd1-gnosis-0.1.0`.
+  Logs: `/tmp/gnosis-native-auth-complete.log`, `/tmp/gnosis-http-auth-ui-direct.log`,
+  `/tmp/gnosis-http-auth-final-packaged-ui.log`. Final MV2 lifecycle, MV3 host-isolation
   and full-uBlock network/cosmetic/scriptlet/frame checks all pass. Persistent
   evidence and the scoped acceptance record are in
   `build-cef/verification/http-auth/status.json`.
@@ -412,7 +412,7 @@ Keep Chromium memory core dumps disabled.
   synchronous ownership plus XRes proves GTK already owns PRIMARY when its stale
   clear event collapses the completion selection. Normal idle scheduling passed
   with traces but failed again without them, so that change alone is not a fix.
-  Jupiter's private GTK build now checks actual current selection ownership
+  Gnosis's private GTK build now checks actual current selection ownership
   before accepting queued SelectionClear/XFixes ownership loss. Native tests
   reproduce the failure with upstream GTK, preserve local ownership after reclaim,
   and still accept genuine foreign takeover. CEF and the system GTK are unchanged.
@@ -422,12 +422,12 @@ Keep Chromium memory core dumps disabled.
   changes, and paused inline completion. The actual process maps exactly one GTK,
   the patched build, with development library paths removed. Rich clipboard,
   ownership, permissions, focus, Cut/Paste and reload regressions also pass.
-  Package: `/nix/store/j5gxqp19rapx3b46kl30agi5wg5j580g-jupiter-0.1.0`.
+  Package: `/nix/store/j5gxqp19rapx3b46kl30agi5wg5j580g-gnosis-0.1.0`.
   Evidence: `build-cef/verification/location-entry/`.
-- [x] Fix About/app metadata: Jupiter 0.1.0, actual CEF/Chromium diagnostics,
+- [x] Fix About/app metadata: Gnosis 0.1.0, actual CEF/Chromium diagnostics,
   upstream credits preserved.
 - [x] Rebuild the Nix package and inspect the corrected About dialog; verified
-  Jupiter branding and retained GNOME icon with development library paths unset.
+  Gnosis branding and retained GNOME icon with development library paths unset.
 - [x] Replace the null main-resource response stub with actual Chromium metadata;
   verify redirects, error responses, Unicode filenames, subframes, history
   restoration, and resource lifetime. Remove the old WebKit response-policy code.
@@ -584,7 +584,7 @@ Keep Chromium memory core dumps disabled.
 ## Finish the engine swap
 
 - [ ] Exclude Cast, Wear, Vision, Wallet, and Play Billing integrations from
-  Jupiter and its custom CEF build, as requested. Distinguish actual compiled
+  Gnosis and its custom CEF build, as requested. Distinguish actual compiled
   components from runtime feature switches; the current SDK is prebuilt.
   Disable Chromium's actual MediaRouter feature while the source-build
   exclusions are prepared; this does not remove it from the prebuilt library.
@@ -610,7 +610,7 @@ Keep Chromium memory core dumps disabled.
   hide the tab and close its window while setup is pending. Cancel portal work
   when the page unmaps. D-Bus verifies four PreparePrint requests, one Print and
   two Close calls, with no surviving dialog. Log:
-  `/tmp/jupiter-print-portals-fixed.log`.
+  `/tmp/gnosis-print-portals-fixed.log`.
 - [x] Fix the application-side CEF child entry boundary so Chromium's fork-time
   stack-canary reset does not unwind older protected embedder frames. Keep
   stack protection in ordinary application code and leave the SDK and sandbox
@@ -656,7 +656,7 @@ Keep Chromium memory core dumps disabled.
   completed with Space, plus Enter activation. The application build passes.
   The fixture uses GTK's simple IM; external asynchronous IBus/Fcitx behavior
   and Wayland-specific keyboard coverage remain unverified. Log:
-  `/tmp/jupiter-keyboard-runtime-4.log`. The independent browser-info startup
+  `/tmp/gnosis-keyboard-runtime-4.log`. The independent browser-info startup
   timeout still appears and is not fixed by this input change.
 - [ ] Preserve Chromium's strict certificate enforcement (including HSTS) in the
   native exception UI. Pinned CEF `c1a097e` receives `strict_enforcement` in
@@ -798,7 +798,7 @@ Keep Chromium memory core dumps disabled.
   regular/private icons, clipboard Allow/Deny and Find/Reader workflows with
   development library paths unset. Logs:
   `build-cef/verification/rich-clipboard/png-final/`. Package:
-  `/nix/store/iwsw7dwhs0h4cczvq0fdplsz4qcrhddk-jupiter-0.1.0`.
+  `/nix/store/iwsw7dwhs0h4cczvq0fdplsz4qcrhddk-gnosis-0.1.0`.
   The initial broad run hit clipboard startup/reload and uBlock initialization
   failures; the targeted native/desktop runs and corrected uBlock probe pass.
   Keep the independent CEF startup issue above, generic web-custom-format
@@ -883,14 +883,14 @@ Keep Chromium memory core dumps disabled.
   A disposable profile runs 64 real GET/HEAD fetches with 50 workers across two
   local origins. Server logs confirm all 32 allowed requests arrive and none of
   the 32 blocked/redirected requests arrive. Hard blocks reject; empty redirects
-  fulfill locally. Log: `/tmp/jupiter-adblock-network-probes.log`.
+  fulfill locally. Log: `/tmp/gnosis-adblock-network-probes.log`.
 - [x] Diagnose the public adblock test's 2% result with unchanged uBlock defaults,
   original fetch outcomes and native network events. Both the initial run and
   actual Re-test reproduce 2/132. Of 128 HEAD fetches in each run, 88 fulfill from
   local uBlock data replacements, 39 fulfill otherwise and one rejects. The site
   counts all fulfilled fetches as unblocked, including the local replacements;
   the score understates filtering. This is not proof of blocking every host.
-  Evidence: `/tmp/jupiter-extension-check-0rv1nhj4/public-adblock-results.json`
+  Evidence: `/tmp/gnosis-extension-check-0rv1nhj4/public-adblock-results.json`
   and `public-adblock-network.jsonl` in the same directory.
 - [o] Recover native extension pages invalidated during initial extension reload,
   and verify the real uBlock settings pane and owning-tab popup in the main UI.
@@ -901,20 +901,20 @@ Keep Chromium memory core dumps disabled.
   contexts, and can display an extension address or an uninitialized popup after
   reload. The regular `extension-popup-test` still fails; keep that regression
   visible. Do not force-reload user pages or patch uBlock to hide it. Logs:
-  `/tmp/jupiter-extension-popup-status.log` and main-window screenshots in
-  `/tmp/jupiter-native-extensions-ui-1viaqsol/`.
+  `/tmp/gnosis-extension-popup-status.log` and main-window screenshots in
+  `/tmp/gnosis-native-extensions-ui-1viaqsol/`.
   Nix build passes at
-  `/nix/store/9kjlxnv5rp2w0vqadb56dlxqlyf58dkm-jupiter-0.1.0`, but the packaged
+  `/nix/store/9kjlxnv5rp2w0vqadb56dlxqlyf58dkm-gnosis-0.1.0`, but the packaged
   main-window run with development library paths removed reproduces a blank
   popup on fresh startup. Packaged UI acceptance remains failing; evidence:
-  `/tmp/jupiter-packaged-native-extensions-ui.log` and
-  `/tmp/jupiter-native-extensions-ui-x4znh5yr/failure.png`.
+  `/tmp/gnosis-packaged-native-extensions-ui.log` and
+  `/tmp/gnosis-native-extensions-ui-x4znh5yr/failure.png`.
   A separate `--owner-reload-diagnostic` control waits for real uBlock startup
   and reloads only disposable test pages: both popup hostnames then match their
   owners and window queries exclude popups. It is a causal control, not the
   normal acceptance gate or a production workaround. The separate native tab-ID
   failure found by that control is fixed below; the control now reaches real
-  settings and completes normally. Evidence: `/tmp/jupiter-dashboard-native-id-fix.log`.
+  settings and completes normally. Evidence: `/tmp/gnosis-dashboard-native-id-fix.log`.
   Persistent evidence copies are in `build-cef/verification/native-extensions/`.
   Final engine-view, MV2 lifecycle, MV3 and full-uBlock regression checks pass.
   All six real file-portal operations also pass with the installed GTK schema
@@ -932,7 +932,7 @@ Keep Chromium memory core dumps disabled.
   returned, cached and genuine chrome.tabs.getCurrent IDs, reaches real settings
   controls, and passes owning-window/private/closed-owner checks. The normal
   cold-start popup inventory race above remains open. Log:
-  `/tmp/jupiter-dashboard-native-id-fix.log`.
+  `/tmp/gnosis-dashboard-native-id-fix.log`.
 - [ ] Connect webpage external links to the actual OpenURI portal and GNOME's
   existing consent prompt, with owning-window cancellation and private isolation.
   CEF's OnBeforeBrowse exposes the destination frame but omits the navigation
@@ -948,7 +948,7 @@ Keep Chromium memory core dumps disabled.
   GNOME's existing dialog uses asynchronous cancellation. Private and unattributed
   requests neither read nor write persistent grants. The final native test passes
   after making OnOpenURLFromTab unattributed too:
-  `/tmp/jupiter-external-uri-final-native.log`.
+  `/tmp/gnosis-external-uri-final-native.log`.
   Real GUI integration independently verifies seven exact handler arguments,
   owning-window OpenURI tokens, a successful response for each specific request,
   saved consent/reuse, private isolation and stale-navigation cancellation.
@@ -959,8 +959,8 @@ Keep Chromium memory core dumps disabled.
   launches and independent window focus, then normal quit timed out. No renderer
   timer-pause fix is justified by these observations. Pending-modal desktop-close
   acceptance is still unproven; native destruction checks pass. Latest package:
-  `/nix/store/j5gxqp19rapx3b46kl30agi5wg5j580g-jupiter-0.1.0`.
-  Log: `/tmp/jupiter-open-uri-patched-gtk.log`. Further broad reruns deferred per
+  `/nix/store/j5gxqp19rapx3b46kl30agi5wg5j580g-gnosis-0.1.0`.
+  Log: `/tmp/gnosis-open-uri-patched-gtk.log`. Further broad reruns deferred per
   user request to prioritize feature implementation. Persistent evidence:
   `build-cef/verification/open-uri/`.
 - [ ] Update the pinned CEF/Chromium SDK from Chromium 150 while preserving
@@ -972,7 +972,7 @@ Keep Chromium memory core dumps disabled.
   normal history visit. Saved snapshots now read the retained CEF frame directly,
   avoiding a stale GTK thumbnail node; the final package captures real heading /
   body text with correct colors and orientation. Cheap tab thumbnail caching stays
-  unchanged. Package: `/nix/store/5r7v8mg0cmywkqkv6ccwz8m3ga29qmb9-jupiter-0.1.0`.
+  unchanged. Package: `/nix/store/5r7v8mg0cmywkqkv6ccwz8m3ga29qmb9-gnosis-0.1.0`.
   Evidence: `build-cef/verification/native-overview/`.
 - [ ] Verify direct saved-frame snapshot readback on accelerated Wayland; the
   packaged software-rendering path is verified, GPU readback is not yet exercised.
@@ -1003,7 +1003,7 @@ Keep Chromium memory core dumps disabled.
   Actual page viewports stay420x300 and640x360 across responsive toolbar animation;
   sizing includes GTK CSS/chrome and stops enforcing after a bounded settle period.
   Absolute x/y placement remains compositor-controlled, as with the GTK shell.
-  Package: `/nix/store/k9hpxf40gcl5vzcmsw0bhhbz17vl1nmx-jupiter-0.1.0`.
+  Package: `/nix/store/k9hpxf40gcl5vzcmsw0bhhbz17vl1nmx-gnosis-0.1.0`.
   Evidence: `build-cef/verification/native-popup/`.
 - [x] Remove stale WebKit security-manager setup and the ignored WebKit context
   argument from native URI-handler registration. Native CEF scheme flags remain
@@ -1019,10 +1019,10 @@ Keep Chromium memory core dumps disabled.
 - [ ] Run a final packaged browser smoke check covering the migrated services;
   port affected upstream tests rather than treating compilation as completion.
 
-## Requested Jupiter features
+## Requested Gnosis features
 
-- [ ] After feature work, profile Jupiter against Brave on the same machine.
-  User Speedometer 3.1 baselines: Jupiter 25.7 ± 1.1, Firefox 18.5 ± 2.9,
+- [ ] After feature work, profile Gnosis against Brave on the same machine.
+  User Speedometer 3.1 baselines: Gnosis 25.7 ± 1.1, Firefox 18.5 ± 2.9,
   Brave 33.5 ± 2.2. Compare engine versions, release compiler/runtime settings,
   workload/background state and GTK/CEF scheduling/render overhead before
   assigning causes. User explicitly wants this after features.
@@ -1064,9 +1064,9 @@ above.
   switching to native phone discovery pass. Dialog height follows each sheet,
   with actions outside the scroller. Native PIN/GPM fallbacks and
   conditional passkey suggestions remain follow-up work.
-- [ ] Build a proper native Jupiter MCP server: control real tabs and groups,
+- [ ] Build a proper native Gnosis MCP server: control real tabs and groups,
   navigate and interact with pages, inspect the DOM, capture screenshots, and
-  expose console/network tools through Jupiter's existing CEF sessions. Preserve
+  expose console/network tools through Gnosis's existing CEF sessions. Preserve
   profile and private-context boundaries.
 
 ## Completion rule

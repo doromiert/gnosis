@@ -51,7 +51,7 @@ static bool send(EphyEngineView* view, const std::string& uri, const char* json)
 }
 static void event(CefRefPtr<CefFrame> frame, const std::string& token, const std::string& uri,
                   const std::string& name = "probe-reply", const std::string& json = "null") {
-  auto message = CefProcessMessage::Create("jupiter.internal-page.event");
+  auto message = CefProcessMessage::Create("gnosis.internal-page.event");
   auto values = message->GetArgumentList();
   values->SetString(0, token); values->SetString(1, uri);
   values->SetString(2, name); values->SetString(3, json);
@@ -82,10 +82,10 @@ int main(int argc, char** argv) {
   g_content_type_set_mime_dirs(mime_dirs);
   g_autofree char* unknown_svg = g_content_type_guess("probe.svg", nullptr, 0, nullptr);
   g_assert_true(g_content_type_is_unknown(unknown_svg));
-  auto* app = adw_application_new("io.github.doromiert.Jupiter.PageMessagesTest", G_APPLICATION_NON_UNIQUE);
+  auto* app = adw_application_new("com.neg-zero.Gnosis.PageMessagesTest", G_APPLICATION_NON_UNIQUE);
   GError* error = nullptr;
   g_assert_true(g_application_register(G_APPLICATION(app), nullptr, &error)); g_assert_no_error(error);
-  char profile[] = "/tmp/jupiter-page-messages-XXXXXX"; g_assert_nonnull(mkdtemp(profile));
+  char profile[] = "/tmp/gnosis-page-messages-XXXXXX"; g_assert_nonnull(mkdtemp(profile));
   g_assert_true(ephy_engine_initialize(argc, argv, profile, true)); disable_diagnostic_core_dumps();
   ephy_engine_register_uri_scheme("ephy-resource", +[](EphyEngineSchemeRequest* request, gpointer) {
     const char* content = g_str_has_suffix(ephy_engine_uri_scheme_request_get_path(request), ".svg")
@@ -97,28 +97,28 @@ int main(int argc, char** argv) {
   }, nullptr, nullptr);
   auto* view = page(GTK_APPLICATION(app), ephy_engine_session_get_default());
   Messages normal; normal.connect(view);
-  auto http = std::string(g_getenv("JUPITER_TEST_URL")) + "script-fixture";
+  auto http = std::string(g_getenv("GNOSIS_TEST_URL")) + "script-fixture";
   load(view, [&] { ephy_engine_web_view_load_uri(view, http.c_str()); });
-  g_assert_true(evaluate(view, "typeof Jupiter") == "undefined");
+  g_assert_true(evaluate(view, "typeof Gnosis") == "undefined");
   g_assert_false(send(view, http, "null"));
-  g_assert_true(evaluate(view, "typeof Jupiter", "private-world") == "undefined");
+  g_assert_true(evaluate(view, "typeof Gnosis", "private-world") == "undefined");
   g_print("Ordinary websites and isolated worlds have no internal-page API: PASS\n");
 
   const char* html = R"HTML(<!doctype html><title>Native internal messages</title>
-    <script>Jupiter.postMessage('probe',{text:'Unicode: ąß🪐',items:[null,42,false]});</script>
+    <script>Gnosis.postMessage('probe',{text:'Unicode: ąß🪐',items:[null,42,false]});</script>
     <img id=icon src="ephy-resource:///probe.svg">
-    <iframe src="data:text/html,%3Cscript%3Edocument.title=typeof%20Jupiter%3C/script%3E#jupiter-alternate-child"></iframe>)HTML";
+    <iframe src="data:text/html,%3Cscript%3Edocument.title=typeof%20Gnosis%3C/script%3E#gnosis-alternate-child"></iframe>)HTML";
   load(view, [&] { ephy_engine_web_view_load_alternate_html(view, html, "https://failed.example.test/", nullptr); });
   wait_for([&] { return normal.received.size() == 1; });
   g_assert_true(normal.received[0] == "{\"text\":\"Unicode: ąß🪐\",\"items\":[null,42,false]}");
-  g_assert_true(evaluate(view, "Object.isFrozen(Jupiter)&&typeof __jupiterInternalMessage==='undefined'") == "true");
-  g_assert_true(evaluate(view, "typeof Jupiter", "private-world") == "undefined");
+  g_assert_true(evaluate(view, "Object.isFrozen(Gnosis)&&typeof __gnosisInternalMessage==='undefined'") == "true");
+  g_assert_true(evaluate(view, "typeof Gnosis", "private-world") == "undefined");
   g_assert_true(evaluate(view, "typeof webkit") == "undefined");
   g_assert_true(evaluate(view, "icon.complete&&icon.naturalWidth===17&&icon.naturalHeight===19") == "true");
-  g_assert_true(evaluate(view, "(()=>{try{Jupiter.postMessage('probe',1n)}catch(e){return e.name}})()") == "TypeError");
-  g_assert_true(evaluate(view, "(()=>{try{Jupiter.postMessage('probe','x'.repeat(1024*1024+1))}catch(e){return e.message}})()") == "Internal page message is too large.");
-  evaluate(view, "Jupiter.postMessage('unregistered','ignored');true");
-  evaluate(view, "Jupiter.postMessage('probe',{another:true});true");
+  g_assert_true(evaluate(view, "(()=>{try{Gnosis.postMessage('probe',1n)}catch(e){return e.name}})()") == "TypeError");
+  g_assert_true(evaluate(view, "(()=>{try{Gnosis.postMessage('probe','x'.repeat(1024*1024+1))}catch(e){return e.message}})()") == "Internal page message is too large.");
+  evaluate(view, "Gnosis.postMessage('unregistered','ignored');true");
+  evaluate(view, "Gnosis.postMessage('probe',{another:true});true");
   wait_for([&] { return normal.received.size() == 2; });
   g_assert_true(normal.received.back() == "{\"another\":true}");
   g_print("Native context-created messaging runs before page scripts, preserves JSON/Unicode, isolates worlds, and bounds payloads: PASS\n");
@@ -129,7 +129,7 @@ int main(int argc, char** argv) {
   const auto alternate_token = native->page_message_context.substr(0, 36);
   evaluate(view, R"JS(globalThis.nativeEvents=[];
     globalThis.nativeListener=e=>nativeEvents.push({detail:e.detail,custom:e instanceof CustomEvent});
-    Jupiter.addEventListener('probe-reply',nativeListener);
+    Gnosis.addEventListener('probe-reply',nativeListener);
     dispatchEvent(new CustomEvent('probe-reply',{detail:'public-event'}));true)JS");
   g_assert_false(send(view, "https://failed.example.test/", "null"));
   g_assert_false(send(view, "ephy-about:overview", "null"));
@@ -153,33 +153,33 @@ int main(int argc, char** argv) {
   wait_for([&] { return evaluate(view, "nativeEvents.length") == "1"; });
   g_assert_true(evaluate(view, "JSON.stringify(nativeEvents)") ==
     "[{\"detail\":{\"text\":\"Native: ąß🪐\",\"items\":[null,42,false]},\"custom\":true}]");
-  evaluate(view, "Jupiter.removeEventListener('probe-reply',nativeListener);Jupiter.addEventListener('probe-reply',nativeListener,{once:true});true");
+  evaluate(view, "Gnosis.removeEventListener('probe-reply',nativeListener);Gnosis.addEventListener('probe-reply',nativeListener,{once:true});true");
   g_assert_true(send(view, alternate_uri, "1"));
   g_assert_true(send(view, alternate_uri, "2"));
   wait_for([&] { return evaluate(view, "nativeEvents.length") == "2"; });
   g_assert_true(evaluate(view, "nativeEvents[1].detail") == "1");
-  g_assert_true(evaluate(view, "typeof Jupiter", "private-world") == "undefined");
+  g_assert_true(evaluate(view, "typeof Gnosis", "private-world") == "undefined");
   g_print("Native replies deliver private CustomEvent details; URI, token, frame and payload checks reject foreign events: PASS\n");
 
   // A forged alternate-page marker does not grant access to the browser's own document registry.
-  const char* forged = "data:text/html;charset=utf-8;base64,PHNjcmlwdD5KdXBpdGVyLnBvc3RNZXNzYWdlKCdwcm9iZScsJ2ZvcmdlZCcpPC9zY3JpcHQ+#jupiter-alternate-forged";
+  const char* forged = "data:text/html;charset=utf-8;base64,PHNjcmlwdD5KdXBpdGVyLnBvc3RNZXNzYWdlKCdwcm9iZScsJ2ZvcmdlZCcpPC9zY3JpcHQ+#gnosis-alternate-forged";
   load(view, [&] { ephy_engine_web_view_load_uri(view, forged); });
-  evaluate(view, "Jupiter.postMessage('probe','forged-again');true");
+  evaluate(view, "Gnosis.postMessage('probe','forged-again');true");
   g_assert_false(send(view, forged, "null"));
   g_assert_false(send(view, alternate_uri, "null"));
   // Wait for a subsequent authorized message to drain earlier renderer IPC.
   load(view, [&] { ephy_engine_web_view_load_alternate_html(view, "<title>Second internal page</title>", "https://second.example.test/", nullptr); });
   ephy_engine_web_view_unregister_page_message_handler(view, "probe");
-  evaluate(view, "Jupiter.postMessage('probe','unregistered');true");
+  evaluate(view, "Gnosis.postMessage('probe','unregistered');true");
   ephy_engine_web_view_register_page_message_handler(view, "probe");
-  evaluate(view, "Jupiter.postMessage('probe','registered-again');true");
+  evaluate(view, "Gnosis.postMessage('probe','registered-again');true");
   wait_for([&] { return normal.received.size() >= 3; });
   g_assert_cmpuint(normal.received.size(), ==, 3);
   g_assert_true(normal.received.back() == "\"registered-again\"");
   g_print("Forged data URLs cannot invoke internal handlers; unregister/re-register applies to the current document: PASS\n");
 
   ephy_engine_register_uri_scheme("ephy-about", +[](EphyEngineSchemeRequest* request, gpointer) {
-    const char* content = "<!doctype html><title>Internal scheme</title><link rel=stylesheet href='ephy-resource:///probe.css'><script>Jupiter.postMessage('probe','scheme');</script>";
+    const char* content = "<!doctype html><title>Internal scheme</title><link rel=stylesheet href='ephy-resource:///probe.css'><script>Gnosis.postMessage('probe','scheme');</script>";
     auto* stream = g_memory_input_stream_new_from_data(g_strdup(content), -1, g_free);
     ephy_engine_uri_scheme_request_finish(request, stream, -1, "text/html");
     g_object_unref(stream);
@@ -193,7 +193,7 @@ int main(int argc, char** argv) {
   auto stale_token = native->page_message_context.substr(0, 36);
   load(view, [&] { ephy_engine_web_view_reload(view); });
   wait_for([&] { return normal.received.size() == 5; });
-  evaluate(view, "globalThis.nativeEvents=[];Jupiter.addEventListener('probe-reply',e=>nativeEvents.push(e.detail));true");
+  evaluate(view, "globalThis.nativeEvents=[];Gnosis.addEventListener('probe-reply',e=>nativeEvents.push(e.detail));true");
   event(cef->GetMainFrame(), stale_token, "ephy-about:bridge-test");
   event(cef->GetMainFrame(), alternate_token, alternate_uri);
   g_assert_true(send(view, "ephy-about:bridge-test", "\"current-document\""));
@@ -202,7 +202,7 @@ int main(int argc, char** argv) {
 
   load(view, [&] { ephy_engine_web_view_load_uri(view, http.c_str()); });
   load(view, [&] { ephy_engine_web_view_go_back(view); });
-  evaluate(view, "Jupiter.postMessage('probe','history');true");
+  evaluate(view, "Gnosis.postMessage('probe','history');true");
   wait_for([&] { return normal.received.back() == "\"history\""; });
   auto normal_count = normal.received.size();
   auto* private_session = ephy_engine_session_new(true);
@@ -213,7 +213,7 @@ int main(int argc, char** argv) {
   g_assert_cmpuint(normal.received.size(), ==, normal_count);
   g_assert_true(private_messages.received.back() == "\"scheme\"");
 
-  evaluate(private_view, "globalThis.nativeEvents=[];Jupiter.addEventListener('probe-reply',e=>nativeEvents.push(e.detail));true");
+  evaluate(private_view, "globalThis.nativeEvents=[];Gnosis.addEventListener('probe-reply',e=>nativeEvents.push(e.detail));true");
   auto private_cef = ephy_engine_view_browser(private_view);
   event(private_cef->GetMainFrame(), native->page_message_context.substr(0, 36), "ephy-about:bridge-test");
   g_assert_true(send(private_view, "ephy-about:bridge-test", "\"private-document\""));
@@ -225,7 +225,7 @@ int main(int argc, char** argv) {
   auto frames = evaluate(view, R"JS(new Promise(resolve=>{
     const f=document.createElement('iframe');
     addEventListener('message',e=>resolve(e.data),{once:true});
-    f.src='data:text/html;charset=utf-8;base64,'+btoa('<script>parent.postMessage(typeof Jupiter,"*")<\/script>')+'#jupiter-alternate-child';
+    f.src='data:text/html;charset=utf-8;base64,'+btoa('<script>parent.postMessage(typeof Gnosis,"*")<\/script>')+'#gnosis-alternate-child';
     document.body.append(f);
   }))JS");
   g_assert_true(frames == "undefined");
@@ -237,7 +237,7 @@ int main(int argc, char** argv) {
     *closed = true;
     gtk_window_destroy(GTK_WINDOW(gtk_widget_get_root(GTK_WIDGET(view))));
   }), &closed_by_message);
-  ephy_engine_web_view_load_alternate_html(closing_view, "<script>Jupiter.postMessage('close',null)</script>", "about:blank", nullptr);
+  ephy_engine_web_view_load_alternate_html(closing_view, "<script>Gnosis.postMessage('close',null)</script>", "about:blank", nullptr);
   wait_for([&] { return closed_by_message; });
   wait_for([&] { return Browser::active_count == active; });
   g_print("A native message callback may close its own window without retaining the view or invalidating the in-flight callback: PASS\n");

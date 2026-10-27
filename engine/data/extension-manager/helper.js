@@ -7,7 +7,7 @@ const inventory = () => new Promise((resolve, reject) => {
     else resolve(extensions);
   });
 });
-globalThis.JupiterExtensionManager = Object.freeze({
+globalThis.GnosisExtensionManager = Object.freeze({
   inventory,
   async setEnabled(id, enabled) {
     await new Promise((resolve, reject) => {
