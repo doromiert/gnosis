@@ -20,6 +20,7 @@
 #include <wlr/interfaces/wlr_keyboard.h>
 #include <wlr/types/wlr_buffer.h>
 #include <wlr/types/wlr_compositor.h>
+#include <wlr/types/wlr_cursor_shape_v1.h>
 #include <wlr/types/wlr_data_device.h>
 #include <wlr/types/wlr_linux_dmabuf_v1.h>
 #include <wlr/types/wlr_output.h>
@@ -77,6 +78,9 @@ struct _GnosisCompositor {
   struct wl_list views;
   GPtrArray *hosts; /* weak pointers; each widget owns a server reference */
   struct wl_listener new_constraint, new_toplevel, new_surface, decoration, request_drag;
+  struct wl_listener request_cursor, request_cursor_shape;
+  struct wlr_surface *cursor_surface;
+  int cursor_hotspot_x, cursor_hotspot_y;
   guint dispatch;
   char *directory, *socket;
   int drm_fd;
@@ -108,6 +112,8 @@ static void discard_presentations(GnosisCompositorView *self);
 static void cancel_view_drag(GnosisCompositorView *self);
 static void setup_drop_target(GnosisCompositorView *self);
 static void request_drag(struct wl_listener *listener, void *data);
+static GnosisCompositorView *pointer_host(GnosisCompositor *server);
+static void update_cursor(GnosisCompositor *server);
 
 static void listen(struct wl_signal *signal, struct wl_listener *listener, wl_notify_func_t callback) {
   listener->notify = callback; wl_signal_add(signal, listener);
@@ -390,12 +396,15 @@ static gboolean tick(GtkWidget *widget, GdkFrameClock *clock, gpointer data) {
     }
     struct timespec now = {usec / 1000000, (usec % 1000000) * 1000};
     wlr_xdg_surface_for_each_surface(self->active->toplevel->base, frame_surface, &now);
+    if (self->server->cursor_surface && pointer_host(self->server) == self)
+      wlr_surface_send_frame_done(self->server->cursor_surface, &now);
     wl_display_flush_clients(self->server->display);
   }
   return G_SOURCE_CONTINUE;
 }
 static void surface_commit(struct wl_listener *listener, void *data) {
   (void)data; Surface *s = wl_container_of(listener, s, commit);
+  if (s->surface == s->server->cursor_surface) update_cursor(s->server);
   struct wlr_surface *root = wlr_surface_get_root_surface(s->surface);
   /* A subsurface or native popup belongs to its parent tab. Invalidating every
    * host made one page's animation invalidate all overview thumbnails too. */
@@ -412,7 +421,74 @@ static void surface_commit(struct wl_listener *listener, void *data) {
 }
 static void surface_destroy(struct wl_listener *listener, void *data) {
   (void)data; Surface *s = wl_container_of(listener, s, destroy);
+  if (s->surface == s->server->cursor_surface) s->server->cursor_surface = NULL;
   wl_list_remove(&s->commit.link); wl_list_remove(&s->destroy.link); g_free(s);
+}
+
+static GnosisCompositorView *pointer_host(GnosisCompositor *server) {
+  struct wlr_surface *surface = server->seat->pointer_state.focused_surface;
+  if (!surface) return NULL;
+  struct wlr_surface *root = wlr_surface_get_root_surface(surface);
+  for (guint depth = 0; depth < 64; depth++) {
+    struct wlr_xdg_surface *xdg = wlr_xdg_surface_try_from_wlr_surface(root);
+    if (!xdg || xdg->role != WLR_XDG_SURFACE_ROLE_POPUP || !xdg->popup->parent) break;
+    root = wlr_surface_get_root_surface(xdg->popup->parent);
+  }
+  for (guint i = 0; i < server->hosts->len; i++) {
+    GnosisCompositorView *host = g_ptr_array_index(server->hosts, i);
+    if (host->active && host->active->toplevel->base->surface == root) return host;
+  }
+  return NULL;
+}
+
+typedef struct { GdkTexture *texture; int width, height, x, y; } CursorImage;
+static GdkTexture *cursor_texture(GdkCursor *cursor, int size, double scale,
+                                  int *width, int *height, int *x, int *y, gpointer data) {
+  (void)cursor; (void)size; (void)scale;
+  CursorImage *image = data;
+  *width = image->width; *height = image->height; *x = image->x; *y = image->y;
+  return g_object_ref(image->texture);
+}
+static void free_cursor_image(gpointer data) {
+  CursorImage *image = data; g_object_unref(image->texture); g_free(image);
+}
+static void update_cursor(GnosisCompositor *server) {
+  GnosisCompositorView *host = pointer_host(server);
+  struct wlr_surface *surface = server->cursor_surface;
+  if (!host || host->captured || !surface) return;
+  int width = surface->current.width, height = surface->current.height;
+  if (width <= 0 || height <= 0 || width > 512 || height > 512) return;
+  GdkTexture *texture = surface_texture(host, surface);
+  if (!texture) return;
+  CursorImage *image = g_new0(CursorImage, 1);
+  *image = (CursorImage){texture, width, height,
+    CLAMP(server->cursor_hotspot_x, 0, width - 1), CLAMP(server->cursor_hotspot_y, 0, height - 1)};
+  GdkCursor *cursor = gdk_cursor_new_from_callback(cursor_texture, image, free_cursor_image, NULL);
+  gtk_widget_set_cursor(GTK_WIDGET(host), cursor); g_object_unref(cursor);
+}
+static gboolean cursor_request_allowed(GnosisCompositor *server, struct wlr_seat_client *client, uint32_t serial) {
+  return client == server->seat->pointer_state.focused_client &&
+    wlr_seat_client_validate_event_serial(client, serial);
+}
+static void request_cursor(struct wl_listener *listener, void *data) {
+  GnosisCompositor *server = wl_container_of(listener, server, request_cursor);
+  struct wlr_seat_pointer_request_set_cursor_event *event = data;
+  if (!cursor_request_allowed(server, event->seat_client, event->serial)) return;
+  server->cursor_surface = event->surface;
+  server->cursor_hotspot_x = event->hotspot_x; server->cursor_hotspot_y = event->hotspot_y;
+  GnosisCompositorView *host = pointer_host(server);
+  if (!event->surface && host && !host->captured) gtk_widget_set_cursor_from_name(GTK_WIDGET(host), "none");
+  else update_cursor(server);
+}
+static void request_cursor_shape(struct wl_listener *listener, void *data) {
+  GnosisCompositor *server = wl_container_of(listener, server, request_cursor_shape);
+  struct wlr_cursor_shape_manager_v1_request_set_shape_event *event = data;
+  if (event->device_type != WLR_CURSOR_SHAPE_MANAGER_V1_DEVICE_TYPE_POINTER ||
+      !cursor_request_allowed(server, event->seat_client, event->serial)) return;
+  server->cursor_surface = NULL;
+  GnosisCompositorView *host = pointer_host(server);
+  if (host && !host->captured)
+    gtk_widget_set_cursor_from_name(GTK_WIDGET(host), wlr_cursor_shape_v1_name(event->shape));
 }
 static void new_surface(struct wl_listener *listener, void *data) {
   GnosisCompositor *server = wl_container_of(listener, server, new_surface);
@@ -701,7 +777,7 @@ static void server_dispose(GObject *object) {
     if (self->dispatch) { g_source_remove(self->dispatch); self->dispatch = 0; }
     // These listeners belong to this server, not to the wlroots globals.
     // wlroots requires its public event lists to be empty during destruction.
-    struct wl_listener *listeners[] = {&self->new_surface, &self->new_toplevel, &self->new_constraint, &self->decoration, &self->request_drag};
+    struct wl_listener *listeners[] = {&self->new_surface, &self->new_toplevel, &self->new_constraint, &self->decoration, &self->request_drag, &self->request_cursor, &self->request_cursor_shape};
     for (guint i = 0; i < G_N_ELEMENTS(listeners); ++i) {
       if (listeners[i]->link.next) wl_list_remove(&listeners[i]->link);
       wl_list_init(&listeners[i]->link);
@@ -817,6 +893,9 @@ GnosisCompositor *gnosis_compositor_new(GError **error) {
   wlr_output_layout_add(layout, self->output, 0, 0); wlr_output_create_global(self->output, self->display);
   wlr_xdg_output_manager_v1_create(self->display, layout);
   self->seat = wlr_seat_create(self->display, "Gnosis GTK seat");
+  listen(&self->seat->events.request_set_cursor, &self->request_cursor, request_cursor);
+  struct wlr_cursor_shape_manager_v1 *cursor_shapes = wlr_cursor_shape_manager_v1_create(self->display, 1);
+  listen(&cursor_shapes->events.request_set_shape, &self->request_cursor_shape, request_cursor_shape);
   listen(&self->seat->events.request_start_drag, &self->request_drag, request_drag);
   self->clipboard = gnosis_clipboard_bridge_new(self->display, self->seat,
     gdk_display_get_clipboard(gdk_display_get_default()), clipboard_allowed, self);

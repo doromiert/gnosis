@@ -7,6 +7,7 @@ pkgs.stdenv.mkDerivation {
   buildInputs = [ pkgs.gtk4 pkgs.libadwaita pkgs.json-glib pkgs.libxml2 pkgs.wlroots_0_19 pkgs.wayland pkgs.wayland-protocols pkgs.libxkbcommon pkgs.libdrm pkgs.pixman pkgs.libglvnd ];
   dontConfigure = true;
   buildPhase = ''
+    wayland-scanner server-header ${pkgs.wayland-protocols}/share/wayland-protocols/staging/cursor-shape/cursor-shape-v1.xml cursor-shape-v1-protocol.h
     wayland-scanner server-header ${pkgs.wayland-protocols}/share/wayland-protocols/stable/xdg-shell/xdg-shell.xml xdg-shell-protocol.h
     wayland-scanner server-header ${pkgs.wayland-protocols}/share/wayland-protocols/unstable/xdg-decoration/xdg-decoration-unstable-v1.xml xdg-decoration-unstable-v1-protocol.h
     wayland-scanner server-header ${pkgs.wayland-protocols}/share/wayland-protocols/unstable/pointer-constraints/pointer-constraints-unstable-v1.xml pointer-constraints-unstable-v1-protocol.h
