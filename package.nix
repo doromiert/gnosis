@@ -3,7 +3,10 @@ let
   lib = pkgs.lib;
   system = "x86_64-linux";
   jupiterGtk = pkgs.gtk4.overrideAttrs (old: {
-    patches = (old.patches or []) ++ [ ./patches/gtk4-x11-ignore-stale-selection-clear.patch ];
+    patches = (old.patches or []) ++ [
+      ./patches/gtk4-x11-ignore-stale-selection-clear.patch
+      ./patches/gtk4-wayland-follow-fastest-intersecting-output.patch
+    ];
   });
   uiLibraries = with pkgs; [ gtk4 libadwaita json-glib libepoxy fontconfig freetype libsodium libsecret libsoup_3 qrencode ];
   chromiumLibraries = with pkgs; [
