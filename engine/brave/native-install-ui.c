@@ -973,7 +973,7 @@ __attribute__((constructor)) static void initialize(void) {
   g_autoptr(GMappedFile) file = g_mapped_file_new("/proc/self/exe", FALSE, &error);
   g_autofree char *hash = file ? g_compute_checksum_for_data(G_CHECKSUM_SHA256,
     (const guchar *)g_mapped_file_get_contents(file), g_mapped_file_get_length(file)) : NULL;
-  if (!hash || strcmp(hash, UI_BINARY_SHA256) || !matches(UI_SHOW_TAIL_RVA, UI_SHOW_TAIL_BYTES) ||
+  if (!hash || (strcmp(hash, UI_BINARY_SHA256) && strcmp(hash, UI_NATIVE_SCROLLBAR_BINARY_SHA256)) || !matches(UI_SHOW_TAIL_RVA, UI_SHOW_TAIL_BYTES) ||
       !matches(UI_AUTHENTICATOR_SHOW_RVA, UI_AUTHENTICATOR_SHOW_BYTES) ||
       !matches(UI_AUTHENTICATOR_CONSTRUCT_RVA, UI_AUTHENTICATOR_CONSTRUCT_BYTES) ||
       !matches(UI_AUTHENTICATOR_UPDATE_RVA, UI_AUTHENTICATOR_UPDATE_BYTES) ||

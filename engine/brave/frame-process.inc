@@ -97,14 +97,6 @@
       },new Resume{weak_from_this(),child},+[](gpointer data){delete static_cast<Resume*>(data);});
       attach_frames(child);
       command("Page.enable","{}",child); command("Network.enable","{}",child);
-      command("DOM.enable","{}",child);
-      command("CSS.enable","{}",child,[weak=weak_from_this(),child](JsonObject*,const std::string& error) {
-        if (auto process=weak.lock();process&&error.empty()) {
-          auto found=process->frame_sessions.find(child);
-          if (found!=process->frame_sessions.end())
-            if (auto page=found->second.owner.lock();page&&!page->is_closed()) page->update_web_theme();
-        }
-      });
       command("Page.getFrameTree","{}",child,[weak=weak_from_this(),child](JsonObject* result,const std::string&) {
         auto process=weak.lock();if(!process||!result)return;
         auto found=process->frame_sessions.find(child);if(found==process->frame_sessions.end())return;
@@ -123,8 +115,8 @@
       command("Runtime.addBinding",R"({"name":"__jupiterContextMenu","executionContextName":"JupiterContextMenu"})",child);
       command("Runtime.addBinding",R"({"name":"__jupiterDocumentMetadata","executionContextName":"JupiterDocumentMetadata"})",child);
       command("Runtime.enable","{}",child);
-      for (auto item : {std::pair{"JupiterContextMenu","context-menu.js"},std::pair{"JupiterScrollbars","scrollbars.js"}}) {
-        if (!adapter_enabled(!strcmp(item.second,"context-menu.js") ? "context-menu" : "scrollbar-events")) continue;
+      for (auto item : {std::pair{"JupiterContextMenu","context-menu.js"}}) {
+        if (!adapter_enabled("context-menu")) continue;
         g_autofree char* path = g_build_filename(JUPITER_NATIVE_INTEGRATION_DIR,item.second,nullptr);
         g_autofree char* script = nullptr;
         if (g_file_get_contents(path,&script,nullptr,nullptr))

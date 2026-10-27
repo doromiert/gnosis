@@ -29,47 +29,52 @@ at file offset `0x674950`) from the shared false-returning function to the
 existing true-returning function. It never changes the shared function's code.
 The constructor installs this vtable at `0xf5c0196`; the pinned source is
 `third_party/blink/renderer/core/layout/custom_scrollbar.h` at 155.0.8059.40.
-Jupiter also enables `OverlayScrollbar:mode/overlay`, so ScrollableArea's native
-visibility, hit testing and fade state agree with the custom scrollbar. The
-frame-scoped browser-owned styles use libadwaita dimensions/opacities and clear
-track/track-piece backgrounds. Native checks verify strict-CSP selection styling,
-root and nested zero-gutter layout, wheel input, thumb dragging, and the reported
-site's transparent track. This is a separate renderer-specific upgrade gate from
-the browser-process native-dialog hooks.
+Gnosis enables `OverlayScrollbar:mode/overlay`; the previous custom-scrollbar
+classification patch is retained for website-authored custom scrollbars.
 
-The scrollbar state adapter (`data/native-integration/scrollbars.js`) runs in a
-separate isolated world, with no bindings or scroll interception. Scrollbar
-pseudo-elements do not run CSS transitions: a bounded requestAnimationFrame
-sequence interpolates their style-source variables for 200ms and stops when
-settled. Non-inheriting registered properties keep nested scrollers independent.
-Hover expands the thumb and fades in a 10% track (25% in high contrast); leaving
-reverses it. Press/release color changes animate independently. Reduced-motion,
-root/nested independence and native dragging are covered by runtime checks.
-Viewport state must update both html and body: pinned
-PaintLayerScrollableArea::ScrollbarStyleSource prefers body when it has custom
-scrollbar rules, independently of document.scrollingElement. Updating only html
-made computed-style checks pass while the actual thumb remained collapsed.
-GTK-rendered captures now cover the real painted thumb and track during hover.
-Do not treat pointerout(null) as an unconditional leave: native scrollbars do
-not supply a DOM relatedTarget. Recheck the event's scrollbar hit coordinates.
-Boundary-event checks preserve hover; GTK captures retain an 8px thumb and
-visible track after 20 seconds and return to a 3px indicator on actual leave.
-Expanded appearance follows the installed libadwaita overlay CSS: 8px thumb
-and track, 8px side margins, 9px end margins, and a 1px outline. GTK foreground
-and scrollbar-outline colors retain their alpha and composite onto the webpage.
-Do not flatten them onto GTK's view background: that incorrectly makes solid
-gray controls. Dark-mode fills are white 10% for the track and 20/40/60% for
-normal/hovered/pressed thumb. The track's cross-axis borders share the thumb's
-expansion progress, so its visible width grows from 3px to 8px. Track hover expands the control;
-thumb hover and pressed states interpolate their own opacities. Horizontal and
-vertical state variables are independent. The user explicitly retained the
-previous white 3px collapsed indicator and its 7px inset, so do not replace that
-state with a solid native background. Checks verify white RGB with 10%/20% alpha,
-intermediate track growth, actual dragging and
-zero-gutter nested layout checks still pass.
-Disable only Chromium's ScrollbarAnimations timer: its custom overlay hit target
-otherwise becomes hidden during a CSS-driven hover. Idle indicator auto-hide
-and out-of-process frame injection still need coverage.
+`binary-native-scrollbars.json` applies **after** `binary-native-ui.json` and pins
+the native renderer theme. It reuses Chromium's Fluent rounded painter and
+compositor animations: 24px overlay hit area, 8px expanded thumb/track, 3px idle
+thumb, 42px minimum thumb, and no arrows. The track is inset 8px across its axis
+and 9px along it. Thumb colors are white at 20/40/60% alpha; the track is white
+at 10%. Fade and thickness transitions use 200ms. Author-provided colors and
+forced/high-contrast track rendering retain upstream behavior; opaque black or
+white accessibility thumb palettes also retain their upstream colors.
+
+The native `scrollbar-width: thin` proportion lookups point to a private `[1,1]`
+table, so normal and thin controls have identical geometry. `none` remains
+hidden. Only the identified scrollbar lookup sites change; shared float constants
+and shared true/false implementations remain untouched.
+
+LLVM constant-folds some virtual calls into metadata before each vtable. Updating
+only the inset getter and nine-patch vtable slot does **not** update those callers.
+The manifest therefore also changes Fluent's inset constant at `vptr-20` and
+clears only bit 2 of its nine-patch flag at `vptr-17` (retaining the solid-color
+thumb flag). Nine-patch track caching assumes nonempty arrow buttons; the native
+arrowless theme instead paints a cached full-size rounded track. All addresses,
+original bytes and both complete ELF hashes are checked before application.
+`native-scrollbars-x86_64.S` is the reviewable source for the small helper block
+placed in verified RX alignment padding; no sandbox or CFI checks are disabled.
+
+There is no injected scrollbar stylesheet, mutation listener, pointer listener or
+JavaScript animation loop. The remaining GTK selection/overlay colors and user
+styles use temporary DOM/CSS inspector sessions: queued writes are serialized per
+session and both agents are disabled after the batch. Inspector-owned styles
+survive disabling and can be updated after reenabling, including under strict
+CSP. Out-of-process frames follow the same lifecycle.
+
+Settings → Debugging → Native Scrollbar Theme selects the original native-UI
+renderer on the next start when disabled. Its native GTK prompt hooks remain
+active. The shim accepts only the two exact manifest hashes. The former runtime
+scrollbar implementation is preserved on
+`archive/runtime-scrollbars-before-native-2026-10-27`.
+
+Verify the renderer with `engine/tools/check-native-scrollbars.py --browser
+/path/to/bin/brave` (ImageMagick on PATH), then run the real uBlock check. The
+scrollbar check asserts the actual painted 8px root/normal/thin tracks, real thumb
+dragging on both axes, authored colors, visible forced-color thumbs, and persistent
+strict-CSP colors with the DOM/CSS agents disabled. Captures remain under
+`/tmp/gnosis-native-scrollbars-check` for visual inspection.
 
 Native infobar banners are suppressed through the exact
 `InfoBarContainerView::CalculatePreferredSize` implementation at `0x04993bb0`.

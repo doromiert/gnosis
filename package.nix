@@ -94,6 +94,7 @@ let
       gappsWrapperArgs+=(--set JUPITER_ENGINE brave)
       gappsWrapperArgs+=(--set-default JUPITER_SURFACE wayland)
       gappsWrapperArgs+=(--set-default JUPITER_BRAVE_EXECUTABLE ${brave}/bin/brave)
+      ${lib.optionalString (brave ? stockScrollbars) "gappsWrapperArgs+=(--set-default GNOSIS_BRAVE_STOCK_SCROLLBARS_EXECUTABLE ${brave.stockScrollbars}/bin/brave)"}
       gappsWrapperArgs+=(--set-default JUPITER_BRAVE_VERSION ${brave.version})
       gappsWrapperArgs+=(--set JUPITER_NOTIFICATION_ICON "$out/share/icons/hicolor/scalable/apps/io.github.doromiert.Jupiter.svg")
       ${lib.optionalString (brave ? nativeInstallShim) "gappsWrapperArgs+=(--set-default JUPITER_NATIVE_UI_BRIDGE 1)"}

@@ -1,12 +1,15 @@
 { pkgs, brave ? pkgs.brave }:
 let
   pin = builtins.fromJSON (builtins.readFile ./patches/binary-native-ui.json);
+  scrollbarPin = builtins.fromJSON (builtins.readFile ./patches/binary-native-scrollbars.json);
   installPin = builtins.fromJSON (builtins.readFile ./patches/native-install-ui.json);
   config = pkgs.writeText "jupiter-native-install-config.h" (pkgs.lib.concatStringsSep "\n"
     (pkgs.lib.mapAttrsToList (key: value:
       "#define UI_${pkgs.lib.toUpper key} " +
       (if pkgs.lib.hasSuffix "_rva" key then "${value}UL" else builtins.toJSON value)
-    ) (builtins.removeAttrs installPin [ "schema" ])));
+    ) ((builtins.removeAttrs installPin [ "schema" ]) // {
+      native_scrollbar_binary_sha256 = scrollbarPin.output_sha256;
+    })));
   debugPatch = id: name:
     let
       patch = pkgs.lib.findFirst (item: item.function == name) (throw "Missing pinned native UI patch: ${name}") pin.patches;
@@ -39,15 +42,24 @@ let
     '';
     installPhase = "install -Dm755 native-install-ui.so $out/lib/native-install-ui.so";
   };
+  stockScrollbars = pkgs.runCommand "jupiter-brave-native-ui-${brave.version}" {
+    nativeBuildInputs = [ pkgs.python3 ];
+    inherit (brave) version meta;
+  } ''
+    python3 ${../tools/patch-brave-binary.py} ${brave} "$out" \
+      --manifest ${./patches/binary-native-ui.json} \
+      --native-install-shim ${nativeInstallShim}/lib/native-install-ui.so
+  '';
 in
 assert pkgs.lib.assertMsg (brave.version == pin.brave_version)
   "Jupiter native UI binary patch: unsupported Brave version; review the binary pin before upgrading.";
-pkgs.runCommand "jupiter-brave-native-ui-${brave.version}" {
+assert pkgs.lib.assertMsg (scrollbarPin.input_sha256 == pin.output_sha256)
+  "Native scrollbar patch must apply after the pinned native UI hooks.";
+pkgs.runCommand "gnosis-brave-native-scrollbars-${brave.version}" {
   nativeBuildInputs = [ pkgs.python3 ];
   inherit (brave) version meta;
-  passthru = { inherit nativeInstallShim; };
+  passthru = { inherit nativeInstallShim stockScrollbars; };
 } ''
-  python3 ${../tools/patch-brave-binary.py} ${brave} "$out" \
-    --manifest ${./patches/binary-native-ui.json} \
-    --native-install-shim ${nativeInstallShim}/lib/native-install-ui.so
+  python3 ${../tools/patch-brave-binary.py} ${stockScrollbars} "$out" \
+    --manifest ${./patches/binary-native-scrollbars.json}
 ''

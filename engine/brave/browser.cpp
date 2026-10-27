@@ -20,6 +20,7 @@
 #include <cerrno>
 #include <csignal>
 #include <map>
+#include <deque>
 #include <set>
 #include <vector>
 #include <cstring>
@@ -230,6 +231,9 @@ public:
   gint64 integration_deadline = 0;
   std::string buffer;
   std::map<int, Reply> replies;
+  struct StyleCommand { std::string method, params; Reply reply; };
+  struct StyleSession { std::deque<StyleCommand> pending; };
+  std::map<std::string, StyleSession> style_sessions;
   std::map<std::string, std::weak_ptr<Page>> pages, targets, sessions;
   std::vector<std::weak_ptr<Page>> pending_opens;
   std::map<int,std::weak_ptr<Page>> zoom_tabs;
@@ -329,6 +333,43 @@ public:
       if (count <= 0) { fail("Brave's private protocol pipe closed"); return; }
       offset += count;
     }
+  }
+  // Inspector-created styles survive CSS.disable. Keep its mutation observers
+  // enabled only while this session's queued theme writes are in flight.
+  void next_style_command(const std::string& session, const std::string& error = {}) {
+    auto found = style_sessions.find(session);
+    if (found == style_sessions.end()) return;
+    if (found->second.pending.empty()) {
+      command("CSS.disable", "{}", session);
+      command("DOM.disable", "{}", session);
+      style_sessions.erase(found);
+      return;
+    }
+    auto item = std::move(found->second.pending.front());
+    found->second.pending.pop_front();
+    if (!error.empty()) {
+      if (item.reply) item.reply(nullptr, error);
+      next_style_command(session, error);
+      return;
+    }
+    auto done = [weak = weak_from_this(), session, reply = std::move(item.reply)](JsonObject* result, const std::string& failure) {
+      if (reply) reply(result, failure);
+      if (auto process = weak.lock()) process->next_style_command(session);
+    };
+    command(item.method, item.params, session, std::move(done));
+  }
+  void style_command(const std::string& method, const std::string& params, const std::string& session, Reply reply) {
+    if (!adapter_enabled("page-style") || closing || output < 0) {
+      if (reply) reply(nullptr, "Page styling is unavailable");
+      return;
+    }
+    const bool starting = !style_sessions.contains(session);
+    style_sessions[session].pending.push_back({method, params, std::move(reply)});
+    if (!starting) return;
+    command("DOM.enable", "{}", session);
+    command("CSS.enable", "{}", session, [weak = weak_from_this(), session](JsonObject*, const std::string& error) {
+      if (auto process = weak.lock()) process->next_style_command(session, error);
+    });
   }
   void fail(const std::string& error) {
     auto pending = std::move(replies); replies.clear();
@@ -434,7 +475,10 @@ public:
     }
     page->state_->bootstrap = base + "bootstrap/" + page->state_->token;
     if (composited()) page->adopt_surface(jupiter_compositor_view_new_for_server(compositor, page->state_->token.c_str()));
-    std::vector<std::string> args{g_getenv("JUPITER_BRAVE_EXECUTABLE") ? g_getenv("JUPITER_BRAVE_EXECUTABLE") : "brave",
+    const char* executable = g_getenv(!adapter_enabled("scrollbars") ?
+      "GNOSIS_BRAVE_STOCK_SCROLLBARS_EXECUTABLE" : "JUPITER_BRAVE_EXECUTABLE");
+    if (!executable) executable = g_getenv("JUPITER_BRAVE_EXECUTABLE");
+    std::vector<std::string> args{executable ? executable : "brave",
       "--user-data-dir=" + profile, "--app=" + page->state_->bootstrap, "--class=" + window_class,
       composited() ? "--ozone-platform=wayland" : "--ozone-platform=x11", "--no-first-run", "--no-default-browser-check", "--disable-background-mode",
       // Brave disables the real File System Access pickers unless its base
@@ -443,9 +487,6 @@ public:
       // CustomScrollbar's class-local overlay patch also needs the native
       // overlay theme so visibility, hit testing and fade timers agree.
       std::string("--enable-features=FileSystemAccessAPI,BraveWebBluetoothAPI,AcceleratedVideoDecodeLinuxGL,AcceleratedVideoEncoder,OverlayScrollbar:mode/overlay") + (composited() ? ",WaylandExternalBeginFrameSource" : ""),
-      // Blink's overlay fade timer otherwise hides custom-scrollbar hit targets
-      // while the isolated state adapter is expanding them on hover.
-      "--disable-features=ScrollbarAnimations",
       "--enable-blink-features=WebBluetooth",
       "--password-store=basic", "--window-size=1000,700", "--window-position=-16000,-16000"};
     if (!automation_mode) args.push_back("--disable-blink-features=AutomationControlled");
@@ -1385,7 +1426,10 @@ void Page::command_for_frame(const std::string& frame,const std::string& method,
     if(reply)reply(nullptr,"The frame no longer belongs to this tab"); return;
   }
   auto source=s.process->frame_sources.find(frame);
-  s.process->command(method,params,source==s.process->frame_sources.end()?session:source->second,std::move(reply));
+  const auto& owner_session = source == s.process->frame_sources.end() ? session : source->second;
+  if (method == "CSS.createStyleSheet" || method == "CSS.setStyleSheetText")
+    s.process->style_command(method, params, owner_session, std::move(reply));
+  else s.process->command(method, params, owner_session, std::move(reply));
 }
 namespace {
 std::string webpage_theme(GtkWidget* widget) {
@@ -1397,18 +1441,9 @@ std::string webpage_theme(GtkWidget* widget) {
   gtk_style_context_lookup_color(context, "accent_fg_color", &foreground);
   g_autofree char* bg = gdk_rgba_to_string(&background);
   g_autofree char* fg = gdk_rgba_to_string(&foreground);
-  const bool contrast = adw_style_manager_get_high_contrast(manager);
-  GdkRGBA control_fg, outline{1,1,1,1};
+  GdkRGBA control_fg;
   gtk_widget_get_color(widget, &control_fg);
   gtk_style_context_lookup_color(context, "view_fg_color", &control_fg);
-  gtk_style_context_lookup_color(context, "scrollbar_outline_color", &outline);
-  const auto fg_alpha = std::to_string(control_fg.alpha), outline_alpha = std::to_string(outline.alpha);
-  control_fg.alpha = outline.alpha = 1;
-  g_autofree char* native_fg = gdk_rgba_to_string(&control_fg);
-  g_autofree char* native_outline = gdk_rgba_to_string(&outline);
-  // Preserve the existing white 3px collapsed indicator and its 7px inset.
-  // Expanded libadwaita thumb/track: 8px with 8px margins and a 1px outline.
-  // Preserve libadwaita's alpha: these colors composite over the web content.
   GdkRGBA popover_bg = adw_style_manager_get_dark(manager) ? GdkRGBA{.212f,.212f,.227f,1} : GdkRGBA{1,1,1,1};
   GdkRGBA popover_fg = control_fg, view_bg = popover_bg;
   gtk_style_context_lookup_color(context, "popover_bg_color", &popover_bg);
@@ -1429,71 +1464,7 @@ std::string webpage_theme(GtkWidget* widget) {
     "!important;--jupiter-kpxc-view-bg:" + view + "!important;--jupiter-kpxc-accent:" + bg +
     "!important;--jupiter-kpxc-accent-fg:" + fg + "!important;--jupiter-kpxc-font:" + font_family +
     "!important;--jupiter-kpxc-font-size:" + std::to_string(font_size > 0 ? font_size : 14.667) + "px!important;}";
-  const auto colors = overlay + "*::selection{background-color:" + std::string(bg) + "!important;color:" + fg + "!important;}";
-  if (!adapter_enabled("scrollbars")) return colors;
-  return colors + R"CSS(
-@property --jupiter-scrollbar-expansion { syntax:"<number>"; inherits:false; initial-value:0; }
-@property --jupiter-scrollbar-thumb-hover { syntax:"<number>"; inherits:false; initial-value:0; }
-@property --jupiter-scrollbar-pressed { syntax:"<number>"; inherits:false; initial-value:0; }
-@property --jupiter-scrollbar-expansion-horizontal { syntax:"<number>"; inherits:false; initial-value:0; }
-@property --jupiter-scrollbar-thumb-hover-horizontal { syntax:"<number>"; inherits:false; initial-value:0; }
-@property --jupiter-scrollbar-pressed-horizontal { syntax:"<number>"; inherits:false; initial-value:0; }
-@media screen and (forced-colors: none) {
-  :is(:root,*)::-webkit-scrollbar, :is(:root,*)::-webkit-scrollbar-track, :is(:root,*)::-webkit-scrollbar-thumb {
-    --jupiter-scrollbar-expansion:inherit!important;
-    --jupiter-scrollbar-thumb-hover:inherit!important;
-    --jupiter-scrollbar-pressed:inherit!important;
-    --jupiter-scrollbar-fg:)CSS" + native_fg + ";--jupiter-scrollbar-outline:" + native_outline +
-    ";--jupiter-scrollbar-fg-alpha:" + fg_alpha + ";--jupiter-scrollbar-outline-alpha:" + outline_alpha + R"CSS(;
-
-  }
-  :is(:root,*)::-webkit-scrollbar:horizontal, :is(:root,*)::-webkit-scrollbar-track:horizontal, :is(:root,*)::-webkit-scrollbar-thumb:horizontal {
-    --jupiter-scrollbar-expansion-horizontal:inherit!important;
-    --jupiter-scrollbar-thumb-hover-horizontal:inherit!important;
-    --jupiter-scrollbar-pressed-horizontal:inherit!important;
-    --jupiter-scrollbar-expansion:var(--jupiter-scrollbar-expansion-horizontal)!important;
-    --jupiter-scrollbar-thumb-hover:var(--jupiter-scrollbar-thumb-hover-horizontal)!important;
-    --jupiter-scrollbar-pressed:var(--jupiter-scrollbar-pressed-horizontal)!important;
-  }
-  :is(:root,*)::-webkit-scrollbar { width:24px!important; height:24px!important; background:transparent!important; box-shadow:none!important; }
-  :is(:root,*)::-webkit-scrollbar-button { display:none!important; }
-  :is(:root,*)::-webkit-scrollbar-track {
-    margin:9px 0!important; border:0 solid transparent!important;
-    border-left-width:calc(14px - var(--jupiter-scrollbar-expansion) * 6px)!important;
-    border-right-width:calc(7px + var(--jupiter-scrollbar-expansion) * 1px)!important;
-    border-radius:calc(15.5px - var(--jupiter-scrollbar-expansion) * 3.5px) calc(8.5px + var(--jupiter-scrollbar-expansion) * 3.5px) calc(8.5px + var(--jupiter-scrollbar-expansion) * 3.5px) calc(15.5px - var(--jupiter-scrollbar-expansion) * 3.5px) / calc(1.5px + var(--jupiter-scrollbar-expansion) * 2.5px)!important; background-clip:padding-box!important; box-shadow:none!important;
-    background-image:none!important; background-color:color-mix(in srgb,var(--jupiter-scrollbar-fg) calc(var(--jupiter-scrollbar-fg-alpha) * var(--jupiter-scrollbar-expansion) * )CSS" + (contrast ? "25%" : "10%") + R"CSS(),transparent)!important;
-  }
-  :is(:root,*)::-webkit-scrollbar-track:horizontal {
-    margin:0 9px!important;
-    border-width:calc(14px - var(--jupiter-scrollbar-expansion) * 6px) 0 calc(7px + var(--jupiter-scrollbar-expansion) * 1px) 0!important;
-    border-radius:calc(1.5px + var(--jupiter-scrollbar-expansion) * 2.5px) / calc(15.5px - var(--jupiter-scrollbar-expansion) * 3.5px) calc(15.5px - var(--jupiter-scrollbar-expansion) * 3.5px) calc(8.5px + var(--jupiter-scrollbar-expansion) * 3.5px) calc(8.5px + var(--jupiter-scrollbar-expansion) * 3.5px)!important;
-  }
-  :is(:root,*)::-webkit-scrollbar-track-piece, :is(:root,*)::-webkit-scrollbar-corner {
-    background:transparent!important; border:0!important; box-shadow:none!important;
-  }
-  :is(:root,*)::-webkit-scrollbar-thumb {
-    --jupiter-scrollbar-left:calc(14px - var(--jupiter-scrollbar-expansion) * 7px);
-    --jupiter-scrollbar-right:7px;
-    --jupiter-scrollbar-radius:calc(1.5px + var(--jupiter-scrollbar-expansion) * 3.5px);
-    min-height:42px!important; min-width:42px!important;
-    border:0 solid transparent!important;
-    border-left-width:var(--jupiter-scrollbar-left)!important; border-right-width:var(--jupiter-scrollbar-right)!important;
-    border-radius:calc(15.5px - var(--jupiter-scrollbar-expansion) * 3.5px) calc(8.5px + var(--jupiter-scrollbar-expansion) * 3.5px) calc(8.5px + var(--jupiter-scrollbar-expansion) * 3.5px) calc(15.5px - var(--jupiter-scrollbar-expansion) * 3.5px) / var(--jupiter-scrollbar-radius)!important;
-    background-image:none!important; background-clip:padding-box!important;
-    --jupiter-scrollbar-thumb-color:color-mix(in srgb,var(--jupiter-scrollbar-fg) calc(( )CSS" + (contrast ? "40%" : "20%") +
-    " + var(--jupiter-scrollbar-thumb-hover) * 20% + var(--jupiter-scrollbar-pressed) * " + (contrast ? "40%" : "20%") + R"CSS() * var(--jupiter-scrollbar-fg-alpha)),transparent);
-    background-color:color-mix(in srgb,var(--jupiter-scrollbar-thumb-color) calc(var(--jupiter-scrollbar-expansion) * 100%),color-mix(in srgb,var(--jupiter-scrollbar-fg) calc(20% * var(--jupiter-scrollbar-fg-alpha)),transparent))!important;
-    box-shadow:inset 0 0 0 calc(var(--jupiter-scrollbar-expansion) * 1px) color-mix(in srgb,var(--jupiter-scrollbar-outline) calc(var(--jupiter-scrollbar-outline-alpha) * ( )CSS" + (contrast ? "60% + var(--jupiter-scrollbar-expansion) * 40%" : "35% + var(--jupiter-scrollbar-expansion) * 25%") + R"CSS()),transparent)!important;
-  }
-  :is(:root,*)::-webkit-scrollbar-thumb:horizontal {
-    border-width:var(--jupiter-scrollbar-left) 0 var(--jupiter-scrollbar-right) 0!important;
-    border-radius:var(--jupiter-scrollbar-radius) / calc(15.5px - var(--jupiter-scrollbar-expansion) * 3.5px) calc(15.5px - var(--jupiter-scrollbar-expansion) * 3.5px) calc(8.5px + var(--jupiter-scrollbar-expansion) * 3.5px) calc(8.5px + var(--jupiter-scrollbar-expansion) * 3.5px)!important;
-  }
-  :is(:root,*)::-webkit-scrollbar-thumb:disabled { opacity:0!important; }
-}
-
-)CSS";
+  return overlay + "*::selection{background-color:" + std::string(bg) + "!important;color:" + fg + "!important;}";
 }
 }
 void Page::theme_document(const std::string& frame, const std::string& loader) {
@@ -1543,19 +1514,7 @@ void Page::attach() {
   state_->process->attach_frames(session);
   command("Page.enable"); command("Runtime.enable"); command("Network.enable"); command("Security.enable");
   state_->protocol_ready = false;
-  state_->theme_ready = false; state_->theme_frames.clear(); ++state_->theme_generation;
-  command("DOM.enable");
-  const auto theme_session = session;
-  command("CSS.enable", "{}", [weak = weak_from_this(), theme_session](JsonObject*, const std::string& error) {
-    if (auto page = weak.lock(); page && !page->is_closed() && page->session == theme_session && error.empty()) {
-      page->state_->theme_ready = true; page->update_web_theme();
-    }
-  });
-  g_autofree char* scrollbars_path = g_build_filename(JUPITER_NATIVE_INTEGRATION_DIR, "scrollbars.js", nullptr);
-  g_autofree char* scrollbars_script = nullptr;
-  if (adapter_enabled("scrollbar-events") && g_file_get_contents(scrollbars_path, &scrollbars_script, nullptr, nullptr))
-    command("Page.addScriptToEvaluateOnNewDocument", "{\"worldName\":\"JupiterScrollbars\",\"source\":" + quote(scrollbars_script) + ",\"runImmediately\":true}");
-  else if (adapter_enabled("scrollbar-events")) g_warning("The scrollbar state adapter could not be loaded");
+  state_->theme_ready = true; state_->theme_frames.clear(); ++state_->theme_generation;
   command("Runtime.addBinding", "{\"name\":\"__jupiterContextMenu\",\"executionContextName\":\"JupiterContextMenu\"}");
   g_autofree char* menu_path = g_build_filename(JUPITER_NATIVE_INTEGRATION_DIR, "context-menu.js", nullptr);
   g_autofree char* menu_script = nullptr;
