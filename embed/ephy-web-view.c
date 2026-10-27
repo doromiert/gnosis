@@ -2253,6 +2253,11 @@ ephy_web_view_load_url (EphyWebView *view,
   g_assert (url);
   g_assert (ephy_embed_utils_address_is_valid (url));
 
+  if (g_str_equal (url, "about:applications") || g_str_equal (url, "ephy-about:applications")) {
+    gtk_widget_activate_action (GTK_WIDGET (view), "win.open-application-manager", NULL);
+    return;
+  }
+
   effective_url = ephy_embed_utils_normalize_address (url);
   if (g_str_has_prefix (effective_url, "javascript:")) {
     g_autoptr (GUri) uri = NULL;

@@ -673,7 +673,9 @@ save_web_application (PrefsGeneralPage *general_page)
   }
 
   if (changed) {
-    ephy_web_application_save (webapp);
+    if (ephy_web_application_save (webapp))
+      g_object_set_data_full (G_OBJECT (general_page->webapp_icon), "ephy-webapp-icon-path",
+                              g_strdup (webapp->icon_path), g_free);
     ephy_shell_resync_title_boxes (ephy_shell_get_default (),
                                    webapp->name,
                                    webapp->url);

@@ -22,6 +22,7 @@
 #include "config.h"
 
 #include "ephy-web-app-utils.h"
+#include "web-app-config.h"
 
 #include <errno.h>
 #include <fcntl.h>
@@ -899,9 +900,9 @@ ephy_web_application_initialize_settings (const char                *profile_dir
   g_autofree char *path = NULL;
 
   name = g_path_get_basename (profile_directory);
-  settings = g_settings_new_with_path (EPHY_PREFS_WEB_SCHEMA, "/org/gnome/epiphany/web/");
+  settings = g_settings_new_with_path (EPHY_PREFS_WEB_SCHEMA, "/com/neg_zero/gnosis/web/");
 
-  path = g_build_path ("/", "/org/gnome/epiphany/web-apps/", name, "web/", NULL);
+  path = g_build_path ("/", "/com/neg_zero/gnosis/web-apps/", name, "web/", NULL);
   web_app_settings = g_settings_new_with_path (EPHY_PREFS_WEB_SCHEMA, path);
 
   for (guint i = 0; i < G_N_ELEMENTS (ephy_prefs_web_schema); i++) {
@@ -912,10 +913,10 @@ ephy_web_application_initialize_settings (const char                *profile_dir
   }
 
   g_clear_object (&settings);
-  settings = g_settings_new_with_path (EPHY_PREFS_STATE_SCHEMA, "/org/gnome/epiphany/state/");
+  settings = g_settings_new_with_path (EPHY_PREFS_STATE_SCHEMA, "/com/neg_zero/gnosis/state/");
 
   g_clear_pointer (&path, g_free);
-  path = g_build_path ("/", "/org/gnome/epiphany/web-apps/", name, "state/", NULL);
+  path = g_build_path ("/", "/com/neg_zero/gnosis/web-apps/", name, "state/", NULL);
   g_clear_object (&web_app_settings);
   web_app_settings = g_settings_new_with_path (EPHY_PREFS_STATE_SCHEMA, path);
 
@@ -928,7 +929,7 @@ ephy_web_application_initialize_settings (const char                *profile_dir
 
   if (options) {
     g_clear_pointer (&path, g_free);
-    path = g_build_path ("/", "/org/gnome/epiphany/web-apps/", name, "webapp/", NULL);
+    path = g_build_path ("/", "/com/neg_zero/gnosis/web-apps/", name, "webapp/", NULL);
     g_clear_object (&web_app_settings);
     web_app_settings = g_settings_new_with_path (EPHY_PREFS_WEB_APP_SCHEMA, path);
 
@@ -1016,16 +1017,6 @@ ephy_web_application_is_uri_allowed (const char *uri)
   return matched;
 }
 
-static void
-ephy_web_icon_copy_cb (GFile        *file,
-                       GAsyncResult *result,
-                       gpointer      user_data)
-{
-  g_autoptr (GError) error = NULL;
-  if (!g_file_copy_finish (file, result, &error))
-    g_warning ("Failed to update web app icon: %s", error->message);
-}
-
 gboolean
 ephy_web_application_save (EphyWebApplication *app)
 {
@@ -1059,14 +1050,23 @@ ephy_web_application_save (EphyWebApplication *app)
 
   icon = g_key_file_get_string (keyfile, "Desktop Entry", "Icon", NULL);
   if (g_strcmp0 (icon, app->icon_path) != 0) {
-    g_autoptr (GFile) new_icon = NULL;
-    g_autoptr (GFile) old_icon = NULL;
+    g_autofree char *profile = ephy_web_application_get_profile_directory (app->id);
+    g_autofree char *destination = g_build_filename (profile, "app-icon.png", NULL);
+
+    if (g_path_is_absolute (app->icon_path) && g_strcmp0 (app->icon_path, destination)) {
+      g_autoptr (GdkPixbuf) image = gdk_pixbuf_new_from_file_at_scale (app->icon_path, 256, 256, TRUE, &error);
+      g_autofree char *png = NULL;
+      gsize length = 0;
+
+      if (!image || !gdk_pixbuf_save_to_buffer (image, &png, &length, "png", &error, NULL) ||
+          !g_file_set_contents_full (destination, png, length, G_FILE_SET_CONTENTS_CONSISTENT, 0600, &error)) {
+        g_warning ("Failed to save web app icon: %s", error->message);
+        return FALSE;
+      }
+      g_set_str (&app->icon_path, destination);
+    }
     changed = TRUE;
-    new_icon = g_file_new_for_path (app->icon_path);
-    old_icon = g_file_new_for_path (icon);
-    g_file_copy_async (new_icon, old_icon, G_FILE_COPY_OVERWRITE,
-                       G_PRIORITY_DEFAULT, NULL, NULL, NULL,
-                       (GAsyncReadyCallback)ephy_web_icon_copy_cb, NULL);
+    g_key_file_set_string (keyfile, "Desktop Entry", "Icon", app->icon_path);
   }
 
   exec = g_key_file_get_string (keyfile, "Desktop Entry", "Exec", NULL);
@@ -1096,7 +1096,24 @@ ephy_web_application_save (EphyWebApplication *app)
     free (resolved_path);
   }
 
-  return saved;
+  return !changed || saved;
+}
+
+gboolean
+ephy_web_application_set_extensions (const char *id, GKeyFile *config, GError **error)
+{
+  g_autofree char *profile = ephy_web_application_get_profile_directory (id);
+  g_autofree char *base = g_path_get_basename (profile);
+  g_autofree char *path = g_strdup_printf ("/com/neg_zero/gnosis/web-apps/%s/web/", base);
+  g_autoptr (GSettings) settings = NULL;
+
+  if (!gnosis_web_app_config_save (profile, config, error))
+    return FALSE;
+
+  settings = g_settings_new_with_path (EPHY_PREFS_WEB_SCHEMA, path);
+  g_settings_set_boolean (settings, EPHY_PREFS_WEB_ENABLE_ADBLOCK,
+                          gnosis_web_app_extension_enabled (config, "ublock"));
+  return TRUE;
 }
 
 gboolean
@@ -1110,7 +1127,7 @@ ephy_web_application_is_system (EphyWebApplication *app)
   profile_directory = ephy_web_application_get_profile_directory (app->id);
   name = g_path_get_basename (profile_directory);
 
-  path = g_build_path ("/", "/org/gnome/epiphany/web-apps/", name, "webapp/", NULL);
+  path = g_build_path ("/", "/com/neg_zero/gnosis/web-apps/", name, "webapp/", NULL);
   web_app_settings = g_settings_new_with_path (EPHY_PREFS_WEB_APP_SCHEMA, path);
 
   return g_settings_get_boolean (web_app_settings, EPHY_PREFS_WEB_APP_SYSTEM);

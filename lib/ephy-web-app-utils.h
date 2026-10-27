@@ -117,6 +117,7 @@ void                ephy_web_application_initialize_settings (const char *profil
 gboolean            ephy_web_application_is_uri_allowed (const char *uri);
 
 gboolean            ephy_web_application_save (EphyWebApplication *app);
+gboolean            ephy_web_application_set_extensions (const char *id, GKeyFile *config, GError **error);
 
 gboolean            ephy_web_application_is_system (EphyWebApplication *app);
 
