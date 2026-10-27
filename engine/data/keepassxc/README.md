@@ -36,7 +36,7 @@ Jupiter. Unlocking an already paired database is separate from association;
 KeePassXC must permit browser unlock requests for its password prompt to open.
 KeePassXC itself must be installed, with `keepassxc-proxy` in PATH.
 
-The bundled manifest uses an integration revision (`1.10.4.105`) and retains the
+The bundled manifest uses an integration revision (`1.10.4.106`) and retains the
 upstream version in `version_name`. Existing Chromium profiles can retain older
 worker scripts after unpacked-resource changes. Jupiter resolves only the exact
 internal worker URL, waits for upstream initialization and installs its trusted
@@ -77,3 +77,18 @@ style change each iteration. Median time fell from 240.4ms to 26.1ms; visibility
 checks fell from 20,000 to 600. Both versions returned exactly the same username,
 password and numeric TOTP fields. This measures this scan path, not total
 Speedometer throughput. Results: `/tmp/gnosis-keepassxc-filter-benchmark.json`.
+
+Integration 6 batches mutation-driven field detection into one trailing check per
+second. The timer is scheduled by the first change and is not reset by later
+changes, so continuously animated pages cannot starve detection. Idle pages have
+no timer. At most 200 mutation records are retained; overflow uses upstream mutation-based
+discovery on the document body and stale-icon cleanup once, rather than dropping
+new fields or restarting autofill. Non-credential controls are rejected before
+the upstream input-count limit, so they cannot crowd out newly added login fields. Initial discovery, explicit Redetect Fields and WebAuthn remain
+immediate. Hidden-page and mouse-down guards are checked again when work runs.
+Dynamic forms may take up to one second to acquire their field icons.
+
+User Speedometer 3.1 baseline with integration 5: 27.0 ±1.6 with KeePassXC,
+34.8 ±1.5 without it. A CPU-instrumented integration-5 run scored 25.1, with
+4.528 seconds inclusive in KeePassXC call stacks, chiefly the mutation observer.
+The observer, service and unlock regression checks cover integration 6.

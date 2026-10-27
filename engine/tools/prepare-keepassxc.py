@@ -14,8 +14,8 @@ manifest_path = root / 'manifest.json'
 manifest = json.loads(manifest_path.read_text())
 assert manifest['version'] == '1.10.4.1', 'Review the integration when upgrading'
 # Separate integration revision forces Chromium to retire cached worker code.
-manifest['version'] = '1.10.4.105'
-manifest['version_name'] = '1.10.4.1 (Gnosis integration 5)'
+manifest['version'] = '1.10.4.106'
+manifest['version_name'] = '1.10.4.1 (Gnosis integration 6)'
 manifest['permissions'].append('scripting')
 manifest['key'] = (assets / 'public-key.txt').read_text().strip()
 manifest.pop('update_url', None)
@@ -37,6 +37,12 @@ service.write_text(text.replace("        'init.js'\n", "        'init.js',\n    
 # Reject non-credential inputs before any visibility/layout reads.
 observer = root / 'content/observer-helper.js'
 text = observer.read_text()
+before = """    const inputAllowed = (elem) => !elem.disabled
+        && elem.getLowerCaseAttribute('type') !== 'hidden'"""
+after = """    const inputAllowed = (elem) => !elem.disabled
+        && kpxcObserverHelper.inputTypes.includes(elem.getLowerCaseAttribute('type'))"""
+assert text.count(before) == 1, 'Review upstream input collection'
+text = text.replace(before, after)
 before = '''    for (const field of inputFields) {
         if ((!ignoreVisibility && !kpxcFields.isVisible(field))
             || kpxcFields.isSearchField(field)) {
@@ -88,6 +94,35 @@ handler = handler.replace(anchor, '''        for (const [target, removal] of pen
             else kpxcObserverHelper.handleObserverAdd(target);
         }
 ''' + anchor)
+# Schedule mutation work once per second without polling or starving busy pages.
+anchor = '    kpxc.observer = new MutationObserver(function(mutations, obs) {'
+assert handler.count(anchor) == 1
+handler = handler.replace(anchor, '    const processMutations = function(mutations) {')
+anchor = '    });\n\n    if (document.body)'
+assert handler.count(anchor) == 1
+handler = handler.replace(anchor, '''    };
+    let queued = [], overflow = false, timer = 0;
+    kpxc.observer = new MutationObserver(function(mutations) {
+        if (document.visibilityState === 'hidden' || kpxcUI.mouseDown) return;
+        if (!overflow) {
+            if (queued.length + mutations.length <= MAX_MUTATIONS) queued.push(...mutations);
+            else { queued = []; overflow = true; }
+        }
+        if (timer) return;
+        timer = setTimeout(function() {
+            timer = 0;
+            const batch = queued, rescan = overflow;
+            queued = []; overflow = false;
+            if (document.visibilityState === 'hidden' || kpxcUI.mouseDown) return;
+            if (rescan) {
+                // Bound retained records without missing fields on busy pages.
+                kpxcObserverHelper.handleObserverAdd(document.body);
+                kpxcIcons.deleteAllHiddenIcons();
+            } else processMutations(batch);
+        }, 1000);
+    });
+
+    if (document.body)''')
 observer.write_text(text[:start] + handler + text[end:])
 # Keep the upstream closed Shadow DOM and trusted input handlers. Only append
 # scoped presentation rules and replace colored logos with GNOME symbolic icons.
