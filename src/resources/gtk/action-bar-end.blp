@@ -32,8 +32,6 @@ template $EphyActionBarEnd: Box {
     ]
 
     popover: Popover browser_actions_popover {
-      width-request: 320;
-
       styles [
         "menu",
       ]
@@ -45,6 +43,7 @@ template $EphyActionBarEnd: Box {
         hhomogeneous: false;
 
         ScrolledWindow browser_actions_scrolled_window {
+          width-request: 320;
           hscrollbar-policy: never;
           max-content-height: 420;
           propagate-natural-height: true;
