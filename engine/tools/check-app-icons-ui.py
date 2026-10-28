@@ -19,12 +19,12 @@ parser.add_argument('binary', type=Path)
 parser.add_argument('--schemas', type=Path, required=True)
 parser.add_argument('--incognito', action='store_true')
 args = parser.parse_args()
-root = Path(tempfile.mkdtemp(prefix='jupiter-app-icons-ui-', dir='/tmp'))
+root = Path(tempfile.mkdtemp(prefix='gnosis-app-icons-ui-', dir='/tmp'))
 env = dict(os.environ, XDG_CONFIG_HOME=str(root/'config'), XDG_DATA_HOME=str(root/'data'),
            XDG_CACHE_HOME=str(root/'cache'), GSETTINGS_BACKEND='keyfile',
            GSETTINGS_SCHEMA_DIR=str(args.schemas.resolve()))
-subprocess.run(['gsettings', 'set', 'io.github.doromiert.Jupiter', 'ask-for-default', 'false'], env=env, check=True)
-base = os.environ['JUPITER_TEST_URL']
+subprocess.run(['gsettings', 'set', 'com.neg-zero.Gnosis', 'ask-for-default', 'false'], env=env, check=True)
+base = os.environ['GNOSIS_TEST_URL']
 desktop_dir = root/'data/applications'
 desktop_dir.mkdir(parents=True)
 # Epiphany accepts bookmarklets through load_url when the scheme is registered.
@@ -52,7 +52,7 @@ os.mkfifo(fifo_icon)
 fixtures = {'pixels': icon, 'text': text_icon, 'large': large_icon,
             'missing': root/'does-not-exist.png', 'fifo': fifo_icon}
 for name, path in fixtures.items():
-    app_id = 'io.github.doromiert.Jupiter.WebApp_icon-'+name
+    app_id = 'com.neg-zero.Gnosis.WebApp_icon-'+name
     profile = root/'data'/app_id
     profile.mkdir()
     (profile/'.app').touch()
@@ -97,7 +97,7 @@ def wait_for(predicate):
 
 def report(name):
     title = subprocess.check_output(['xdotool', 'getwindowname', window], text=True)
-    encoded = re.search(r'JupiterIconReport-([A-Za-z0-9+/=]+)', title)
+    encoded = re.search(r'GnosisIconReport-([A-Za-z0-9+/=]+)', title)
     if not encoded:
         return None
     result = json.loads(base64.b64decode(encoded.group(1)))
@@ -105,7 +105,7 @@ def report(name):
 
 
 def send(name, expression):
-    return ('document.title="JupiterIconReport-"+btoa(JSON.stringify({appIconCheck:'+
+    return ('document.title="GnosisIconReport-"+btoa(JSON.stringify({appIconCheck:'+
             json.dumps(name)+',value:'+expression+'}));')
 
 
@@ -160,7 +160,7 @@ try:
     denied_source(fresh['src'], 'other-view')
     keys('ctrl+q')
     assert process.wait(timeout=8) == 0, (root/'app.log').read_text()
-    assert all((desktop_dir/('io.github.doromiert.Jupiter.WebApp_icon-'+name+'.desktop')).exists() for name in fixtures)
+    assert all((desktop_dir/('com.neg-zero.Gnosis.WebApp_icon-'+name+'.desktop')).exists() for name in fixtures)
     print('Installed app pixels render; malformed/oversized/nonregular/missing icons fall back; unknown/path/expired/cross-view capabilities fail; fixtures survive: PASS', flush=True)
 except BaseException:
     subprocess.run(['magick', 'import', '-window', 'root', str(root/'failure.png')], check=False)

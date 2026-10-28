@@ -52,13 +52,13 @@ int main(int argc, char** argv) {
   int sub = ephy_engine_execute_process(argc, argv); if (sub >= 0) return sub;
   // Exercise GTK's real Unicode composition deterministically without an external IM daemon.
   g_setenv("GTK_IM_MODULE", "simple", true);
-  auto* app = adw_application_new("io.github.doromiert.Jupiter.KeyboardTest", G_APPLICATION_NON_UNIQUE);
+  auto* app = adw_application_new("com.neg-zero.Gnosis.KeyboardTest", G_APPLICATION_NON_UNIQUE);
   GError* error = nullptr;
   g_assert_true(g_application_register(G_APPLICATION(app), nullptr, &error)); g_assert_no_error(error);
-  char profile[] = "/tmp/jupiter-keyboard-test-XXXXXX"; g_assert_nonnull(mkdtemp(profile));
+  char profile[] = "/tmp/gnosis-keyboard-test-XXXXXX"; g_assert_nonnull(mkdtemp(profile));
   g_assert_true(ephy_engine_initialize(argc, argv, profile, true)); disable_diagnostic_core_dumps();
   auto* window = ADW_APPLICATION_WINDOW(adw_application_window_new(GTK_APPLICATION(app)));
-  gtk_window_set_title(GTK_WINDOW(window), "Jupiter keyboard contract");
+  gtk_window_set_title(GTK_WINDOW(window), "Gnosis keyboard contract");
   gtk_window_set_default_size(GTK_WINDOW(window), 700, 500);
   auto* view = EPHY_ENGINE_VIEW(g_object_new(EPHY_TYPE_ENGINE_VIEW, nullptr));
   adw_application_window_set_content(window, GTK_WIDGET(view));
@@ -76,7 +76,7 @@ int main(int argc, char** argv) {
     </script>)HTML");
   gtk_window_present(GTK_WINDOW(window)); wait_for([&] { return loaded; });
   g_signal_handler_disconnect(view, handler);
-  xdo({"search", "--sync", "--name", "^Jupiter keyboard contract$", "windowfocus", "--sync"});
+  xdo({"search", "--sync", "--name", "^Gnosis keyboard contract$", "windowfocus", "--sync"});
   g_assert_nonnull(surface(GTK_WIDGET(view)));
   gtk_widget_grab_focus(surface(GTK_WIDGET(view)));
   evaluate(view, "button.focus();true");

@@ -200,7 +200,7 @@ Browser::Browser(std::string address, bool software) : url(std::move(address)), 
                            +[](gpointer p) { delete static_cast<CefRefPtr<Browser>*>(p); });
                      }),
                      this);
-  if (JupiterBrave::enabled()) {
+  if (GnosisBrave::enabled()) {
     area_ = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
     gtk_widget_set_focusable(area_, true); gtk_widget_set_hexpand(area_, true); gtk_widget_set_vexpand(area_, true);
     gtk_overlay_set_child(GTK_OVERLAY(overlay_), area_);
@@ -208,6 +208,8 @@ Browser::Browser(std::string address, bool software) : url(std::move(address)), 
     thumbnail_source_ = gtk_widget_paintable_new(overlay_);
     error_page_ = adw_status_page_new();
     auto* retry = gtk_button_new_with_label("Try Again");
+    gtk_widget_add_css_class(retry, "pill");
+    gtk_widget_set_halign(retry, GTK_ALIGN_CENTER);
     adw_status_page_set_child(ADW_STATUS_PAGE(error_page_), retry);
     g_signal_connect_swapped(retry, "clicked", G_CALLBACK(+[](Browser* self) { self->reload(); }), this);
     gtk_overlay_add_overlay(GTK_OVERLAY(overlay_), error_page_); gtk_widget_set_visible(error_page_, false);
@@ -227,6 +229,7 @@ Browser::Browser(std::string address, bool software) : url(std::move(address)), 
   adw_status_page_set_icon_name(ADW_STATUS_PAGE(error_page_), "network-offline-symbolic");
   GtkWidget* retry = gtk_button_new_with_label("Try Again");
   gtk_widget_add_css_class(retry, "suggested-action");
+  gtk_widget_add_css_class(retry, "pill");
   gtk_widget_set_halign(retry, GTK_ALIGN_CENTER);
   adw_status_page_set_child(ADW_STATUS_PAGE(error_page_), retry);
   g_signal_connect_swapped(retry, "clicked", G_CALLBACK(+[](Browser* self) { self->reload(); }), this);
@@ -335,10 +338,11 @@ void Browser::changed() {
 }
 
 void Browser::start() {
-  if (JupiterBrave::enabled()) {
-    if (closing) return;
+  if (GnosisBrave::enabled()) {
+    // Mapping an existing tab must not navigate it again.
+    if (loaded || closing) return;
     if (!brave_) {
-      brave_ = JupiterBrave::Page::create(area_, host && host->private_mode);
+      brave_ = GnosisBrave::Page::create(area_, host && host->private_mode);
       brave_->set_extension_popup(is_extension_popup);
       brave_->popup_size_changed = [this](int width, int height) {
         if (!closing && on_popup_size) on_popup_size(width, height);
@@ -589,7 +593,7 @@ void Browser::shutdown() {
   if (browser_) browser_->GetHost()->CloseBrowser(true);
 }
 void Browser::navigate(const std::string& address) {
-  if (JupiterBrave::enabled()) { url = address; main_navigation_uri_ = address; if (brave_) brave_->navigate(address); else start(); return; }
+  if (GnosisBrave::enabled()) { url = address; main_navigation_uri_ = address; if (brave_) brave_->navigate(address); else start(); return; }
   if (address == url || address.substr(0, address.find('#')) != url.substr(0, url.find('#')))
     page_message_context.clear();
   cancel_authentication();
@@ -608,10 +612,10 @@ void Browser::navigate(const std::string& address) {
     start();
 }
 void Browser::reload() {
-  if (JupiterBrave::enabled()) {
+  if (GnosisBrave::enabled()) {
     gtk_widget_set_visible(error_page_, false);
     if (brave_ && !brave_->is_closed()) brave_->reload();
-    else { brave_.reset(); start(); }
+    else { brave_.reset(); loaded = false; start(); }
     return;
   }
   page_message_context.clear();
@@ -1319,14 +1323,14 @@ bool Browser::OnProcessMessageReceived(CefRefPtr<CefBrowser> source_browser, Cef
 }
 bool Browser::OnConsoleMessage(CefRefPtr<CefBrowser>, cef_log_severity_t, const CefString& message,
                                const CefString& source, int) {
-  const auto prefix = "chrome-extension://" + Extensions::id_for_path(JUPITER_BRIDGE_DIR) + "/";
-  if (source.ToString().starts_with(prefix) && message.ToString().starts_with("JUPITER_NATIVE_TAB_ID:")) {
+  const auto prefix = "chrome-extension://" + Extensions::id_for_path(GNOSIS_BRIDGE_DIR) + "/";
+  if (source.ToString().starts_with(prefix) && message.ToString().starts_with("GNOSIS_NATIVE_TAB_ID:")) {
     if (auto id = extension_tab_id(message.ToString()))
       native_tab_id = *id;
     return true;
   }
   if (owner() && owner()->app.render_test)
-    g_print("Jupiter page: %s\n", message.ToString().c_str());
+    g_print("Gnosis page: %s\n", message.ToString().c_str());
   return false;
 }
 bool Browser::OnCursorChange(CefRefPtr<CefBrowser> source, CefCursorHandle, cef_cursor_type_t type,

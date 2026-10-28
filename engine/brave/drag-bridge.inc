@@ -8,8 +8,8 @@
 #include <string.h>
 
 struct DesktopDrag {
-  JupiterCompositor *server;
-  JupiterCompositorView *host;
+  GnosisCompositor *server;
+  GnosisCompositorView *host;
   GdkDrag *outer;
   GdkDrop *self_target;
   struct wlr_drag *inner;
@@ -19,8 +19,8 @@ struct DesktopDrag {
 };
 struct ImportedDrag {
   struct wlr_data_source source;
-  JupiterCompositor *server;
-  JupiterCompositorView *host;
+  GnosisCompositor *server;
+  GnosisCompositorView *host;
   GdkDrop *outer;
   GCancellable *cancel;
   gboolean dropped, finished;
@@ -61,7 +61,7 @@ static void end_desktop_drag(DesktopDrag *drag, gboolean success) {
     if (drag->self_drop && drag->dropped) gdk_drop_finish(drag->self_target, success ? GDK_ACTION_COPY : 0);
     g_object_unref(drag->self_target);
   }
-  jupiter_compositor_view_release_buttons(drag->host);
+  gnosis_compositor_view_release_buttons(drag->host);
   wl_display_flush_clients(drag->server->display);
   gdk_drag_drop_done(drag->outer, success);
   g_object_unref(drag->outer);
@@ -106,12 +106,12 @@ static void reject_requested_drag(struct wlr_drag *drag) {
   else drag->pointer_grab.interface->cancel(&drag->pointer_grab);
 }
 static void request_drag(struct wl_listener *listener, void *data) {
-  JupiterCompositor *server = wl_container_of(listener, server, request_drag);
+  GnosisCompositor *server = wl_container_of(listener, server, request_drag);
   struct wlr_seat_request_start_drag_event *event = data;
-  JupiterCompositorView *host = NULL;
+  GnosisCompositorView *host = NULL;
   struct wlr_surface *root = wlr_surface_get_root_surface(event->origin);
   for (guint i = 0; i < server->hosts->len; i++) {
-    JupiterCompositorView *candidate = g_ptr_array_index(server->hosts, i);
+    GnosisCompositorView *candidate = g_ptr_array_index(server->hosts, i);
     if (candidate->active && candidate->active->toplevel->base->surface == root && gtk_widget_get_mapped(GTK_WIDGET(candidate))) host = candidate;
   }
   if (!host || !host->pointer_device || !event->drag->source || server->export_drag || server->import_drag ||
@@ -128,7 +128,7 @@ static void request_drag(struct wl_listener *listener, void *data) {
   wlr_seat_start_pointer_drag(server->seat, event->drag, event->serial);
   listen(&event->drag->events.destroy, &drag->destroyed, exported_inner_destroyed);
   listen(&drag->source->events.destroy, &drag->source_destroyed, exported_source_destroyed);
-  GdkContentProvider *provider = jupiter_wayland_source_provider_new(server->display, drag->source);
+  GdkContentProvider *provider = gnosis_wayland_source_provider_new(server->display, drag->source);
   uint32_t actions = drag->source->actions;
   GdkDragAction allowed = (actions & WL_DATA_DEVICE_MANAGER_DND_ACTION_COPY ? GDK_ACTION_COPY : 0) |
     (actions & WL_DATA_DEVICE_MANAGER_DND_ACTION_MOVE ? GDK_ACTION_MOVE : 0);
@@ -200,7 +200,7 @@ static const struct wlr_data_source_impl imported_impl = {
   .send = imported_send, .accept = imported_accept, .destroy = imported_destroy,
   .dnd_drop = imported_drop, .dnd_finish = imported_finish, .dnd_action = imported_action
 };
-static void drag_pointer(JupiterCompositorView *host, double x, double y) {
+static void drag_pointer(GnosisCompositorView *host, double x, double y) {
   struct wlr_xdg_surface *xdg = host->active->toplevel->base;
   int width = gtk_widget_get_width(GTK_WIDGET(host)), height = gtk_widget_get_height(GTK_WIDGET(host));
   if (width && xdg->geometry.width > 0) x *= (double)xdg->geometry.width / width;
@@ -213,8 +213,8 @@ static void drag_pointer(JupiterCompositorView *host, double x, double y) {
   wlr_seat_pointer_notify_frame(host->server->seat);
   wl_display_flush_clients(host->server->display);
 }
-static GdkDragAction drop_motion(GtkDropTargetAsync *target, GdkDrop *outer, double x, double y, JupiterCompositorView *host) {
-  (void)target; JupiterCompositor *server = host->server;
+static GdkDragAction drop_motion(GtkDropTargetAsync *target, GdkDrop *outer, double x, double y, GnosisCompositorView *host) {
+  (void)target; GnosisCompositor *server = host->server;
   if (!server || !host->active || !gtk_widget_get_mapped(GTK_WIDGET(host))) return 0;
   if (server->export_drag && gdk_drop_get_drag(outer) == server->export_drag->outer) {
     g_set_object(&server->export_drag->self_target, outer);
@@ -251,14 +251,14 @@ static GdkDragAction drop_motion(GtkDropTargetAsync *target, GdkDrop *outer, dou
   drag_pointer(host, x, y);
   return desktop_action(server->import_drag->source.current_dnd_action);
 }
-static gboolean drop_accept(GtkDropTargetAsync *target, GdkDrop *outer, JupiterCompositorView *host) {
+static gboolean drop_accept(GtkDropTargetAsync *target, GdkDrop *outer, GnosisCompositorView *host) {
   (void)target;
   return host->active && gtk_widget_get_mapped(GTK_WIDGET(host)) &&
     gdk_drop_get_actions(outer) & (GDK_ACTION_COPY | GDK_ACTION_MOVE | GDK_ACTION_LINK);
 }
-static gboolean perform_drop(GtkDropTargetAsync *target, GdkDrop *outer, double x, double y, JupiterCompositorView *host) {
+static gboolean perform_drop(GtkDropTargetAsync *target, GdkDrop *outer, double x, double y, GnosisCompositorView *host) {
   if (!drop_motion(target, outer, x, y, host)) return FALSE;
-  JupiterCompositor *server = host->server;
+  GnosisCompositor *server = host->server;
   if (server->export_drag && server->export_drag->self_target == outer) {
     server->export_drag->self_drop = TRUE; server->export_drag->dropped = TRUE;
   } else if (!server->import_drag || !server->import_drag->source.accepted) return FALSE;
@@ -274,8 +274,8 @@ static gboolean perform_drop(GtkDropTargetAsync *target, GdkDrop *outer, double 
   wl_display_flush_clients(server->display);
   return TRUE;
 }
-static void drop_leave(GtkDropTargetAsync *target, GdkDrop *outer, JupiterCompositorView *host) {
-  (void)target; JupiterCompositor *server = host->server;
+static void drop_leave(GtkDropTargetAsync *target, GdkDrop *outer, GnosisCompositorView *host) {
+  (void)target; GnosisCompositor *server = host->server;
   if (!server) return;
   if (server->import_drag && server->import_drag->outer == outer && !server->import_drag->dropped)
     wlr_data_source_destroy(&server->import_drag->source);
@@ -284,12 +284,12 @@ static void drop_leave(GtkDropTargetAsync *target, GdkDrop *outer, JupiterCompos
     wlr_seat_pointer_notify_clear_focus(server->seat);
   }
 }
-static void cancel_view_drag(JupiterCompositorView *host) {
+static void cancel_view_drag(GnosisCompositorView *host) {
   if (!host->server) return;
   if (host->server->export_drag && host->server->export_drag->host == host) end_desktop_drag(host->server->export_drag, FALSE);
   if (host->server->import_drag && host->server->import_drag->host == host) wlr_data_source_destroy(&host->server->import_drag->source);
 }
-static void setup_drop_target(JupiterCompositorView *host) {
+static void setup_drop_target(GnosisCompositorView *host) {
   GtkDropTargetAsync *target = gtk_drop_target_async_new(NULL, GDK_ACTION_COPY | GDK_ACTION_MOVE | GDK_ACTION_LINK);
   g_signal_connect(target, "accept", G_CALLBACK(drop_accept), host);
   g_signal_connect(target, "drag-enter", G_CALLBACK(drop_motion), host);

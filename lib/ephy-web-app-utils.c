@@ -22,6 +22,7 @@
 #include "config.h"
 
 #include "ephy-web-app-utils.h"
+#include "web-app-config.h"
 
 #include <errno.h>
 #include <fcntl.h>
@@ -50,7 +51,7 @@
  *  - Name: the user-visible pretty app name
  *  - Normalized name: lowercase name
  *  - ID: SHA-1 of name
- *  - Epiphany App ID: io.github.doromiert.Jupiter or io.github.doromiert.Jupiter.Devel or io.github.doromiert.Jupiter.Canary
+ *  - Epiphany App ID: com.neg-zero.Gnosis or com.neg-zero.Gnosis.Devel or com.neg-zero.Gnosis.Canary
  *  - GApplication ID: <epiphany-app-id>.WebApp_<id>
  *  - Profile directory: <user-data-dir>/<gapplication-id>
  *  - Desktop file: <user-data-dir>/xdg-desktop-portal/applications/<gapplication-id>.desktop
@@ -162,6 +163,27 @@ get_app_desktop_filename (const char *id)
   return g_strconcat (gapplication_id, ".desktop", NULL);
 }
 
+static GDesktopAppInfo *
+get_declarative_desktop_info (const char *id)
+{
+  g_autofree char *filename = get_app_desktop_filename (id);
+  g_autofree char *path = g_build_filename (g_get_user_data_dir (), "applications", filename, NULL);
+  g_autofree char *application_id = g_strndup (filename, strlen (filename) - strlen (".desktop"));
+  g_autoptr (GDesktopAppInfo) info = g_desktop_app_info_new_from_filename (path);
+
+  if (!g_application_id_is_valid (application_id) ||
+      !info || !g_desktop_app_info_get_boolean (info, "X-Gnosis-Declarative"))
+    return NULL;
+  return g_steal_pointer (&info);
+}
+
+gboolean
+ephy_web_application_is_declarative (const char *id)
+{
+  g_autoptr (GDesktopAppInfo) info = get_declarative_desktop_info (id);
+  return info != NULL;
+}
+
 const char *
 ephy_web_application_get_gapplication_id_from_profile_directory (const char *profile_dir)
 {
@@ -264,6 +286,10 @@ ephy_web_application_delete (const char      *id,
 
   if (out_app_found)
     *out_app_found = EPHY_WEB_APP_FOUND;
+
+  /* The desktop manager owns this launcher; its writable profile survives rebuilds. */
+  if (ephy_web_application_is_declarative (id))
+    return FALSE;
 
   profile_dir = ephy_web_application_get_profile_directory (id);
   if (!profile_dir)
@@ -374,7 +400,7 @@ create_desktop_file (const char  *id,
   }
 
   file = g_key_file_new ();
-  exec_string_raw = g_strdup_printf ("epiphany --application-mode \"--profile=%s\" %s",
+  exec_string_raw = g_strdup_printf ("\"" GNOSIS_EXECUTABLE "\" --application-mode \"--profile=%s\" %s",
                                      profile_dir,
                                      address);
   exec_string = escape_exec_string (exec_string_raw);
@@ -473,13 +499,32 @@ ephy_web_application_ensure_for_app_info (GAppInfo *app_info)
   g_autofree char *app_file = NULL;
   int fd;
 
-  id = ephy_web_application_get_app_id_from_name (g_app_info_get_name (app_info));
+  if (G_IS_DESKTOP_APP_INFO (app_info) &&
+      g_desktop_app_info_get_boolean (G_DESKTOP_APP_INFO (app_info), "X-Gnosis-Declarative")) {
+    const char *filename = g_desktop_app_info_get_filename (G_DESKTOP_APP_INFO (app_info));
+    g_autofree char *basename = g_path_get_basename (filename);
+    if (!g_str_has_prefix (basename, EPHY_WEB_APP_GAPPLICATION_ID_PREFIX) ||
+        !g_str_has_suffix (basename, ".desktop"))
+      return NULL;
+    id = g_strndup (basename + strlen (EPHY_WEB_APP_GAPPLICATION_ID_PREFIX),
+                    strlen (basename) - strlen (EPHY_WEB_APP_GAPPLICATION_ID_PREFIX) - strlen (".desktop"));
+    if (!ephy_web_application_is_declarative (id))
+      return NULL;
+  } else {
+    id = ephy_web_application_get_app_id_from_name (g_app_info_get_name (app_info));
+  }
   profile_dir = ephy_web_application_get_profile_directory (id);
 
   /* Create the profile directory, populate it. */
   if (g_mkdir (profile_dir, 488) == -1) {
-    if (errno == EEXIST)
+    if (errno == EEXIST) {
+      if (ephy_web_application_is_declarative (id)) {
+        app_file = g_build_filename (profile_dir, ".app", NULL);
+        if (!g_file_test (app_file, G_FILE_TEST_EXISTS))
+          return NULL;
+      }
       return g_steal_pointer (&profile_dir);
+    }
 
     g_debug ("Failed to create directory '%s' for app id '%s': %s",
              profile_dir, id, g_strerror (errno));
@@ -534,9 +579,15 @@ ephy_web_application_get_desktop_keyfile (const char  *id,
   g_autofree char *desktop_basename = NULL;
   g_autofree char *contents = NULL;
   g_autoptr (GKeyFile) key_file = NULL;
+  g_autoptr (GDesktopAppInfo) declarative = get_declarative_desktop_info (id);
 
   desktop_basename = get_app_desktop_filename (id);
-  contents = xdp_portal_dynamic_launcher_get_desktop_entry (portal, desktop_basename, error);
+  if (declarative) {
+    if (!g_file_get_contents (g_desktop_app_info_get_filename (declarative), &contents, NULL, error))
+      return NULL;
+  } else {
+    contents = xdp_portal_dynamic_launcher_get_desktop_entry (portal, desktop_basename, error);
+  }
   if (!contents)
     return NULL;
 
@@ -601,6 +652,13 @@ ephy_web_application_launch (const char *id)
   XdpPortal *portal = ephy_get_portal ();
   g_autofree char *desktop_basename = NULL;
   g_autoptr (GError) error = NULL;
+  g_autoptr (GDesktopAppInfo) declarative = get_declarative_desktop_info (id);
+
+  if (declarative) {
+    if (!g_app_info_launch (G_APP_INFO (declarative), NULL, NULL, &error))
+      g_warning ("Failed to launch declarative web app '%s': %s", id, error->message);
+    return;
+  }
 
   desktop_basename = get_app_desktop_filename (id);
   if (!xdp_portal_dynamic_launcher_launch (portal, desktop_basename, NULL, &error))
@@ -711,7 +769,8 @@ ephy_web_application_for_profile_directory (const char            *profile_dir,
   app->id = g_strdup (id);
 
   app->desktop_path = ephy_web_application_get_desktop_path (id);
-  if (ephy_can_install_web_apps ()) {
+  app->declarative = ephy_web_application_is_declarative (id);
+  if (ephy_can_install_web_apps () && !app->declarative) {
     key_file = ephy_web_application_get_desktop_keyfile (id, &error);
     if (!key_file) {
       g_warning ("Failed to get desktop keyfile for id %s from portal: %s", id, error->message);
@@ -741,7 +800,7 @@ ephy_web_application_for_profile_directory (const char            *profile_dir,
   }
 
   /* sandbox should take the code path above */
-  if (xdp_portal_running_under_sandbox ()) {
+  if (xdp_portal_running_under_sandbox () && !app->declarative) {
     g_warning ("Epiphany is sandboxed but the DynamicLauncher portal is unavailable; can't use web app functionality");
     return NULL;
   }
@@ -761,7 +820,8 @@ ephy_web_application_for_profile_directory (const char            *profile_dir,
   file = g_file_new_for_path (app->desktop_path);
 
   file_info = g_file_query_info (file, G_FILE_ATTRIBUTE_TIME_CREATED, G_FILE_QUERY_INFO_NONE, NULL, NULL);
-  app->install_date_uint64 = g_file_info_get_attribute_uint64 (file_info, G_FILE_ATTRIBUTE_TIME_CREATED);
+  if (file_info)
+    app->install_date_uint64 = g_file_info_get_attribute_uint64 (file_info, G_FILE_ATTRIBUTE_TIME_CREATED);
 
   return g_steal_pointer (&app);
 }
@@ -779,9 +839,12 @@ GList *
 ephy_web_application_get_application_list (void)
 {
   g_autoptr (GFileEnumerator) children = NULL;
+  g_autoptr (GFileEnumerator) entries = NULL;
   GList *applications = NULL;
   g_autofree char *parent_directory_path = NULL;
+  g_autofree char *applications_path = NULL;
   g_autoptr (GFile) parent_directory = NULL;
+  g_autoptr (GFile) applications_dir = NULL;
 
   parent_directory_path = g_strdup (g_get_user_data_dir ());
 
@@ -789,10 +852,7 @@ ephy_web_application_get_application_list (void)
   children = g_file_enumerate_children (parent_directory,
                                         "standard::name",
                                         0, NULL, NULL);
-  if (!children)
-    return NULL;
-
-  for (;;) {
+  while (children) {
     g_autoptr (GFileInfo) info = g_file_enumerator_next_file (children, NULL, NULL);
     const char *name;
 
@@ -812,6 +872,37 @@ ephy_web_application_get_application_list (void)
           applications = g_list_prepend (applications, g_steal_pointer (&app));
       }
     }
+  }
+
+  applications_path = g_build_filename (parent_directory_path, "applications", NULL);
+  applications_dir = g_file_new_for_path (applications_path);
+  entries = g_file_enumerate_children (applications_dir, "standard::name", 0, NULL, NULL);
+  while (entries) {
+    g_autoptr (GFileInfo) entry = g_file_enumerator_next_file (entries, NULL, NULL);
+    const char *filename;
+    g_autofree char *id = NULL;
+    g_autofree char *profile_dir = NULL;
+    gboolean found = FALSE;
+    EphyWebApplication *app;
+
+    if (!entry)
+      break;
+    filename = g_file_info_get_name (entry);
+    if (!g_str_has_prefix (filename, EPHY_WEB_APP_GAPPLICATION_ID_PREFIX) ||
+        !g_str_has_suffix (filename, ".desktop"))
+      continue;
+    id = g_strndup (filename + strlen (EPHY_WEB_APP_GAPPLICATION_ID_PREFIX),
+                    strlen (filename) - strlen (EPHY_WEB_APP_GAPPLICATION_ID_PREFIX) - strlen (".desktop"));
+    if (!ephy_web_application_is_declarative (id))
+      continue;
+    for (GList *item = applications; item; item = item->next)
+      found |= g_strcmp0 (((EphyWebApplication *)item->data)->id, id) == 0;
+    if (found)
+      continue;
+    profile_dir = ephy_web_application_get_profile_directory (id);
+    app = ephy_web_application_for_profile_directory (profile_dir, EPHY_WEB_APP_NO_TMP_ICON);
+    if (app)
+      applications = g_list_prepend (applications, app);
   }
 
   return g_list_reverse (applications);
@@ -842,33 +933,12 @@ ephy_web_application_free_application_list (GList *list)
 char **
 ephy_web_application_get_desktop_id_list (void)
 {
-  g_autoptr (GFileEnumerator) children = NULL;
-  g_autoptr (GFile) parent_directory = NULL;
+  GList *apps = ephy_web_application_get_application_list ();
   g_autoptr (GPtrArray) desktop_file_ids = g_ptr_array_new_with_free_func (g_free);
 
-  parent_directory = g_file_new_for_path (g_get_user_data_dir ());
-  children = g_file_enumerate_children (parent_directory,
-                                        "standard::name",
-                                        0, NULL, NULL);
-  if (!children)
-    goto out;
-
-  for (;;) {
-    g_autoptr (GFileInfo) info = g_file_enumerator_next_file (children, NULL, NULL);
-    const char *name;
-
-    if (!info)
-      break;
-
-    name = g_file_info_get_name (info);
-    if (g_str_has_prefix (name, EPHY_WEB_APP_GAPPLICATION_ID_PREFIX)) {
-      g_autofree char *desktop_file_id = NULL;
-      desktop_file_id = g_strconcat (name, ".desktop", NULL);
-      g_ptr_array_add (desktop_file_ids, g_steal_pointer (&desktop_file_id));
-    }
-  }
-
-out:
+  for (GList *item = apps; item; item = item->next)
+    g_ptr_array_add (desktop_file_ids, get_app_desktop_filename (((EphyWebApplication *)item->data)->id));
+  ephy_web_application_free_application_list (apps);
   g_ptr_array_add (desktop_file_ids, NULL);
 
   return (char **)g_ptr_array_free (g_steal_pointer (&desktop_file_ids), FALSE);
@@ -899,9 +969,9 @@ ephy_web_application_initialize_settings (const char                *profile_dir
   g_autofree char *path = NULL;
 
   name = g_path_get_basename (profile_directory);
-  settings = g_settings_new_with_path (EPHY_PREFS_WEB_SCHEMA, "/org/gnome/epiphany/web/");
+  settings = g_settings_new_with_path (EPHY_PREFS_WEB_SCHEMA, "/com/neg_zero/gnosis/web/");
 
-  path = g_build_path ("/", "/org/gnome/epiphany/web-apps/", name, "web/", NULL);
+  path = g_build_path ("/", "/com/neg_zero/gnosis/web-apps/", name, "web/", NULL);
   web_app_settings = g_settings_new_with_path (EPHY_PREFS_WEB_SCHEMA, path);
 
   for (guint i = 0; i < G_N_ELEMENTS (ephy_prefs_web_schema); i++) {
@@ -912,10 +982,10 @@ ephy_web_application_initialize_settings (const char                *profile_dir
   }
 
   g_clear_object (&settings);
-  settings = g_settings_new_with_path (EPHY_PREFS_STATE_SCHEMA, "/org/gnome/epiphany/state/");
+  settings = g_settings_new_with_path (EPHY_PREFS_STATE_SCHEMA, "/com/neg_zero/gnosis/state/");
 
   g_clear_pointer (&path, g_free);
-  path = g_build_path ("/", "/org/gnome/epiphany/web-apps/", name, "state/", NULL);
+  path = g_build_path ("/", "/com/neg_zero/gnosis/web-apps/", name, "state/", NULL);
   g_clear_object (&web_app_settings);
   web_app_settings = g_settings_new_with_path (EPHY_PREFS_STATE_SCHEMA, path);
 
@@ -928,7 +998,7 @@ ephy_web_application_initialize_settings (const char                *profile_dir
 
   if (options) {
     g_clear_pointer (&path, g_free);
-    path = g_build_path ("/", "/org/gnome/epiphany/web-apps/", name, "webapp/", NULL);
+    path = g_build_path ("/", "/com/neg_zero/gnosis/web-apps/", name, "webapp/", NULL);
     g_clear_object (&web_app_settings);
     web_app_settings = g_settings_new_with_path (EPHY_PREFS_WEB_APP_SCHEMA, path);
 
@@ -1016,16 +1086,6 @@ ephy_web_application_is_uri_allowed (const char *uri)
   return matched;
 }
 
-static void
-ephy_web_icon_copy_cb (GFile        *file,
-                       GAsyncResult *result,
-                       gpointer      user_data)
-{
-  g_autoptr (GError) error = NULL;
-  if (!g_file_copy_finish (file, result, &error))
-    g_warning ("Failed to update web app icon: %s", error->message);
-}
-
 gboolean
 ephy_web_application_save (EphyWebApplication *app)
 {
@@ -1034,12 +1094,18 @@ ephy_web_application_save (EphyWebApplication *app)
   g_autofree char *name = NULL;
   g_autofree char *icon = NULL;
   g_autofree char *exec = NULL;
+  g_autofree char *updated_exec = NULL;
   g_auto (GStrv) strings = NULL;
   g_autofree char *unescaped_url = NULL;
   guint exec_length;
   gboolean changed = FALSE;
   gboolean saved = FALSE;
+  gboolean quoted = FALSE;
+  const char *end;
   g_autoptr (GError) error = NULL;
+
+  if (app->declarative)
+    return FALSE;
 
   g_assert (!xdp_portal_running_under_sandbox ());
 
@@ -1059,17 +1125,41 @@ ephy_web_application_save (EphyWebApplication *app)
 
   icon = g_key_file_get_string (keyfile, "Desktop Entry", "Icon", NULL);
   if (g_strcmp0 (icon, app->icon_path) != 0) {
-    g_autoptr (GFile) new_icon = NULL;
-    g_autoptr (GFile) old_icon = NULL;
+    g_autofree char *profile = ephy_web_application_get_profile_directory (app->id);
+    g_autofree char *destination = g_build_filename (profile, "app-icon.png", NULL);
+
+    if (g_path_is_absolute (app->icon_path) && g_strcmp0 (app->icon_path, destination)) {
+      g_autoptr (GdkPixbuf) image = gdk_pixbuf_new_from_file_at_scale (app->icon_path, 256, 256, TRUE, &error);
+      g_autofree char *png = NULL;
+      gsize length = 0;
+
+      if (!image || !gdk_pixbuf_save_to_buffer (image, &png, &length, "png", &error, NULL) ||
+          !g_file_set_contents_full (destination, png, length, G_FILE_SET_CONTENTS_CONSISTENT, 0600, &error)) {
+        g_warning ("Failed to save web app icon: %s", error->message);
+        return FALSE;
+      }
+      g_set_str (&app->icon_path, destination);
+    }
     changed = TRUE;
-    new_icon = g_file_new_for_path (app->icon_path);
-    old_icon = g_file_new_for_path (icon);
-    g_file_copy_async (new_icon, old_icon, G_FILE_COPY_OVERWRITE,
-                       G_PRIORITY_DEFAULT, NULL, NULL, NULL,
-                       (GAsyncReadyCallback)ephy_web_icon_copy_cb, NULL);
+    g_key_file_set_string (keyfile, "Desktop Entry", "Icon", app->icon_path);
   }
 
   exec = g_key_file_get_string (keyfile, "Desktop Entry", "Exec", NULL);
+  if (!exec) {
+    g_warning ("Web app launcher has no executable");
+    return FALSE;
+  }
+  /* Refresh a Nix build path while preserving the launcher's other arguments. */
+  for (end = exec; *end; end++) {
+    if (*end == '\\' && end[1]) end++;
+    else if (*end == '"') quoted = !quoted;
+    else if (!quoted && g_ascii_isspace (*end)) break;
+  }
+  updated_exec = g_strconcat ("\"" GNOSIS_EXECUTABLE "\"", end, NULL);
+  if (g_strcmp0 (exec, updated_exec)) {
+    changed = TRUE;
+    g_set_str (&exec, updated_exec);
+  }
   strings = g_strsplit (exec, " ", -1);
 
   exec_length = g_strv_length (strings);
@@ -1080,8 +1170,8 @@ ephy_web_application_save (EphyWebApplication *app)
     strings[exec_length - 1] = escape_exec_string (app->url);
     g_free (exec);
     exec = g_strjoinv (" ", strings);
-    g_key_file_set_string (keyfile, "Desktop Entry", "Exec", exec);
   }
+  g_key_file_set_string (keyfile, "Desktop Entry", "Exec", exec);
 
   if (changed) {
     char *resolved_path = realpath (app->desktop_path, NULL);
@@ -1096,7 +1186,24 @@ ephy_web_application_save (EphyWebApplication *app)
     free (resolved_path);
   }
 
-  return saved;
+  return !changed || saved;
+}
+
+gboolean
+ephy_web_application_set_extensions (const char *id, GKeyFile *config, GError **error)
+{
+  g_autofree char *profile = ephy_web_application_get_profile_directory (id);
+  g_autofree char *base = g_path_get_basename (profile);
+  g_autofree char *path = g_strdup_printf ("/com/neg_zero/gnosis/web-apps/%s/web/", base);
+  g_autoptr (GSettings) settings = NULL;
+
+  if (!gnosis_web_app_config_save (profile, config, error))
+    return FALSE;
+
+  settings = g_settings_new_with_path (EPHY_PREFS_WEB_SCHEMA, path);
+  g_settings_set_boolean (settings, EPHY_PREFS_WEB_ENABLE_ADBLOCK,
+                          gnosis_web_app_extension_enabled (config, "ublock"));
+  return TRUE;
 }
 
 gboolean
@@ -1110,7 +1217,7 @@ ephy_web_application_is_system (EphyWebApplication *app)
   profile_directory = ephy_web_application_get_profile_directory (app->id);
   name = g_path_get_basename (profile_directory);
 
-  path = g_build_path ("/", "/org/gnome/epiphany/web-apps/", name, "webapp/", NULL);
+  path = g_build_path ("/", "/com/neg_zero/gnosis/web-apps/", name, "webapp/", NULL);
   web_app_settings = g_settings_new_with_path (EPHY_PREFS_WEB_APP_SCHEMA, path);
 
   return g_settings_get_boolean (web_app_settings, EPHY_PREFS_WEB_APP_SYSTEM);

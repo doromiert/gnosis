@@ -88,7 +88,7 @@ public:
   bool can_back() const { return brave_ ? brave_->can_back : browser_ && browser_->CanGoBack(); }
   bool can_forward() const { return brave_ ? brave_->can_forward : browser_ && browser_->CanGoForward(); }
   CefRefPtr<CefBrowser> cef_browser() const { return browser_; }
-  std::shared_ptr<JupiterBrave::Page> brave_page() const { return brave_; }
+  std::shared_ptr<GnosisBrave::Page> brave_page() const { return brave_; }
   void focus_native() { if (brave_) brave_->focus(); else gtk_widget_grab_focus(area_); }
   const std::string& requested_uri() const { return main_navigation_uri_.empty() ? url : main_navigation_uri_; }
   Window* owner() const;
@@ -211,7 +211,7 @@ public:
                             CefRefPtr<CefJSDialogCallback> callback) override;
 
 private:
-  std::shared_ptr<JupiterBrave::Page> brave_;
+  std::shared_ptr<GnosisBrave::Page> brave_;
   std::atomic<uint64_t> main_request_{0};
   // Pending requests are IO-only. Frame epochs are shared with UI navigation;
   // unlike authentication cancellation, same-chain redirects keep this lifetime.

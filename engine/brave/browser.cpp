@@ -1,12 +1,16 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later
- * Native-window embedding extracted from the visibly verified Jupiter Brave PoC.
+ * Native-window embedding extracted from the visibly verified Gnosis Brave PoC.
  */
 #include "browser.hpp"
 #include "compositor.h"
 #include "profile.h"
 #include "private-profile.hpp"
 #include "bundled-extension.hpp"
+#include "../loopback.h"
+#include "../web-app-config.h"
+#include "../select/extensions.hpp"
 #include <gdk/x11/gdkx.h>
+#include <gdk/wayland/gdkwayland.h>
 #include <glib-unix.h>
 #include <libsoup/soup.h>
 #include <X11/Xlib.h>
@@ -20,6 +24,7 @@
 #include <cerrno>
 #include <csignal>
 #include <map>
+#include <deque>
 #include <set>
 #include <vector>
 #include <cstring>
@@ -29,7 +34,7 @@
 #include <glib/gi18n.h>
 #include <adwaita.h>
 #include <qrencode.h>
-namespace JupiterBrave {
+namespace GnosisBrave {
 namespace {
 std::string profile_root;
 bool automation_mode = false;
@@ -50,8 +55,10 @@ const char* text(JsonObject* o, const char* key) { return o ? json_object_get_st
 JsonObject* object(JsonObject* o, const char* key) { return o && json_object_has_member(o, key) ? json_object_get_object_member(o, key) : nullptr; }
 std::string document_adapter_source() {
   std::string result;
+  if (!adapter_enabled("document-metadata")) return result;
   for (const char* name : {"document-metadata.js", "vim-field.js", "vim-mode.js"}) {
-    g_autofree char* path = g_build_filename(JUPITER_NATIVE_INTEGRATION_DIR, name, nullptr);
+    if (strcmp(name,"document-metadata.js") && !adapter_enabled("vim")) continue;
+    g_autofree char* path = g_build_filename(GNOSIS_NATIVE_INTEGRATION_DIR, name, nullptr);
     g_autofree char* source = nullptr;
     if (g_file_get_contents(path, &source, nullptr, nullptr)) result += std::string(source) + "\n";
     else g_warning("The native document adapter could not be loaded: %s", name);
@@ -60,8 +67,8 @@ std::string document_adapter_source() {
 }
 int ignore_x_error(Display*, XErrorEvent*) { return 0; }
 }
-bool enabled() { return g_strcmp0(g_getenv("JUPITER_ENGINE"), "brave") == 0; }
-bool composited() { return g_strcmp0(g_getenv("JUPITER_SURFACE"), "x11") != 0; }
+bool enabled() { return g_strcmp0(g_getenv("GNOSIS_ENGINE"), "brave") == 0; }
+bool composited() { return g_strcmp0(g_getenv("GNOSIS_SURFACE"), "x11") != 0; }
 std::string quote(const std::string& value) {
   auto* node = json_node_new(JSON_NODE_VALUE); json_node_set_string(node, value.c_str());
   char* json = json_to_string(node, false); std::string result(json); g_free(json); json_node_free(node); return result;
@@ -180,7 +187,11 @@ struct Page::State {
   std::unique_ptr<TranslationUI> translation;
   std::unique_ptr<PasswordUI> passwords;
   std::unique_ptr<AuthenticatorUI> authenticator;
+  GCancellable* passkey_provider = nullptr;
+  std::string passkey_provider_id;
   AdwDialog* install_dialog = nullptr;
+  AdwDialog* http_retry = nullptr;
+  std::string document_request, document_request_url;
   gulong install_response = 0;
   gint64 install_id = 0;
   guint install_delay = 0;
@@ -193,7 +204,7 @@ struct Page::State {
   std::vector<std::function<void()>> waiting;
   explicit State(GtkWidget* widget, bool private_mode) : content(widget), ephemeral(private_mode) {
     char* id = g_uuid_string_random(); token = id; g_free(id);
-    internal_origin = "https://" + token + ".jupiter.invalid";
+    internal_origin = "https://" + token + ".gnosis.invalid";
   }
   ~State() { g_clear_object(&certificate); }
 };
@@ -202,10 +213,11 @@ public:
   std::string profile, window_class, base, product;
   GSubprocess* browser = nullptr;
   SoupServer* server = nullptr;
-  JupiterCompositor* compositor = nullptr;
+  GnosisCompositor* compositor = nullptr;
   int input = -1, output = -1, sequence = 0;
   guint watch = 0, native_watch = 0;
   int native_fd = -1;
+  std::string portal_target;
   gint64 native_sequence = 0;
   struct NativeReply { Reply callback; guint timeout; };
   std::map<gint64, NativeReply> native_replies;
@@ -214,10 +226,12 @@ public:
   unsigned profile_writers = 0;
   std::shared_ptr<PrivateProfile> private_storage;
   bool integration_ready = false, integration_connecting = false;
+  bool debug_startup_pending = false;
   bool preferences_busy = false, preferences_again = false, shields_configured = false;
   std::string settings_target, settings_session;
   bool extensions_ready = false, private_profile = false;
   std::string integration_id;
+  std::string integration_adapter;
   std::string integration_session, keepassxc_session, keepassxc_target;
   guint keepassxc_poll = 0;
   gint64 keepassxc_deadline = 0;
@@ -227,6 +241,9 @@ public:
   gint64 integration_deadline = 0;
   std::string buffer;
   std::map<int, Reply> replies;
+  struct StyleCommand { std::string method, params; Reply reply; };
+  struct StyleSession { std::deque<StyleCommand> pending; };
+  std::map<std::string, StyleSession> style_sessions;
   std::map<std::string, std::weak_ptr<Page>> pages, targets, sessions;
   std::vector<std::weak_ptr<Page>> pending_opens;
   std::map<int,std::weak_ptr<Page>> zoom_tabs;
@@ -237,10 +254,14 @@ public:
   struct ParkedPage { std::string target, session; ::Window child; GtkWidget* surface = nullptr; };
   std::vector<ParkedPage> parked;
   std::map<std::string, gint64> routed_windows;
+#include "web-app-extensions.inc"
   explicit Process(bool ephemeral, const std::string& reuse_profile = "") : private_profile(ephemeral) {
+    read_webapp_extensions();
+    configure_debug_adapters(native_preferences);
+    debug_startup_pending = adapter_overridden("keepassxc") || adapter_overridden("ublock");
     if (composited()) {
       GError* failure = nullptr;
-      compositor = jupiter_compositor_new(&failure);
+      compositor = gnosis_compositor_new(&failure);
       if (!compositor) {
         g_warning("Brave compositor: %s", failure->message); g_error_free(failure); return;
       }
@@ -253,11 +274,11 @@ public:
     }
     else profile = profile_root + "/brave";
     GError* profile_error = nullptr;
-    if (!jupiter_brave_profile_prepare(profile.c_str(), &profile_error)) {
+    if (!gnosis_brave_profile_prepare(profile.c_str(), &profile_error)) {
       g_warning("Brave profile preparation: %s", profile_error->message); g_error_free(profile_error); return;
     }
-    if (!ephemeral && *JUPITER_KEEPASSXC_DIR) {
-      if (!jupiter_brave_profile_prepare_keepassxc(profile.c_str(), &profile_error)) {
+    if (!ephemeral && webapp_keepassxc && adapter_enabled("keepassxc") && *GNOSIS_KEEPASSXC_DIR) {
+      if (!gnosis_brave_profile_prepare_keepassxc(profile.c_str(), &profile_error)) {
         g_warning("KeePassXC integration: %s", profile_error->message); g_clear_error(&profile_error);
       }
     }
@@ -265,14 +286,14 @@ public:
     char* directory = g_mkdtemp(staging.data());
     if (!directory) { g_warning("Cannot create Brave's private download directory"); return; }
     download_directory = directory;
-    char* id = g_uuid_string_random(); window_class = std::string("JupiterBrave-") + id; g_free(id);
+    char* id = g_uuid_string_random(); window_class = std::string("GnosisBrave-") + id; g_free(id);
     server = soup_server_new(nullptr, nullptr);
     soup_server_add_handler(server, nullptr, +[](SoupServer*, SoupServerMessage* message, const char* path, GHashTable*, gpointer data) {
       auto* self = static_cast<Process*>(data);
       const std::string key = path && g_str_has_prefix(path, "/bootstrap/") ? path + 11 : "";
       auto found = self->pages.find(key);
       if (found == self->pages.end() || found->second.expired()) { soup_server_message_set_status(message, SOUP_STATUS_NOT_FOUND, nullptr); return; }
-      std::string html = "<!doctype html><title>JupiterTab-" + key + "</title><style>:root{color-scheme:dark light}</style>";
+      std::string html = "<!doctype html><title>GnosisTab-" + key + "</title><style>:root{color-scheme:dark light}</style>";
       soup_server_message_set_status(message, SOUP_STATUS_OK, nullptr);
       soup_message_headers_replace(soup_server_message_get_response_headers(message), "Cache-Control", "no-store");
       soup_message_headers_replace(soup_server_message_get_response_headers(message), "Referrer-Policy", "no-referrer");
@@ -306,6 +327,13 @@ public:
   }
   void command(const std::string& method, const std::string& params, const std::string& session, Reply reply = {}) {
     if (closing || output < 0) { if (reply) reply(nullptr, "The Brave browser is closed"); return; }
+    if ((!adapter_enabled("page-style") && (method.starts_with("DOM.") || method.starts_with("CSS."))) ||
+        (!adapter_enabled("network-events") && method == "Network.enable") ||
+        (!adapter_enabled("extension-events") && method == "Runtime.addBinding" &&
+         (params.find("__gnosisZoomChanged") != std::string::npos || params.find("__gnosisExtensionsChanged") != std::string::npos))) {
+      if (reply) reply(nullptr, "Adapter disabled in Debugging settings");
+      return;
+    }
     int id = ++sequence;
     std::string json = "{\"id\":" + std::to_string(id) + ",\"method\":" + quote(method) + ",\"params\":" + params;
     if (!session.empty()) json += ",\"sessionId\":" + quote(session);
@@ -317,6 +345,43 @@ public:
       if (count <= 0) { fail("Brave's private protocol pipe closed"); return; }
       offset += count;
     }
+  }
+  // Inspector-created styles survive CSS.disable. Keep its mutation observers
+  // enabled only while this session's queued theme writes are in flight.
+  void next_style_command(const std::string& session, const std::string& error = {}) {
+    auto found = style_sessions.find(session);
+    if (found == style_sessions.end()) return;
+    if (found->second.pending.empty()) {
+      command("CSS.disable", "{}", session);
+      command("DOM.disable", "{}", session);
+      style_sessions.erase(found);
+      return;
+    }
+    auto item = std::move(found->second.pending.front());
+    found->second.pending.pop_front();
+    if (!error.empty()) {
+      if (item.reply) item.reply(nullptr, error);
+      next_style_command(session, error);
+      return;
+    }
+    auto done = [weak = weak_from_this(), session, reply = std::move(item.reply)](JsonObject* result, const std::string& failure) {
+      if (reply) reply(result, failure);
+      if (auto process = weak.lock()) process->next_style_command(session);
+    };
+    command(item.method, item.params, session, std::move(done));
+  }
+  void style_command(const std::string& method, const std::string& params, const std::string& session, Reply reply) {
+    if (!adapter_enabled("page-style") || closing || output < 0) {
+      if (reply) reply(nullptr, "Page styling is unavailable");
+      return;
+    }
+    const bool starting = !style_sessions.contains(session);
+    style_sessions[session].pending.push_back({method, params, std::move(reply)});
+    if (!starting) return;
+    command("DOM.enable", "{}", session);
+    command("CSS.enable", "{}", session, [weak = weak_from_this(), session](JsonObject*, const std::string& error) {
+      if (auto process = weak.lock()) process->next_style_command(session, error);
+    });
   }
   void fail(const std::string& error) {
     auto pending = std::move(replies); replies.clear();
@@ -421,8 +486,11 @@ public:
       return;
     }
     page->state_->bootstrap = base + "bootstrap/" + page->state_->token;
-    if (composited()) page->adopt_surface(jupiter_compositor_view_new_for_server(compositor, page->state_->token.c_str()));
-    std::vector<std::string> args{g_getenv("JUPITER_BRAVE_EXECUTABLE") ? g_getenv("JUPITER_BRAVE_EXECUTABLE") : "brave",
+    if (composited()) page->adopt_surface(gnosis_compositor_view_new_for_server(compositor, page->state_->token.c_str()));
+    const char* executable = g_getenv(!adapter_enabled("scrollbars") ?
+      "GNOSIS_BRAVE_STOCK_SCROLLBARS_EXECUTABLE" : "GNOSIS_BRAVE_EXECUTABLE");
+    if (!executable) executable = g_getenv("GNOSIS_BRAVE_EXECUTABLE");
+    std::vector<std::string> args{executable ? executable : "brave",
       "--user-data-dir=" + profile, "--app=" + page->state_->bootstrap, "--class=" + window_class,
       composited() ? "--ozone-platform=wayland" : "--ozone-platform=x11", "--no-first-run", "--no-default-browser-check", "--disable-background-mode",
       // Brave disables the real File System Access pickers unless its base
@@ -431,23 +499,21 @@ public:
       // CustomScrollbar's class-local overlay patch also needs the native
       // overlay theme so visibility, hit testing and fade timers agree.
       std::string("--enable-features=FileSystemAccessAPI,BraveWebBluetoothAPI,AcceleratedVideoDecodeLinuxGL,AcceleratedVideoEncoder,OverlayScrollbar:mode/overlay") + (composited() ? ",WaylandExternalBeginFrameSource" : ""),
-      // Blink's overlay fade timer otherwise hides custom-scrollbar hit targets
-      // while the isolated state adapter is expanding them on hover.
-      "--disable-features=ScrollbarAnimations",
-      "--enable-blink-features=WebBluetooth",
+      "--enable-blink-features=WebBluetooth,MiddleClickAutoscroll",
       "--password-store=basic", "--window-size=1000,700", "--window-position=-16000,-16000"};
     if (!automation_mode) args.push_back("--disable-blink-features=AutomationControlled");
     // Consume the nested compositor's actual frame callbacks with upstream
     // in-flight backpressure. Uncapped rendering is only a diagnostic override.
-    if (composited() && g_strcmp0(g_getenv("JUPITER_UNCAP_FRAMES"), "1") == 0)
+    if (composited() && g_strcmp0(g_getenv("GNOSIS_UNCAP_FRAMES"), "1") == 0)
       args.push_back("--disable-frame-rate-limit");
     auto* launcher = g_subprocess_launcher_new(G_SUBPROCESS_FLAGS_NONE);
+    g_subprocess_launcher_setenv(launcher, "GNOSIS_DISABLED_ADAPTERS", disabled_adapters().c_str(), true);
     // Brave deliberately searches native hosts under its default config path,
-    // even with --user-data-dir. Keep that path inside this Jupiter profile.
+    // even with --user-data-dir. Keep that path inside this Gnosis profile.
     // The KeePassXC host launcher restores the original desktop environment.
     g_subprocess_launcher_setenv(launcher, "XDG_CONFIG_HOME", (profile + "/native-config").c_str(), true);
     if (composited()) {
-      g_subprocess_launcher_setenv(launcher, "WAYLAND_DISPLAY", jupiter_compositor_get_socket(compositor), true);
+      g_subprocess_launcher_setenv(launcher, "WAYLAND_DISPLAY", gnosis_compositor_get_socket(compositor), true);
       g_subprocess_launcher_unsetenv(launcher, "WAYLAND_SOCKET");
       g_subprocess_launcher_unsetenv(launcher, "DISPLAY");
     }
@@ -462,12 +528,12 @@ public:
       g_subprocess_launcher_take_fd(launcher, to_browser[0], 3);
       g_subprocess_launcher_take_fd(launcher, from_browser[1], 4);
       // Only the pinned packaged runtime has the native presentation adapter.
-      if (g_strcmp0(g_getenv("JUPITER_NATIVE_UI_BRIDGE"), "1") == 0) {
+      if (g_strcmp0(g_getenv("GNOSIS_NATIVE_UI_BRIDGE"), "1") == 0) {
         int sockets[2];
         if (!socketpair(AF_UNIX, SOCK_SEQPACKET | SOCK_CLOEXEC | SOCK_NONBLOCK, 0, sockets)) {
           native_fd = sockets[0];
           g_subprocess_launcher_take_fd(launcher, sockets[1], 5);
-          g_subprocess_launcher_setenv(launcher, "JUPITER_NATIVE_UI_FD", "5", true);
+          g_subprocess_launcher_setenv(launcher, "GNOSIS_NATIVE_UI_FD", "5", true);
           native_watch = g_unix_fd_add(native_fd, GIOCondition(G_IO_IN | G_IO_HUP | G_IO_ERR),
             +[](gint, GIOCondition condition, gpointer pointer) -> gboolean {
               auto* self = static_cast<Process*>(pointer);
@@ -483,7 +549,7 @@ public:
       args.push_back("--remote-debugging-pipe"); args.push_back("--enable-unsafe-extension-debugging");
       // Optional source-built Brave honors this switch. The default prebuilt
       // overlay suppresses the native zoom bubble at its presentation entry.
-      args.push_back("--jupiter-native-ui");
+      args.push_back("--gnosis-native-ui");
       launched = true;
     }
     std::vector<const char*> argv; for (auto& argument : args) argv.push_back(argument.c_str()); argv.push_back(nullptr);
@@ -521,12 +587,12 @@ public:
     command("Browser.getVersion", "{}", "", [this](JsonObject* result, const std::string& error) {
       if (!result) { g_warning("Brave startup: %s", error.c_str()); return; }
       product = text(result, "product"); ready = true;
-      command("Browser.setDownloadBehavior", "{\"behavior\":\"allowAndName\",\"downloadPath\":" + quote(download_directory) +
+      if (adapter_enabled("downloads")) command("Browser.setDownloadBehavior", "{\"behavior\":\"allowAndName\",\"downloadPath\":" + quote(download_directory) +
         ",\"eventsEnabled\":true}", "", [this](JsonObject*, const std::string& error) {
           if (!error.empty()) { fail_downloads(); g_warning("Could not connect Brave downloads: %s", error.c_str()); }
         });
       command("Target.setDiscoverTargets", "{\"discover\":true}", "");
-      command("Extensions.loadUnpacked", "{\"path\":" + quote(JUPITER_NATIVE_INTEGRATION_DIR) + "}", "", [this](JsonObject* result, const std::string& error) {
+      command("Extensions.loadUnpacked", "{\"path\":" + quote(GNOSIS_NATIVE_INTEGRATION_DIR) + "}", "", [this](JsonObject* result, const std::string& error) {
         if (!result) { integration_failed(error); return; }
         integration_id = text(result, "id");
         if (integration_id.empty()) { integration_failed("Native integration has no extension identity"); return; }
@@ -546,7 +612,20 @@ public:
   }
   void poll_integration() {
     if (closing || integration_ready) return;
-    command("Runtime.evaluate", "{\"expression\":\"Promise.resolve(globalThis.jupiterNativeReady).then(value=>value===true)\",\"awaitPromise\":true,\"returnByValue\":true}", integration_session,
+    if (integration_adapter.empty()) {
+      g_autofree char* path = g_build_filename(GNOSIS_NATIVE_INTEGRATION_DIR, "background.js", nullptr);
+      g_autofree char* source = nullptr; gsize length = 0;
+      if (!g_file_get_contents(path, &source, &length, nullptr) || length > 64 * 1024) {
+        integration_failed("The native integration adapter is missing"); return;
+      }
+      // An existing profile can retain a worker from before the namespace
+      // upgrade. Install only our packaged adapter into this verified worker.
+      integration_adapter = "(() => { if (typeof globalThis.gnosisNativeReady === 'undefined' && "
+        "typeof globalThis.gnosisExtensions === 'undefined' && globalThis.chrome?.downloads?.setUiOptions && "
+        "globalThis.chrome?.management) { (() => {" + std::string(source, length) + "})(); } "
+        "return Promise.resolve(globalThis.gnosisNativeReady).then(value => value === true); })()";
+    }
+    command("Runtime.evaluate", "{\"expression\":" + quote(integration_adapter) + ",\"awaitPromise\":true,\"returnByValue\":true}", integration_session,
       [this](JsonObject* result, const std::string& error) {
         if (closing) return;
         auto* details = object(result, "exceptionDetails");
@@ -556,15 +635,22 @@ public:
         }
         auto* value = object(result, "result");
         if (value && json_object_get_boolean_member_with_default(value, "value", false)) {
-          integration_ready = true;
-          apply_preferences();
+          apply_webapp_extensions([weak = weak_from_this()] {
+            auto owner = weak.lock(); if (!owner || owner->closing) return;
+            owner->apply_debug_extensions([weak] {
+              auto self = weak.lock(); if (!self || self->closing) return;
+              self->integration_ready = true;
+              self->apply_preferences();
+              if (self->extensions_ready) self->load_keepassxc();
+              for (auto& [token, weak] : self->pages) if (auto page = weak.lock()) page->surface_ready();
+            });
+          });
           g_message("Brave download UI disabled: GTK owns download feedback");
           if (!private_profile) {
             extensions_deadline = g_get_monotonic_time() + 15 * G_USEC_PER_SEC;
             poll_extensions();
           }
           // Keep this private worker session alive for native browser services.
-          for (auto& [token, weak] : pages) if (auto page = weak.lock()) page->surface_ready();
           return;
         }
         if (g_get_monotonic_time() >= integration_deadline) { integration_failed("Native integration worker did not become ready"); return; }
@@ -576,8 +662,25 @@ public:
         }, new std::weak_ptr<Process>(weak_from_this()), +[](gpointer data) { delete static_cast<std::weak_ptr<Process>*>(data); });
       });
   }
+  void apply_debug_extensions(std::function<void()> done) {
+    const bool keepass_override = !private_profile && adapter_overridden("keepassxc");
+    if (!keepass_override && adapter_enabled("downloads")) { done(); return; }
+    std::string expression = "(async()=>{";
+    if (!adapter_enabled("downloads")) expression += "await chrome.downloads.setUiOptions({enabled:true});";
+    if (keepass_override) expression += "const item=(await chrome.management.getAll()).find(x=>x.id==='giohadoodmdcadnkcpdmhmmdnaidnckm');if(item&&item.enabled!==" +
+      (adapter_enabled("keepassxc") && webapp_keepassxc ? std::string("true") : std::string("false")) + ")await chrome.management.setEnabled(item.id," +
+      (adapter_enabled("keepassxc") && webapp_keepassxc ? "true" : "false") + ");";
+    expression += "return true})()";
+    command("Runtime.evaluate", "{\"expression\":" + quote(expression) + ",\"awaitPromise\":true,\"returnByValue\":true}", integration_session,
+      [done = std::move(done)](JsonObject* result, const std::string& error) {
+        if (!result || !error.empty() || object(result,"exceptionDetails")) g_warning("Could not apply browser debugging overrides: %s",error.c_str());
+        done();
+      });
+  }
   void preferences_done() {
     preferences_busy = false;
+    if (std::exchange(debug_startup_pending, false))
+      for (auto& [token, weak] : pages) if (auto page = weak.lock()) page->surface_ready();
     if (std::exchange(preferences_again, false)) apply_preferences();
   }
   void disable_brave_adblock(unsigned attempts = 0) {
@@ -619,21 +722,21 @@ public:
     if (closing || !integration_ready) return;
     if (preferences_busy) { preferences_again = true; return; }
     preferences_busy = true;
-    g_autofree char* path = g_build_filename(JUPITER_NATIVE_INTEGRATION_DIR, "settings.js", nullptr);
+    g_autofree char* path = g_build_filename(GNOSIS_NATIVE_INTEGRATION_DIR, "settings.js", nullptr);
     g_autofree char* source = nullptr; gsize size = 0;
     if (!g_file_get_contents(path, &source, &size, nullptr) || size > 64 * 1024) { preferences_done(); return; }
     auto parser = json_parser_new(); json_parser_load_from_data(parser, native_preferences.c_str(), -1, nullptr);
     auto* prefs = json_parser_get_root(parser);
-    bool blocking = prefs && JSON_NODE_HOLDS_OBJECT(prefs) && json_object_get_boolean_member_with_default(json_node_get_object(prefs), "adblock", true);
+    bool blocking = webapp_ublock && adapter_enabled("ublock") && prefs && JSON_NODE_HOLDS_OBJECT(prefs) && json_object_get_boolean_member_with_default(json_node_get_object(prefs), "adblock", true);
     g_object_unref(parser);
-    const auto expression = std::string(source, size) + ";jupiterBrowserSettings.apply(" + native_preferences + ").then(()=>jupiterBrowserSettings.adblock(" + (blocking ? "true" : "false") + ")).then(()=>chrome.management.getAll())";
+    const auto expression = std::string(source, size) + (adapter_enabled("browser-preferences") ? ";gnosisBrowserSettings.apply(" + native_preferences + ")" : ";Promise.resolve()") + ".then(()=>gnosisBrowserSettings.adblock(" + (blocking ? "true" : "false") + ")).then(()=>chrome.management.getAll())";
     command("Runtime.evaluate", "{\"expression\":" + quote(expression) + ",\"awaitPromise\":true,\"returnByValue\":true}", integration_session,
       [this, blocking](JsonObject* result, const std::string& error) {
         if (!error.empty() || object(result, "exceptionDetails")) {
           g_warning("Brave preferences could not be applied: %s %s", error.c_str(), text(object(object(result, "exceptionDetails"), "exception"), "description"));
           preferences_done(); return;
         }
-        auto finish = [this] { if (!shields_configured) disable_brave_adblock(); else preferences_done(); };
+        auto finish = [this] { if (!shields_configured && adapter_enabled("browser-preferences")) disable_brave_adblock(); else preferences_done(); };
         auto* rows = object(result, "result");
         auto* value = rows ? json_object_get_member(rows, "value") : nullptr;
         if (!value || !JSON_NODE_HOLDS_ARRAY(value)) { preferences_done(); return; }
@@ -642,7 +745,7 @@ public:
   }
   void poll_extensions() {
     if (closing || private_profile || extensions_ready) return;
-    command("Runtime.evaluate", "{\"expression\":\"typeof globalThis.jupiterExtensions?.inventory === 'function'\",\"returnByValue\":true}", integration_session,
+    command("Runtime.evaluate", "{\"expression\":\"typeof globalThis.gnosisExtensions?.inventory === 'function'\",\"returnByValue\":true}", integration_session,
       [this](JsonObject* result, const std::string& error) {
         if (closing) return;
         auto* remote = object(result, "result");
@@ -650,7 +753,7 @@ public:
           extensions_ready = true;
           g_message("Brave native extension manager ready");
           if (extensions_changed) extensions_changed();
-          load_keepassxc();
+          if (integration_ready) load_keepassxc();
           return;
         }
         if (g_get_monotonic_time() >= extensions_deadline) {
@@ -665,7 +768,7 @@ public:
       });
   }
   void load_keepassxc() {
-    if (private_profile || !*JUPITER_KEEPASSXC_DIR) return;
+    if (private_profile || !webapp_keepassxc || !adapter_enabled("keepassxc") || !*GNOSIS_KEEPASSXC_DIR) return;
     extension_operation("inventory", "", [this](JsonObject* result, const std::string& error) {
       if (closing || !error.empty()) return;
       auto* value = object(result, "result");
@@ -677,7 +780,7 @@ public:
         if (std::string(text(item, "id")) == "giohadoodmdcadnkcpdmhmmdnaidnckm" &&
             !json_object_get_boolean_member_with_default(item, "enabled", false)) return;
       }
-      command("Extensions.loadUnpacked", "{\"path\":" + quote(JUPITER_KEEPASSXC_DIR) + "}", "",
+      command("Extensions.loadUnpacked", "{\"path\":" + quote(GNOSIS_KEEPASSXC_DIR) + "}", "",
         [this](JsonObject* result, const std::string& error) {
           if (!result || std::string(text(result, "id")) != "giohadoodmdcadnkcpdmhmmdnaidnckm")
             g_warning("Could not load bundled KeePassXC-Browser: %s", error.c_str());
@@ -703,24 +806,32 @@ public:
             keepassxc_session = text(result, "sessionId");
             if (keepassxc_session.empty()) { g_warning("KeePassXC service: %s", error.c_str()); return; }
             const auto candidate = keepassxc_session;
+            command("Runtime.enable", "{}", candidate);
+            command("Runtime.addBinding", "{\"name\":\"__gnosisPasskeyProvider\"}", candidate);
             command("Runtime.runIfWaitingForDebugger", "{}", candidate);
             // An existing profile can keep an older worker script after a
             // resource-only unpacked-extension update. Install only our trusted
             // adapter into this verified worker; do not reset extension storage
             // or worker caches belonging to other extensions/websites.
-            g_autofree char* adapter_path = g_build_filename(JUPITER_KEEPASSXC_DIR, "background", "jupiter.js", nullptr);
+            g_autofree char* adapter_path = g_build_filename(GNOSIS_KEEPASSXC_DIR, "background", "gnosis.js", nullptr);
             g_autofree char* adapter = nullptr; gsize length = 0;
             if (!g_file_get_contents(adapter_path, &adapter, &length, nullptr) || length > 64 * 1024) {
               keepassxc_session.clear(); g_warning("KeePassXC adapter is missing"); return;
             }
             const std::string expression = "(() => { if (typeof page !== 'object' || !page.settings || typeof keepass !== 'object') return false; " +
-              std::string(adapter, length) + "; return typeof globalThis.jupiterKeePassXC?.invoke === 'function'; })()";
+              std::string(adapter, length) + "; return typeof globalThis.gnosisKeePassXC?.invoke === 'function'; })()";
             command("Runtime.evaluate", "{\"expression\":" + quote(expression) + ",\"returnByValue\":true}", candidate,
               [this, candidate](JsonObject* result, const std::string&) {
                 if (closing) return;
                 auto* remote = object(result, "result");
                 if (remote && json_object_get_boolean_member_with_default(remote, "value", false)) {
-                  keepassxc_ready = true; g_message("Native KeePassXC service ready"); return;
+                  keepassxc_ready = true; g_message("Native KeePassXC service ready");
+                  // The first document can finish before an unpacked extension
+                  // loads. Recover its declared scripts once, as manual redetection does.
+                  for (auto& [token, weak] : pages) if (auto page = weak.lock(); page && !page->is_closed() &&
+                      page->state_->native_tab >= 0 && (page->uri.starts_with("https://") || page->uri.starts_with("http://")))
+                    keepassxc_call(page->state_->native_tab, "redetect", "null", [](JsonObject*, const std::string&) {});
+                  return;
                 }
                 command("Target.detachFromTarget", "{\"sessionId\":" + quote(candidate) + "}", "");
                 keepassxc_session.clear();
@@ -748,7 +859,7 @@ public:
   }
   void keepassxc_call(int tab, const std::string& operation, const std::string& argument, Reply reply) {
     if (private_profile || !keepassxc_ready || keepassxc_session.empty()) { reply(nullptr, _("KeePassXC is starting or unavailable. Try again shortly.")); return; }
-    const std::string expression = "jupiterKeePassXC.invoke(" + std::to_string(tab) + "," + quote(operation) + "," + argument + ")";
+    const std::string expression = "gnosisKeePassXC.invoke(" + std::to_string(tab) + "," + quote(operation) + "," + argument + ")";
     command("Runtime.evaluate", "{\"expression\":" + quote(expression) + ",\"awaitPromise\":true,\"returnByValue\":true,\"userGesture\":true}", keepassxc_session,
       [reply = std::move(reply)](JsonObject* result, const std::string& error) {
         auto* exception = object(result, "exceptionDetails");
@@ -760,7 +871,7 @@ public:
       });
   }
   void extension_operation(const std::string& method, const std::string& arguments, Reply reply) {
-    command("Runtime.evaluate", "{\"expression\":" + quote("jupiterExtensions." + method + "(" + arguments + ")") +
+    command("Runtime.evaluate", "{\"expression\":" + quote("gnosisExtensions." + method + "(" + arguments + ")") +
       ",\"awaitPromise\":true,\"returnByValue\":true,\"userGesture\":true}", integration_session,
       [reply = std::move(reply)](JsonObject* result, const std::string& error) {
         auto* exception = object(result, "exceptionDetails");
@@ -781,8 +892,8 @@ public:
           integration_session = text(result, "sessionId");
           integration_deadline = g_get_monotonic_time() + 5 * G_USEC_PER_SEC;
           command("Runtime.enable", "{}", integration_session);
-          command("Runtime.addBinding", "{\"name\":\"__jupiterZoomChanged\"}",integration_session);
-          command("Runtime.addBinding", "{\"name\":\"__jupiterExtensionsChanged\"}", integration_session);
+          command("Runtime.addBinding", "{\"name\":\"__gnosisZoomChanged\"}",integration_session);
+          command("Runtime.addBinding", "{\"name\":\"__gnosisExtensionsChanged\"}", integration_session);
           command("Runtime.runIfWaitingForDebugger", "{}", integration_session);
           poll_integration();
         });
@@ -791,7 +902,7 @@ public:
     const std::string uri = text(info, "url");
     for (auto& [token, weak] : pages) if (auto page = weak.lock()) {
       if (!page->target.empty() || (page->state_->bootstrap != uri &&
-          std::string(text(info, "title")) != "JupiterTab-" + token)) continue;
+          std::string(text(info, "title")) != "GnosisTab-" + token)) continue;
       page->target = text(info, "targetId"); targets[page->target] = page;
       g_message("Brave target connected: token=%s target=%s", token.c_str(), page->target.c_str());
       auto args = "{\"targetId\":" + quote(page->target) + ",\"flatten\":true}";
@@ -868,12 +979,36 @@ public:
               progress(static_cast<guint64>(std::max(0., json_object_get_double_member_with_default(params, "receivedBytes", 0))),
                        static_cast<guint64>(std::max(0., json_object_get_double_member_with_default(params, "totalBytes", 0))), state);
             }
+          } else if (method == "Runtime.bindingCalled" && !private_profile && keepassxc_ready &&
+                     std::string(text(root,"sessionId")) == keepassxc_session &&
+                     std::string(text(params,"name")) == "__gnosisPasskeyProvider") {
+            const std::string payload = text(params,"payload");
+            g_autoptr(JsonParser) event = json_parser_new();
+            if (payload.size() <= 8192 && json_parser_load_from_data(event,payload.data(),payload.size(),nullptr) &&
+                JSON_NODE_HOLDS_OBJECT(json_parser_get_root(event))) {
+              auto* request = json_node_get_object(json_parser_get_root(event));
+              const auto id = std::string(text(request,"id"));
+              if (id.size() != 36 || id.find_first_not_of("0123456789abcdef-") != std::string::npos) continue;
+              const int tab = json_object_get_int_member_with_default(request,"tabId",-1);
+              if (json_object_get_boolean_member_with_default(request,"closed",false)) {
+                for (auto& [token, weak] : pages) if (auto page = weak.lock(); page &&
+                    page->state_->native_tab == tab && page->state_->passkey_provider_id == id)
+                  page->dismiss_passkey_provider();
+                continue;
+              }
+              bool shown = false;
+              for (auto& [token, weak] : pages) if (auto page = weak.lock(); page && !page->is_closed() &&
+                  page->state_->mapped && page->state_->native_tab == tab && page->uri == text(request,"url")) {
+                page->show_passkey_provider(request); shown = true; break;
+              }
+              if (!shown) command("Runtime.evaluate", "{\"expression\":" + quote("gnosisKeePassXC.resolvePasskey(" + quote(id) + ", 'cancel')") + "}", keepassxc_session);
+            }
           } else if (method == "Runtime.bindingCalled" && !private_profile && extensions_ready &&
                      std::string(text(root,"sessionId")) == integration_session &&
-                     std::string(text(params,"name")) == "__jupiterExtensionsChanged") {
+                     std::string(text(params,"name")) == "__gnosisExtensionsChanged") {
             if (extensions_changed) extensions_changed();
           } else if (method == "Runtime.bindingCalled" && std::string(text(root,"sessionId")) == integration_session &&
-                     std::string(text(params,"name")) == "__jupiterZoomChanged") {
+                     std::string(text(params,"name")) == "__gnosisZoomChanged") {
             const std::string payload = text(params,"payload");
             g_autoptr(JsonParser) event = json_parser_new();
             if (payload.size() <= 1024 && json_parser_load_from_data(event,payload.data(),payload.size(),nullptr) &&
@@ -891,7 +1026,7 @@ public:
                 page->uri = page->canonical_uri(text(info, "url"));
                 if (page->state_->document_title_uri != page->uri) {
                   const std::string candidate = text(info, "title");
-                  page->title = candidate != text(info, "url") && !candidate.starts_with("JupiterTab-") ? candidate : "";
+                  page->title = candidate != text(info, "url") && !candidate.starts_with("GnosisTab-") ? candidate : "";
                 }
                 if (page->changed) page->changed();
               }
@@ -980,7 +1115,7 @@ public:
       if (reply.timeout) g_source_remove(reply.timeout); reply.callback(nullptr, _("The translation service stopped"));
     }
     for (auto& [token, weak] : pages) if (auto page = weak.lock()) {
-      page->dismiss_install_dialog(false); page->dismiss_authenticator(false);
+      page->dismiss_install_dialog(false); page->dismiss_authenticator(false); page->dismiss_passkey_provider();
     }
   }
   bool dispatch_authenticator(JsonObject* message, gint64 id) {
@@ -1204,7 +1339,7 @@ void clear_website_data(bool private_profile, const std::string& types, Reply re
   auto found = processes.find(private_profile);
   if (found == processes.end() || !found->second->integration_ready) { reply(nullptr, "The Brave session is not ready"); return; }
   auto process = found->second;
-  process->command("Runtime.evaluate", "{\"expression\":" + quote("jupiterBrowserSettings.clearData(" + types + ")") +
+  process->command("Runtime.evaluate", "{\"expression\":" + quote("gnosisBrowserSettings.clearData(" + types + ")") +
     ",\"awaitPromise\":true,\"returnByValue\":true}", process->integration_session,
     [reply = std::move(reply)](JsonObject* result, const std::string& error) {
       auto* exception = object(result, "exceptionDetails");
@@ -1247,19 +1382,19 @@ Page::Page(GtkWidget* widget, bool ephemeral) : state_(std::make_unique<State>(w
   auto* keys = gtk_event_controller_key_new();
   gtk_event_controller_set_propagation_phase(keys, GTK_PHASE_BUBBLE);
   g_signal_connect(keys, "key-pressed", G_CALLBACK(+[](GtkEventControllerKey* controller, guint value, guint, GdkModifierType modifiers, Page* self) -> gboolean {
-    if (self->state_->vim_context) if (const char* command = jupiter_compositor_vim_key(value, modifiers)) { self->vim_key(command); return TRUE; }
-    if (jupiter_compositor_is_host_shortcut(value, modifiers)) return FALSE;
+    if (self->state_->vim_context) if (const char* command = gnosis_compositor_vim_key(value, modifiers)) { self->vim_key(command); return TRUE; }
+    if (gnosis_compositor_is_host_shortcut(value, modifiers)) return FALSE;
     self->send_key(gtk_event_controller_get_current_event(GTK_EVENT_CONTROLLER(controller)));
     // Let GTK's window shortcuts continue through their normal propagation path.
     return !(modifiers & (GDK_CONTROL_MASK | GDK_ALT_MASK | GDK_SUPER_MASK));
   }), this);
   g_signal_connect(keys, "key-released", G_CALLBACK(+[](GtkEventControllerKey* controller, guint value, guint, GdkModifierType modifiers, Page* self) {
-    if (self->state_->vim_context && jupiter_compositor_vim_key(value, modifiers)) return;
-    if (!jupiter_compositor_is_host_shortcut(value, modifiers))
+    if (self->state_->vim_context && gnosis_compositor_vim_key(value, modifiers)) return;
+    if (!gnosis_compositor_is_host_shortcut(value, modifiers))
       self->send_key(gtk_event_controller_get_current_event(GTK_EVENT_CONTROLLER(controller)));
   }), this);
   gtk_widget_add_controller(widget, keys);
-  g_object_set_data(G_OBJECT(keys), "jupiter-page", this);
+  g_object_set_data(G_OBJECT(keys), "gnosis-page", this);
   state_->keys = keys;
 }
 std::shared_ptr<Page> Page::create(GtkWidget* widget, bool ephemeral) { return std::shared_ptr<Page>(new Page(widget, ephemeral)); }
@@ -1283,6 +1418,14 @@ void Page::start() {
 }
 void Page::adopt_surface(GtkWidget* widget) {
   state_->surface = widget;
+  auto* focus = gtk_event_controller_focus_new();
+  g_signal_connect(focus, "enter", G_CALLBACK(+[](GtkEventControllerFocus*, gpointer data) {
+    static_cast<Page*>(data)->update_portal_parent();
+  }), this);
+  gtk_widget_add_controller(widget, focus);
+  g_signal_connect(widget, "map", G_CALLBACK(+[](GtkWidget*, gpointer data) {
+    static_cast<Page*>(data)->update_portal_parent();
+  }), this);
   g_signal_connect(widget, "vim-command", G_CALLBACK(+[](GtkWidget*, const char* command, gpointer data) { static_cast<Page*>(data)->vim_key(command); }), this);
   g_signal_connect(widget, "surface-ready", G_CALLBACK(+[](GtkWidget*, gpointer data) { static_cast<Page*>(data)->surface_ready(); }), this);
   g_signal_connect(widget, "fullscreen-changed", G_CALLBACK(+[](GtkWidget*, gboolean value, gpointer data) {
@@ -1317,7 +1460,7 @@ void Page::adopt_surface(GtkWidget* widget) {
         auto* done = new Decoded([owner, cancel](GdkPixbuf* pixbuf) {
           if (pixbuf && !g_cancellable_is_cancelled(cancel.get())) {
             auto* texture = gdk_texture_new_for_pixbuf(pixbuf);
-            jupiter_compositor_drag_set_image(owner.get(), texture); g_object_unref(texture);
+            gnosis_compositor_drag_set_image(owner.get(), texture); g_object_unref(texture);
           }
         });
         gdk_pixbuf_new_from_stream_at_scale_async(input, 320, 320, true, cancel.get(), +[](GObject*, GAsyncResult* result, gpointer data) {
@@ -1334,8 +1477,8 @@ void Page::adopt_surface(GtkWidget* widget) {
 }
 void Page::surface_ready() {
   auto& s = *state_;
-  if (s.disposed || s.attached || !s.protocol_ready || !s.process->integration_ready || session.empty() || !s.surface ||
-      !jupiter_compositor_view_has_surface(JUPITER_COMPOSITOR_VIEW(s.surface))) return;
+  if (s.disposed || s.attached || !s.protocol_ready || !s.process->integration_ready || s.process->debug_startup_pending || session.empty() || !s.surface ||
+      !gnosis_compositor_view_has_surface(GNOSIS_COMPOSITOR_VIEW(s.surface))) return;
   s.attached = true; navigate(s.requested);
   g_message("Brave composited tab ready: target=%s", target.c_str());
 }
@@ -1352,7 +1495,10 @@ void Page::command_for_frame(const std::string& frame,const std::string& method,
     if(reply)reply(nullptr,"The frame no longer belongs to this tab"); return;
   }
   auto source=s.process->frame_sources.find(frame);
-  s.process->command(method,params,source==s.process->frame_sources.end()?session:source->second,std::move(reply));
+  const auto& owner_session = source == s.process->frame_sources.end() ? session : source->second;
+  if (method == "CSS.createStyleSheet" || method == "CSS.setStyleSheetText")
+    s.process->style_command(method, params, owner_session, std::move(reply));
+  else s.process->command(method, params, owner_session, std::move(reply));
 }
 namespace {
 std::string webpage_theme(GtkWidget* widget) {
@@ -1364,18 +1510,9 @@ std::string webpage_theme(GtkWidget* widget) {
   gtk_style_context_lookup_color(context, "accent_fg_color", &foreground);
   g_autofree char* bg = gdk_rgba_to_string(&background);
   g_autofree char* fg = gdk_rgba_to_string(&foreground);
-  const bool contrast = adw_style_manager_get_high_contrast(manager);
-  GdkRGBA control_fg, outline{1,1,1,1};
+  GdkRGBA control_fg;
   gtk_widget_get_color(widget, &control_fg);
   gtk_style_context_lookup_color(context, "view_fg_color", &control_fg);
-  gtk_style_context_lookup_color(context, "scrollbar_outline_color", &outline);
-  const auto fg_alpha = std::to_string(control_fg.alpha), outline_alpha = std::to_string(outline.alpha);
-  control_fg.alpha = outline.alpha = 1;
-  g_autofree char* native_fg = gdk_rgba_to_string(&control_fg);
-  g_autofree char* native_outline = gdk_rgba_to_string(&outline);
-  // Preserve the existing white 3px collapsed indicator and its 7px inset.
-  // Expanded libadwaita thumb/track: 8px with 8px margins and a 1px outline.
-  // Preserve libadwaita's alpha: these colors composite over the web content.
   GdkRGBA popover_bg = adw_style_manager_get_dark(manager) ? GdkRGBA{.212f,.212f,.227f,1} : GdkRGBA{1,1,1,1};
   GdkRGBA popover_fg = control_fg, view_bg = popover_bg;
   gtk_style_context_lookup_color(context, "popover_bg_color", &popover_bg);
@@ -1392,73 +1529,11 @@ std::string webpage_theme(GtkWidget* widget) {
   double font_size = pango_font_description_get_size(font) / double(PANGO_SCALE);
   if (!pango_font_description_get_size_is_absolute(font)) font_size *= 96.0 / 72.0;
   pango_font_description_free(font);
-  const std::string overlay = ":root{--jupiter-kpxc-bg:" + std::string(pop_bg) + "!important;--jupiter-kpxc-fg:" + pop_fg +
-    "!important;--jupiter-kpxc-view-bg:" + view + "!important;--jupiter-kpxc-accent:" + bg +
-    "!important;--jupiter-kpxc-accent-fg:" + fg + "!important;--jupiter-kpxc-font:" + font_family +
-    "!important;--jupiter-kpxc-font-size:" + std::to_string(font_size > 0 ? font_size : 14.667) + "px!important;}";
-  return overlay + "*::selection{background-color:" + std::string(bg) + "!important;color:" + fg + R"CSS(!important;}
-@property --jupiter-scrollbar-expansion { syntax:"<number>"; inherits:false; initial-value:0; }
-@property --jupiter-scrollbar-thumb-hover { syntax:"<number>"; inherits:false; initial-value:0; }
-@property --jupiter-scrollbar-pressed { syntax:"<number>"; inherits:false; initial-value:0; }
-@property --jupiter-scrollbar-expansion-horizontal { syntax:"<number>"; inherits:false; initial-value:0; }
-@property --jupiter-scrollbar-thumb-hover-horizontal { syntax:"<number>"; inherits:false; initial-value:0; }
-@property --jupiter-scrollbar-pressed-horizontal { syntax:"<number>"; inherits:false; initial-value:0; }
-@media screen and (forced-colors: none) {
-  :is(:root,*)::-webkit-scrollbar, :is(:root,*)::-webkit-scrollbar-track, :is(:root,*)::-webkit-scrollbar-thumb {
-    --jupiter-scrollbar-expansion:inherit!important;
-    --jupiter-scrollbar-thumb-hover:inherit!important;
-    --jupiter-scrollbar-pressed:inherit!important;
-    --jupiter-scrollbar-fg:)CSS" + native_fg + ";--jupiter-scrollbar-outline:" + native_outline +
-    ";--jupiter-scrollbar-fg-alpha:" + fg_alpha + ";--jupiter-scrollbar-outline-alpha:" + outline_alpha + R"CSS(;
-
-  }
-  :is(:root,*)::-webkit-scrollbar:horizontal, :is(:root,*)::-webkit-scrollbar-track:horizontal, :is(:root,*)::-webkit-scrollbar-thumb:horizontal {
-    --jupiter-scrollbar-expansion-horizontal:inherit!important;
-    --jupiter-scrollbar-thumb-hover-horizontal:inherit!important;
-    --jupiter-scrollbar-pressed-horizontal:inherit!important;
-    --jupiter-scrollbar-expansion:var(--jupiter-scrollbar-expansion-horizontal)!important;
-    --jupiter-scrollbar-thumb-hover:var(--jupiter-scrollbar-thumb-hover-horizontal)!important;
-    --jupiter-scrollbar-pressed:var(--jupiter-scrollbar-pressed-horizontal)!important;
-  }
-  :is(:root,*)::-webkit-scrollbar { width:24px!important; height:24px!important; background:transparent!important; box-shadow:none!important; }
-  :is(:root,*)::-webkit-scrollbar-button { display:none!important; }
-  :is(:root,*)::-webkit-scrollbar-track {
-    margin:9px 0!important; border:0 solid transparent!important;
-    border-left-width:calc(14px - var(--jupiter-scrollbar-expansion) * 6px)!important;
-    border-right-width:calc(7px + var(--jupiter-scrollbar-expansion) * 1px)!important;
-    border-radius:calc(15.5px - var(--jupiter-scrollbar-expansion) * 3.5px) calc(8.5px + var(--jupiter-scrollbar-expansion) * 3.5px) calc(8.5px + var(--jupiter-scrollbar-expansion) * 3.5px) calc(15.5px - var(--jupiter-scrollbar-expansion) * 3.5px) / calc(1.5px + var(--jupiter-scrollbar-expansion) * 2.5px)!important; background-clip:padding-box!important; box-shadow:none!important;
-    background-image:none!important; background-color:color-mix(in srgb,var(--jupiter-scrollbar-fg) calc(var(--jupiter-scrollbar-fg-alpha) * var(--jupiter-scrollbar-expansion) * )CSS" + (contrast ? "25%" : "10%") + R"CSS(),transparent)!important;
-  }
-  :is(:root,*)::-webkit-scrollbar-track:horizontal {
-    margin:0 9px!important;
-    border-width:calc(14px - var(--jupiter-scrollbar-expansion) * 6px) 0 calc(7px + var(--jupiter-scrollbar-expansion) * 1px) 0!important;
-    border-radius:calc(1.5px + var(--jupiter-scrollbar-expansion) * 2.5px) / calc(15.5px - var(--jupiter-scrollbar-expansion) * 3.5px) calc(15.5px - var(--jupiter-scrollbar-expansion) * 3.5px) calc(8.5px + var(--jupiter-scrollbar-expansion) * 3.5px) calc(8.5px + var(--jupiter-scrollbar-expansion) * 3.5px)!important;
-  }
-  :is(:root,*)::-webkit-scrollbar-track-piece, :is(:root,*)::-webkit-scrollbar-corner {
-    background:transparent!important; border:0!important; box-shadow:none!important;
-  }
-  :is(:root,*)::-webkit-scrollbar-thumb {
-    --jupiter-scrollbar-left:calc(14px - var(--jupiter-scrollbar-expansion) * 7px);
-    --jupiter-scrollbar-right:7px;
-    --jupiter-scrollbar-radius:calc(1.5px + var(--jupiter-scrollbar-expansion) * 3.5px);
-    min-height:42px!important; min-width:42px!important;
-    border:0 solid transparent!important;
-    border-left-width:var(--jupiter-scrollbar-left)!important; border-right-width:var(--jupiter-scrollbar-right)!important;
-    border-radius:calc(15.5px - var(--jupiter-scrollbar-expansion) * 3.5px) calc(8.5px + var(--jupiter-scrollbar-expansion) * 3.5px) calc(8.5px + var(--jupiter-scrollbar-expansion) * 3.5px) calc(15.5px - var(--jupiter-scrollbar-expansion) * 3.5px) / var(--jupiter-scrollbar-radius)!important;
-    background-image:none!important; background-clip:padding-box!important;
-    --jupiter-scrollbar-thumb-color:color-mix(in srgb,var(--jupiter-scrollbar-fg) calc(( )CSS" + (contrast ? "40%" : "20%") +
-    " + var(--jupiter-scrollbar-thumb-hover) * 20% + var(--jupiter-scrollbar-pressed) * " + (contrast ? "40%" : "20%") + R"CSS() * var(--jupiter-scrollbar-fg-alpha)),transparent);
-    background-color:color-mix(in srgb,var(--jupiter-scrollbar-thumb-color) calc(var(--jupiter-scrollbar-expansion) * 100%),color-mix(in srgb,var(--jupiter-scrollbar-fg) calc(20% * var(--jupiter-scrollbar-fg-alpha)),transparent))!important;
-    box-shadow:inset 0 0 0 calc(var(--jupiter-scrollbar-expansion) * 1px) color-mix(in srgb,var(--jupiter-scrollbar-outline) calc(var(--jupiter-scrollbar-outline-alpha) * ( )CSS" + (contrast ? "60% + var(--jupiter-scrollbar-expansion) * 40%" : "35% + var(--jupiter-scrollbar-expansion) * 25%") + R"CSS()),transparent)!important;
-  }
-  :is(:root,*)::-webkit-scrollbar-thumb:horizontal {
-    border-width:var(--jupiter-scrollbar-left) 0 var(--jupiter-scrollbar-right) 0!important;
-    border-radius:var(--jupiter-scrollbar-radius) / calc(15.5px - var(--jupiter-scrollbar-expansion) * 3.5px) calc(15.5px - var(--jupiter-scrollbar-expansion) * 3.5px) calc(8.5px + var(--jupiter-scrollbar-expansion) * 3.5px) calc(8.5px + var(--jupiter-scrollbar-expansion) * 3.5px)!important;
-  }
-  :is(:root,*)::-webkit-scrollbar-thumb:disabled { opacity:0!important; }
-}
-
-)CSS";
+  const std::string overlay = ":root{--gnosis-kpxc-bg:" + std::string(pop_bg) + "!important;--gnosis-kpxc-fg:" + pop_fg +
+    "!important;--gnosis-kpxc-view-bg:" + view + "!important;--gnosis-kpxc-accent:" + bg +
+    "!important;--gnosis-kpxc-accent-fg:" + fg + "!important;--gnosis-kpxc-font:" + font_family +
+    "!important;--gnosis-kpxc-font-size:" + std::to_string(font_size > 0 ? font_size : 14.667) + "px!important;}";
+  return overlay + "*::selection{background-color:" + std::string(bg) + "!important;color:" + fg + "!important;}";
 }
 }
 void Page::theme_document(const std::string& frame, const std::string& loader) {
@@ -1484,15 +1559,15 @@ void Page::theme_document(const std::string& frame, const std::string& loader) {
       found->second.sheet = text(result, "styleSheetId");
       if (!found->second.sheet.empty()) page->command_for_frame(frame,"CSS.setStyleSheetText", "{\"styleSheetId\":" + quote(found->second.sheet) +
         ",\"text\":" + quote(webpage_theme(page->widget()) +
-          (page->state_->extension_popup && page->uri.starts_with("chrome-extension://") ? popup_layout : "") +
-          ((page->uri.starts_with("https://") || page->uri.starts_with("http://") || page->uri.starts_with("file://")) ? user_stylesheet : "")) + "}");
+          (adapter_enabled("popup-sizing") && page->state_->extension_popup && page->uri.starts_with("chrome-extension://") ? popup_layout : "") +
+          ((page->uri.starts_with("https://") || page->uri.starts_with("http://") || page->uri.starts_with("file://")) ? (adapter_enabled("user-content") ? user_stylesheet : "") : "")) + "}");
     });
 }
 void Page::update_web_theme() {
   auto& s = *state_;
   if (s.disposed || !s.theme_ready) return;
-  const auto css = webpage_theme(s.content) + (s.extension_popup && uri.starts_with("chrome-extension://") ? popup_layout : "") +
-    ((uri.starts_with("https://") || uri.starts_with("http://") || uri.starts_with("file://")) ? user_stylesheet : "");
+  const auto css = webpage_theme(s.content) + (adapter_enabled("popup-sizing") && s.extension_popup && uri.starts_with("chrome-extension://") ? popup_layout : "") +
+    ((uri.starts_with("https://") || uri.starts_with("http://") || uri.starts_with("file://")) ? (adapter_enabled("user-content") ? user_stylesheet : "") : "");
   for (const auto& [frame, style] : s.theme_frames) {
     if (style.sheet.empty()) theme_document(frame, style.loader);
     else command_for_frame(frame,"CSS.setStyleSheetText", "{\"styleSheetId\":" + quote(style.sheet) + ",\"text\":" + quote(css) + "}");
@@ -1504,46 +1579,35 @@ void Page::attach() {
     if (send(state_->process->native_fd, message.data(), message.size(), MSG_NOSIGNAL | MSG_DONTWAIT) != static_cast<ssize_t>(message.size()))
       state_->process->close_native_ui();
   }
+  update_portal_parent();
   update_user_content();
   state_->process->attach_frames(session);
   command("Page.enable"); command("Runtime.enable"); command("Network.enable"); command("Security.enable");
   state_->protocol_ready = false;
-  state_->theme_ready = false; state_->theme_frames.clear(); ++state_->theme_generation;
-  command("DOM.enable");
-  const auto theme_session = session;
-  command("CSS.enable", "{}", [weak = weak_from_this(), theme_session](JsonObject*, const std::string& error) {
-    if (auto page = weak.lock(); page && !page->is_closed() && page->session == theme_session && error.empty()) {
-      page->state_->theme_ready = true; page->update_web_theme();
-    }
-  });
-  g_autofree char* scrollbars_path = g_build_filename(JUPITER_NATIVE_INTEGRATION_DIR, "scrollbars.js", nullptr);
-  g_autofree char* scrollbars_script = nullptr;
-  if (g_file_get_contents(scrollbars_path, &scrollbars_script, nullptr, nullptr))
-    command("Page.addScriptToEvaluateOnNewDocument", "{\"worldName\":\"JupiterScrollbars\",\"source\":" + quote(scrollbars_script) + ",\"runImmediately\":true}");
-  else g_warning("The scrollbar state adapter could not be loaded");
-  command("Runtime.addBinding", "{\"name\":\"__jupiterContextMenu\",\"executionContextName\":\"JupiterContextMenu\"}");
-  g_autofree char* menu_path = g_build_filename(JUPITER_NATIVE_INTEGRATION_DIR, "context-menu.js", nullptr);
+  state_->theme_ready = true; state_->theme_frames.clear(); ++state_->theme_generation;
+  command("Runtime.addBinding", "{\"name\":\"__gnosisContextMenu\",\"executionContextName\":\"GnosisContextMenu\"}");
+  g_autofree char* menu_path = g_build_filename(GNOSIS_NATIVE_INTEGRATION_DIR, "context-menu.js", nullptr);
   g_autofree char* menu_script = nullptr;
-  if (g_file_get_contents(menu_path, &menu_script, nullptr, nullptr))
-    command("Page.addScriptToEvaluateOnNewDocument", "{\"worldName\":\"JupiterContextMenu\",\"source\":" + quote(menu_script) + "}");
-  else g_warning("The native context-menu adapter could not be loaded");
-  command("Runtime.addBinding", "{\"name\":\"__jupiterDocumentMetadata\",\"executionContextName\":\"JupiterDocumentMetadata\"}");
-  command("Page.addScriptToEvaluateOnNewDocument", "{\"worldName\":\"JupiterDocumentMetadata\",\"source\":" + quote(document_adapter_source()) + "}");
-  if (state_->extension_popup) {
-    g_autofree char* popup_path = g_build_filename(JUPITER_NATIVE_INTEGRATION_DIR, "popup-size.js", nullptr);
+  if (adapter_enabled("context-menu") && g_file_get_contents(menu_path, &menu_script, nullptr, nullptr))
+    command("Page.addScriptToEvaluateOnNewDocument", "{\"worldName\":\"GnosisContextMenu\",\"source\":" + quote(menu_script) + "}");
+  else if (adapter_enabled("context-menu")) g_warning("The native context-menu adapter could not be loaded");
+  command("Runtime.addBinding", "{\"name\":\"__gnosisDocumentMetadata\",\"executionContextName\":\"GnosisDocumentMetadata\"}");
+  if (adapter_enabled("document-metadata")) command("Page.addScriptToEvaluateOnNewDocument", "{\"worldName\":\"GnosisDocumentMetadata\",\"source\":" + quote(document_adapter_source()) + "}");
+  if (state_->extension_popup && adapter_enabled("popup-sizing")) {
+    g_autofree char* popup_path = g_build_filename(GNOSIS_NATIVE_INTEGRATION_DIR, "popup-size.js", nullptr);
     g_autofree char* popup_script = nullptr;
     if (g_file_get_contents(popup_path, &popup_script, nullptr, nullptr))
-      command("Page.addScriptToEvaluateOnNewDocument", "{\"worldName\":\"JupiterDocumentMetadata\",\"source\":" + quote(popup_script) + "}");
+      command("Page.addScriptToEvaluateOnNewDocument", "{\"worldName\":\"GnosisDocumentMetadata\",\"source\":" + quote(popup_script) + "}");
   }
-  command("Runtime.addBinding", "{\"name\":\"__jupiterNativeMessage\"}");
-  const std::string script = "(()=>{const send=globalThis.__jupiterNativeMessage;delete globalThis.__jupiterNativeMessage;if(location.origin!==" + quote(state_->internal_origin) + R"JS(||window!==top)return;
+  command("Runtime.addBinding", "{\"name\":\"__gnosisNativeMessage\"}");
+  const std::string script = "(()=>{const send=globalThis.__gnosisNativeMessage;delete globalThis.__gnosisNativeMessage;if(location.origin!==" + quote(state_->internal_origin) + R"JS(||window!==top)return;
     const events=new EventTarget();
-    Object.defineProperty(globalThis,'Jupiter',{value:Object.freeze({
+    Object.defineProperty(globalThis,'Gnosis',{value:Object.freeze({
       postMessage:(name,payload)=>send(JSON.stringify({name,payload})),
       addEventListener:(...args)=>events.addEventListener(...args),
       removeEventListener:(...args)=>events.removeEventListener(...args)
     })});
-    Object.defineProperty(globalThis,'__jupiterDispatch',{value:(name,payload)=>events.dispatchEvent(new CustomEvent(name,{detail:payload}))});
+    Object.defineProperty(globalThis,'__gnosisDispatch',{value:(name,payload)=>events.dispatchEvent(new CustomEvent(name,{detail:payload}))});
   })())JS";
   command("Page.addScriptToEvaluateOnNewDocument", "{\"source\":" + quote(script) + "}");
   command("Fetch.enable", "{\"patterns\":[{\"urlPattern\":" + quote(state_->internal_origin + "/*") + ",\"requestStage\":\"Request\"}]}");
@@ -1646,7 +1710,38 @@ void Page::request_favicon() {
         });
     });
 }
+void Page::dismiss_http_retry() {
+  auto* dialog = std::exchange(state_->http_retry, nullptr);
+  if (!dialog) return;
+  g_signal_handlers_disconnect_by_data(dialog, this);
+  adw_dialog_force_close(dialog); g_object_unref(dialog);
+}
+void Page::offer_http_retry(const std::string& address) {
+  auto* root = gtk_widget_get_root(widget());
+  if (is_closed() || state_->http_retry || !state_->mapped || !GTK_IS_WINDOW(root) ||
+      !address.starts_with("https://") || !gnosis_uri_is_loopback(address.c_str())) return;
+  auto* dialog = adw_alert_dialog_new(_("Use HTTP for Local Site?"),
+    _("This local server does not appear to support HTTPS. Open it without encryption?"));
+  state_->http_retry = ADW_DIALOG(g_object_ref_sink(dialog));
+  adw_alert_dialog_add_responses(ADW_ALERT_DIALOG(dialog), "cancel", _("_Cancel"), "http", _("Use _HTTP"), nullptr);
+  adw_alert_dialog_set_default_response(ADW_ALERT_DIALOG(dialog), "http");
+  adw_alert_dialog_set_close_response(ADW_ALERT_DIALOG(dialog), "cancel");
+  struct Retry { std::weak_ptr<Page> page; std::string address; guint64 generation; };
+  adw_alert_dialog_choose(ADW_ALERT_DIALOG(dialog), GTK_WIDGET(root), nullptr,
+    +[](GObject* source, GAsyncResult* result, gpointer data) {
+      std::unique_ptr<Retry> retry(static_cast<Retry*>(data));
+      const char* response = adw_alert_dialog_choose_finish(ADW_ALERT_DIALOG(source), result);
+      auto page = retry->page.lock();
+      if (!page || page->state_->http_retry != ADW_DIALOG(source)) return;
+      page->state_->http_retry = nullptr;
+      g_object_unref(source);
+      if (!strcmp(response, "http") && !page->is_closed() && page->state_->mapped &&
+          page->state_->navigation_generation == retry->generation) page->navigate(retry->address);
+    }, new Retry{weak_from_this(), "http://" + address.substr(8), state_->navigation_generation});
+}
 void Page::navigate(const std::string& value) {
+  dismiss_http_retry();
+  dismiss_passkey_provider();
   dismiss_authenticator(true);
   dismiss_context_menu();
   dismiss_script_dialog(true);
@@ -1682,7 +1777,7 @@ void Page::internal_request(JsonObject* params) {
   if (!trusted || std::string(text(params, "frameId")) != state_->main_frame ||
       std::string(text(request, "method")) != "GET" || !internal_resource ||
       (main ? !served_document(value) : !(value.starts_with("ephy-resource:") || served_document(value)))) {
-    if (g_getenv("JUPITER_TRACE_INTERNAL")) g_message("Native resource denied: main=%d trusted=%d frame-match=%d handler=%d", main, trusted,
+    if (g_getenv("GNOSIS_TRACE_INTERNAL")) g_message("Native resource denied: main=%d trusted=%d frame-match=%d handler=%d", main, trusted,
       std::string(text(params, "frameId")) == state_->main_frame, bool(internal_resource));
     command("Fetch.failRequest", "{\"requestId\":" + quote(id) + ",\"errorReason\":\"AccessDenied\"}"); return;
   }
@@ -1702,7 +1797,7 @@ void Page::internal_request(JsonObject* params) {
       content = rewrite_resources(std::move(content), self->state_->internal_origin);
     g_autofree char* encoded = g_base64_encode(reinterpret_cast<const guchar*>(content.data()), content.size());
     if (main) self->state_->fulfilled_document = value;
-    if (g_getenv("JUPITER_TRACE_INTERNAL"))
+    if (g_getenv("GNOSIS_TRACE_INTERNAL"))
       g_message("Native resource fulfilled: main=%d mime=%s bytes=%zu", main, mime.c_str(), content.size());
     self->command("Fetch.fulfillRequest", "{\"requestId\":" + quote(id) + ",\"responseCode\":200,\"responseHeaders\":["
       "{\"name\":\"Content-Type\",\"value\":" + quote(mime) + "},"
@@ -1715,7 +1810,7 @@ void Page::internal_request(JsonObject* params) {
 bool Page::send_page_message(const std::string& expected, const std::string& name, const std::string& json) {
   if (!is_internal_page(expected) || state_->context_unique.empty() || name.size() > 128 || json.size() > 1048576) return false;
   command("Runtime.evaluate", "{\"uniqueContextId\":" + quote(state_->context_unique) + ",\"expression\":" +
-    quote("globalThis.__jupiterDispatch?.(" + quote(name) + "," + rewrite_resources(json, state_->internal_origin) + ")") + "}");
+    quote("globalThis.__gnosisDispatch?.(" + quote(name) + "," + rewrite_resources(json, state_->internal_origin) + ")") + "}");
   return true;
 }
 void Page::refresh_history() {
@@ -1759,7 +1854,7 @@ void Page::handle(const std::string& method, JsonObject* params, bool frame_even
       theme_document(text(frame, "id"), text(frame, "loaderId"));
     }
   }
-  if (g_getenv("JUPITER_TRACE_LOADS") && (method == "Page.frameStartedLoading" || method == "Page.frameStoppedLoading" ||
+  if (g_getenv("GNOSIS_TRACE_LOADS") && (method == "Page.frameStartedLoading" || method == "Page.frameStoppedLoading" ||
       method == "Page.frameNavigated" || method == "Page.navigatedWithinDocument" || method == "Page.loadEventFired")) {
     auto* frame = object(params, "frame");
     g_message("Brave load trace: %s frame=%s main=%s loading=%d", method.c_str(), frame ? text(frame,"id") : text(params,"frameId"),
@@ -1790,13 +1885,13 @@ void Page::handle(const std::string& method, JsonObject* params, bool frame_even
     }
   } else if (method == "Runtime.executionContextCreated") {
     auto* context = object(params, "context"); auto* aux = object(context, "auxData");
-    if (context && aux && std::string(text(context, "name")) == "JupiterContextMenu" &&
+    if (context && aux && std::string(text(context, "name")) == "GnosisContextMenu" &&
         !std::string(text(context, "uniqueId")).empty()) {
       state_->menu_contexts[json_object_get_int_member(context, "id")] = text(context, "uniqueId");
       state_->menu_frames[json_object_get_int_member(context, "id")] = text(aux, "frameId");
       if (!frame_event) state_->menu_sessions[json_object_get_int_member(context, "id")] = session;
     }
-    if (context && aux && std::string(text(context, "name")) == "JupiterDocumentMetadata" && *text(context, "uniqueId")) {
+    if (context && aux && std::string(text(context, "name")) == "GnosisDocumentMetadata" && *text(context, "uniqueId")) {
       const int id = json_object_get_int_member(context, "id");
       state_->metadata_contexts[id] = text(aux, "frameId");
       state_->metadata_unique[id] = text(context, "uniqueId");
@@ -1809,7 +1904,7 @@ void Page::handle(const std::string& method, JsonObject* params, bool frame_even
   } else if (method == "Runtime.bindingCalled") {
     const std::string payload = text(params, "payload");
     auto metadata_context = state_->metadata_contexts.find(json_object_get_int_member_with_default(params, "executionContextId", 0));
-    if (std::string(text(params,"name")) == "__jupiterDocumentMetadata" && payload.size() <= 256*1024 &&
+    if (std::string(text(params,"name")) == "__gnosisDocumentMetadata" && payload.size() <= 256*1024 &&
         metadata_context != state_->metadata_contexts.end()) {
       g_autoptr(JsonParser) parser = json_parser_new();
       if (json_parser_load_from_data(parser,payload.data(),payload.size(),nullptr) && JSON_NODE_HOLDS_OBJECT(json_parser_get_root(parser))) {
@@ -1885,14 +1980,14 @@ void Page::handle(const std::string& method, JsonObject* params, bool frame_even
           request_favicon();
         }
       }
-    } else if (std::string(text(params, "name")) == "__jupiterContextMenu" && payload.size() <= 131072 &&
+    } else if (std::string(text(params, "name")) == "__gnosisContextMenu" && payload.size() <= 131072 &&
         state_->menu_contexts.contains(json_object_get_int_member_with_default(params, "executionContextId", 0))) {
       g_autoptr(JsonParser) parser = json_parser_new();
       if (json_parser_load_from_data(parser, payload.data(), payload.size(), nullptr) && JSON_NODE_HOLDS_OBJECT(json_parser_get_root(parser)))
         show_context_menu(json_node_get_object(json_parser_get_root(parser)), json_object_get_int_member(params,"executionContextId"));
       return;
     }
-    if (std::string(text(params, "name")) == "__jupiterNativeMessage" && is_internal_page(uri) &&
+    if (std::string(text(params, "name")) == "__gnosisNativeMessage" && is_internal_page(uri) &&
         state_->context_id != 0 && json_object_get_int_member_with_default(params, "executionContextId", 0) == state_->context_id &&
         !state_->context_unique.empty() && payload.size() <= 1048576 && page_message) {
       g_autoptr(JsonParser) parser = json_parser_new();
@@ -1901,7 +1996,7 @@ void Page::handle(const std::string& method, JsonObject* params, bool frame_even
         const std::string name = text(message, "name");
         if (!name.empty() && name.size() <= 128 && json_object_has_member(message, "payload")) {
           g_autofree char* json = json_to_string(json_object_get_member(message, "payload"), false);
-          if (g_getenv("JUPITER_TRACE_INTERNAL")) g_message("Native page message: %s", name.c_str());
+          if (g_getenv("GNOSIS_TRACE_INTERNAL")) g_message("Native page message: %s", name.c_str());
           page_message(uri, name, json);
         }
       }
@@ -1936,6 +2031,15 @@ void Page::handle(const std::string& method, JsonObject* params, bool frame_even
       state_->tls_errors = GTlsCertificateFlags(flags);
     }
     if (tls_changed) tls_changed();
+  } else if (method == "Network.requestWillBeSent" && state_->attached &&
+             std::string(text(params, "type")) == "Document" &&
+             std::string(text(params, "frameId")) == state_->main_frame) {
+    state_->document_request = text(params, "requestId");
+    state_->document_request_url = text(object(params, "request"), "url");
+  } else if (method == "Network.loadingFailed" && state_->attached &&
+             std::string(text(params, "requestId")) == state_->document_request &&
+             std::string(text(params, "errorText")) == "net::ERR_SSL_PROTOCOL_ERROR") {
+    offer_http_retry(state_->document_request_url);
   } else if (method == "Page.windowOpen") {
     const std::string value = text(params, "url");
     if ((value.starts_with("https://") || value.starts_with("http://")) &&
@@ -1962,6 +2066,7 @@ void Page::handle(const std::string& method, JsonObject* params, bool frame_even
       dismiss_translation();
       dismiss_password_manager();
       dismiss_authenticator(true);
+      dismiss_passkey_provider();
       g_clear_object(&state_->certificate); state_->security_state.clear(); state_->tls_errors = GTlsCertificateFlags(0);
       state_->main_frame = text(frame, "id");
       state_->context_id = 0; state_->context_unique.clear();
@@ -2002,8 +2107,8 @@ void Page::handle(const std::string& method, JsonObject* params, bool frame_even
     if (was_loading && load_finished) load_finished(state_->response_status);
     request_favicon();
     apply_zoom();
-    if (is_internal_page(uri) && g_getenv("JUPITER_TRACE_INTERNAL")) {
-      command("Runtime.evaluate", "{\"returnByValue\":true,\"expression\":\"({overview:!!document.getElementById('overview'),stylesheets:document.styleSheets.length,bridge:typeof Jupiter,ready:document.readyState})\"}",
+    if (is_internal_page(uri) && g_getenv("GNOSIS_TRACE_INTERNAL")) {
+      command("Runtime.evaluate", "{\"returnByValue\":true,\"expression\":\"({overview:!!document.getElementById('overview'),stylesheets:document.styleSheets.length,bridge:typeof Gnosis,ready:document.readyState})\"}",
         [](JsonObject* result, const std::string& error) {
           if (!error.empty()) { g_warning("Native document inspection failed: %s", error.c_str()); return; }
           auto* value = object(result, "result");
@@ -2035,7 +2140,7 @@ std::string window_title(Display* display, ::Window window) {
     // a managed ghost window and the page clipped to the old frame's bounds.
     matches = hint.res_class && window_class == hint.res_class &&
       ((hint.res_name && std::string(hint.res_name).find(token) != std::string::npos) ||
-       window_title(display, root).find("JupiterTab-" + token) != std::string::npos);
+       window_title(display, root).find("GnosisTab-" + token) != std::string::npos);
     if (hint.res_class) XFree(hint.res_class);
     if (hint.res_name) XFree(hint.res_name);
   }
@@ -2129,11 +2234,67 @@ void Page::layout() {
 }
 bool Page::edit(const std::string& name) {
   auto& s = *state_;
-  return s.surface && JUPITER_IS_COMPOSITOR_VIEW(s.surface) &&
-    jupiter_compositor_view_edit(JUPITER_COMPOSITOR_VIEW(s.surface), name.c_str());
+  return s.surface && GNOSIS_IS_COMPOSITOR_VIEW(s.surface) &&
+    gnosis_compositor_view_edit(GNOSIS_COMPOSITOR_VIEW(s.surface), name.c_str());
+}
+void Page::update_portal_parent() {
+  auto& s = *state_;
+  if (s.disposed || !s.process || s.process->native_fd < 0 || target.empty() || !s.mapped) return;
+  auto* root = gtk_widget_get_root(s.content);
+  if (!GTK_IS_WINDOW(root)) return;
+  auto* surface = gtk_native_get_surface(GTK_NATIVE(root));
+  if (!surface) return;
+  s.process->portal_target = target;
+  std::string parent;
+  if (GDK_IS_WAYLAND_TOPLEVEL(surface)) {
+    struct Export {
+      GdkToplevel* surface;
+      std::string handle;
+      std::vector<std::weak_ptr<Page>> waiting;
+      Export(GdkToplevel* value, std::weak_ptr<Page> page) : surface(GDK_TOPLEVEL(g_object_ref(value))), waiting{page} {}
+      ~Export() {
+        if (!handle.empty() && !gdk_surface_is_destroyed(GDK_SURFACE(surface)))
+          gdk_wayland_toplevel_drop_exported_handle(surface, handle.c_str());
+        g_object_unref(surface);
+      }
+    };
+    auto* cached = static_cast<std::shared_ptr<Export>*>(g_object_get_data(G_OBJECT(root), "gnosis-portal-parent"));
+    if (cached && (*cached)->surface != GDK_TOPLEVEL(surface)) {
+      g_object_set_data(G_OBJECT(root), "gnosis-portal-parent", nullptr); cached = nullptr;
+    }
+    if (!cached) {
+      auto exported = std::make_shared<Export>(GDK_TOPLEVEL(surface), weak_from_this());
+      g_object_set_data_full(G_OBJECT(root), "gnosis-portal-parent", new std::shared_ptr<Export>(exported),
+        +[](gpointer data) { delete static_cast<std::shared_ptr<Export>*>(data); });
+      auto* pending = new std::shared_ptr<Export>(exported);
+      if (!gdk_wayland_toplevel_export_handle(exported->surface,
+          +[](GdkToplevel*, const char* handle, gpointer data) {
+            auto exported = *static_cast<std::shared_ptr<Export>*>(data); exported->handle = handle ? handle : "";
+            if (exported->handle.empty()) { exported->waiting.clear(); return; }
+            auto waiting = std::move(exported->waiting);
+            for (auto& weak : waiting) if (auto page = weak.lock(); page && page->state_->process &&
+                page->state_->process->portal_target == page->target) page->update_portal_parent();
+          }, pending, +[](gpointer data) { delete static_cast<std::shared_ptr<Export>*>(data); })) {
+        delete pending;
+        g_object_set_data(G_OBJECT(root), "gnosis-portal-parent", nullptr);
+      }
+      return;
+    }
+    const auto& exported = *cached;
+    if (exported->handle.empty()) {
+      exported->waiting.push_back(weak_from_this()); return;
+    }
+    parent = "wayland:" + exported->handle;
+  } else if (GDK_IS_X11_SURFACE(surface)) {
+    char xid[32]; g_snprintf(xid, sizeof xid, "x11:%lx", gdk_x11_surface_get_xid(surface)); parent = xid;
+  }
+  const auto message = "{\"kind\":\"parent-window\",\"handle\":" + quote(parent) + "}";
+  if (send(s.process->native_fd, message.data(), message.size(), MSG_NOSIGNAL | MSG_DONTWAIT) != static_cast<ssize_t>(message.size()))
+    s.process->close_native_ui();
 }
 void Page::focus() {
   auto& s = *state_;
+  update_portal_parent();
   if (s.surface) { gtk_widget_grab_focus(s.surface); return; }
   if (!s.display || !s.child || s.disposed) return;
   gtk_widget_grab_focus(s.content);
@@ -2244,8 +2405,8 @@ void Page::show_install_dialog(JsonObject* message) {
   s.install_id = json_object_get_int_member(message, "id");
   auto* root = gtk_widget_get_root(s.content);
   if (!s.mapped || !root || !GTK_IS_WINDOW(root)) { dismiss_install_dialog(true); return; }
-  if (s.surface && JUPITER_IS_COMPOSITOR_VIEW(s.surface))
-    jupiter_compositor_view_release_buttons(JUPITER_COMPOSITOR_VIEW(s.surface));
+  if (s.surface && GNOSIS_IS_COMPOSITOR_VIEW(s.surface))
+    gnosis_compositor_view_release_buttons(GNOSIS_COMPOSITOR_VIEW(s.surface));
   // Use the native model's localized title and actual permission warnings.
   // Plain labels prevent extension names or warning text injecting markup.
   const bool permission = !strcmp(text(message, "kind"), "permission");
@@ -2346,6 +2507,11 @@ void Page::dismiss_script_dialog(bool cancel) {
     command("Page.handleJavaScriptDialog", "{\"accept\":false}");
 }
 void Page::show_script_dialog(JsonObject* params) {
+  if (!adapter_enabled("script-dialogs")) {
+    state_->script_dialog_open = true;
+    if (std::string(text(params,"type")) == "beforeunload" && state_->close_callback) state_->close_prompted = true;
+    return;
+  }
   auto& s = *state_;
   // This event comes from the inherited protocol session, never a page binding.
   // Background tabs cannot grab another tab's GTK dialog surface.
@@ -2361,8 +2527,8 @@ void Page::show_script_dialog(JsonObject* params) {
   }
   dismiss_context_menu();
   if (explicit_close) gtk_window_present(GTK_WINDOW(root));
-  if (s.surface && JUPITER_IS_COMPOSITOR_VIEW(s.surface))
-    jupiter_compositor_view_release_buttons(JUPITER_COMPOSITOR_VIEW(s.surface));
+  if (s.surface && GNOSIS_IS_COMPOSITOR_VIEW(s.surface))
+    gnosis_compositor_view_release_buttons(GNOSIS_COMPOSITOR_VIEW(s.surface));
   const bool unload = kind == "beforeunload";
   auto* dialog = adw_alert_dialog_new(unload ? _("Leave This Page?") : _("Website Message"),
     unload ? _("Changes you made may not be saved.") : text(params, "message"));
@@ -2457,6 +2623,7 @@ const TranslationLanguage translation_languages[] = {
 };
 }
 void Page::translation_request(const std::string& operation, const std::string& language, int sequence, Reply reply) {
+  if (!adapter_enabled("translation")) { reply(nullptr,"Translation is disabled in Debugging settings"); return; }
   if (is_closed() || !state_->protocol_ready || target.empty() || !state_->process) {
     reply(nullptr, _("The page is not ready for translation")); return;
   }
@@ -2676,7 +2843,7 @@ void Page::update_password_manager(JsonObject* message, const std::string& error
   const bool associated = json_object_get_boolean_member_with_default(message, "associated", false);
   const bool website = json_object_get_boolean_member_with_default(message, "website", false);
   adw_action_row_set_subtitle(ui.status, !available ? _("Open KeePassXC and enable Browser Integration") :
-    locked ? _("Database locked — unlock it in KeePassXC") : !associated ? _("Authorize Jupiter to access this database") : _("Connected to your database"));
+    locked ? _("Database locked — unlock it in KeePassXC") : !associated ? _("Authorize Gnosis to access this database") : _("Connected to your database"));
   gtk_widget_set_visible(ui.reconnect, !available);
   gtk_widget_set_visible(ui.unlock, available && locked);
   gtk_widget_set_visible(ui.connect, available && !associated);
@@ -2727,6 +2894,7 @@ void Page::password_manager_operation(std::string operation, std::string argumen
     });
 }
 void Page::show_password_manager() {
+  if (!adapter_enabled("keepassxc")) { g_warning("KeePassXC is disabled in Debugging settings"); return; }
   if (is_closed()) return;
   auto* root = gtk_widget_get_root(state_->content); if (!root || !GTK_IS_WINDOW(root)) return;
   if (state_->passwords) { adw_dialog_present(state_->passwords->dialog, GTK_WIDGET(root)); return; }
@@ -2810,6 +2978,7 @@ void Page::show_password_manager() {
 
 
 void Page::update_vim(int context) {
+  if (!adapter_enabled("vim")) return;
   auto unique = state_->metadata_unique.find(context);
   auto source = state_->menu_sessions.find(context);
   if (is_closed() || unique == state_->metadata_unique.end() || source == state_->menu_sessions.end()) return;
@@ -2835,7 +3004,7 @@ void Page::update_user_content() {
     command("Page.removeScriptToEvaluateOnNewDocument", "{\"identifier\":" + quote(state.user_script_id) + "}");
     state.user_script_id.clear();
   }
-  if (user_javascript.empty()) return;
+  if (!adapter_enabled("user-content") || user_javascript.empty()) return;
   const std::string body = "(()=>{if(!['http:','https:','file:'].includes(location.protocol))return;const run=()=>{\n" +
     user_javascript + "\n};if(document.readyState==='loading')addEventListener('DOMContentLoaded',run,{once:true});else run();})()";
   command("Page.addScriptToEvaluateOnNewDocument", "{\"source\":" + quote(body) + "}",
@@ -2938,6 +3107,7 @@ void Page::apply_zoom() {
     });
 }
 void Page::show_context_menu(JsonObject* hit, int context) {
+  if (!adapter_enabled("context-menu")) return;
   auto& s = *state_;
   if (s.disposed || !s.surface || !gtk_widget_get_mapped(s.surface)) return;
   dismiss_context_menu();
@@ -3179,7 +3349,7 @@ void Page::show_context_menu(JsonObject* hit, int context) {
   }), new std::weak_ptr<Page>(weak), +[](gpointer data,GClosure*) { delete static_cast<std::weak_ptr<Page>*>(data); }, GConnectFlags(0));
   double x = json_object_get_double_member_with_default(hit,"x",0), y = json_object_get_double_member_with_default(hit,"y",0);
   if (json_object_get_boolean_member_with_default(hit,"pointer",false))
-    jupiter_compositor_view_context_position(JUPITER_COMPOSITOR_VIEW(s.surface),&x,&y);
+    gnosis_compositor_view_context_position(GNOSIS_COMPOSITOR_VIEW(s.surface),&x,&y);
   GdkRectangle rect = {int(std::clamp(x,0.0,double(gtk_widget_get_width(s.surface)))),
                        int(std::clamp(y,0.0,double(gtk_widget_get_height(s.surface)))),1,1};
   gtk_popover_set_pointing_to(GTK_POPOVER(popover),&rect);
@@ -3206,12 +3376,14 @@ void Page::show_context_menu(JsonObject* hit, int context) {
     gtk_scrolled_window_set_max_content_height(GTK_SCROLLED_WINDOW(scroller),std::max(1,geometry.height));
     gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(scroller),GTK_POLICY_NEVER,GTK_POLICY_AUTOMATIC);
   }
-  jupiter_compositor_view_release_buttons(JUPITER_COMPOSITOR_VIEW(s.surface));
+  gnosis_compositor_view_release_buttons(GNOSIS_COMPOSITOR_VIEW(s.surface));
   gtk_popover_popup(GTK_POPOVER(popover));
 }
 void Page::set_visible(bool visible) {
-  if (!visible) { dismiss_context_menu(); dismiss_script_dialog(true); dismiss_install_dialog(true); dismiss_authenticator(true); }
+  if (!visible) dismiss_http_retry();
+  if (!visible) { dismiss_context_menu(); dismiss_script_dialog(true); dismiss_install_dialog(true); dismiss_authenticator(true); dismiss_passkey_provider(); }
   state_->mapped = visible;
+  if (visible) update_portal_parent();
   if (state_->surface) gtk_widget_set_visible(state_->surface, visible);
   if (state_->display && state_->container) { if (visible) layout(); else XUnmapWindow(state_->display, state_->container); }
 }
@@ -3243,7 +3415,7 @@ void Page::show_devtools() {
   gtk_window_set_default_size(window, 1100, 750);
   auto* content = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
   gtk_box_append(GTK_BOX(content), adw_header_bar_new());
-  auto* surface = jupiter_compositor_view_new_for_server(s.process->compositor, "__jupiter_devtools__");
+  auto* surface = gnosis_compositor_view_new_for_server(s.process->compositor, "__gnosis_devtools__");
   gtk_widget_set_hexpand(surface, true); gtk_widget_set_vexpand(surface, true);
   gtk_box_append(GTK_BOX(content), surface);
   adw_window_set_content(ADW_WINDOW(window), content);
@@ -3263,6 +3435,8 @@ void Page::show_devtools() {
     });
 }
 void Page::close() {
+  dismiss_http_retry();
+  dismiss_passkey_provider();
   stop_find();
   const bool approved_close = close_is_approved();
   cancel_close();

@@ -66,7 +66,7 @@ class Server(http.server.ThreadingHTTPServer):
 
 servers = []
 try:
-    with tempfile.TemporaryDirectory(prefix='jupiter-tls-fixtures-') as scratch:
+    with tempfile.TemporaryDirectory(prefix='gnosis-tls-fixtures-') as scratch:
         root = Path(scratch)
         key = root / 'server.key'
         key.write_text(fixture['key'])
@@ -91,9 +91,9 @@ try:
         unused = http.server.ThreadingHTTPServer(('127.0.0.1', 0), Handler)
         urls['unavailable'] = f'http://127.0.0.1:{unused.server_port}/'
         unused.server_close()
-        env = dict(os.environ, JUPITER_TLS_FIXTURES=json.dumps(urls), JUPITER_TLS_CA=str(ca),
-                   JUPITER_TLS_DELAY_STARTED=str(root / 'started'), JUPITER_TLS_DELAY_RELEASE=str(root / 'release'),
-                   JUPITER_TLS_DELAY_COMPLETED=str(root / 'completed'))
+        env = dict(os.environ, GNOSIS_TLS_FIXTURES=json.dumps(urls), GNOSIS_TLS_CA=str(ca),
+                   GNOSIS_TLS_DELAY_STARTED=str(root / 'started'), GNOSIS_TLS_DELAY_RELEASE=str(root / 'release'),
+                   GNOSIS_TLS_DELAY_COMPLETED=str(root / 'completed'))
         subprocess.run(command, env=env, check=True, timeout=90)
         assert any(s.label == 'valid' and s.requests for s in servers), 'Accepted TLS page never reached the server'
         if not ui_workflow:

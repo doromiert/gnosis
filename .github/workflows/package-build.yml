@@ -9,3 +9,49 @@ jobs:
       - uses: cachix/install-nix-action@v27
       - name: Build Gnosis
         run: nix build --no-link --show-trace .#gnosis --option max-jobs 2 --option cores 2
+      - name: Open ZenPkgs Search in Gnosis
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y weston mesa-vulkan-drivers
+          GNOSIS_PACKAGE=$(nix build --no-link --print-out-paths .#gnosis)
+          python3 - <<'PY'
+          import os, re, urllib.request
+          from pathlib import Path
+          site = Path(os.environ['RUNNER_TEMP']) / 'gnosis-site'
+          site.mkdir()
+          origin = 'https://search.zenos.neg-zero.com'
+          html = urllib.request.urlopen(origin + '/', timeout=20).read().decode()
+          probe = '''<script>const check = setInterval(() => {
+            if (document.querySelector('.tree-row')) {
+              new Image().src = '/__ready'; clearInterval(check);
+            }
+          }, 500);</script>'''
+          (site / 'index.html').write_text(html.replace('</body>', probe + '</body>'))
+          for asset in re.findall(r'(?:src|href)="(/assets/[^\"]+)"', html):
+              target = site / asset.lstrip('/')
+              target.parent.mkdir(parents=True, exist_ok=True)
+              target.write_bytes(urllib.request.urlopen(origin + asset, timeout=20).read())
+          PY
+          python3 -m http.server 8765 --bind 127.0.0.1 --directory "$RUNNER_TEMP/gnosis-site" > "$RUNNER_TEMP/gnosis-site.log" 2>&1 &
+          site_pid=$!
+          mkdir -p "$RUNNER_TEMP/gnosis-runtime"
+          chmod 700 "$RUNNER_TEMP/gnosis-runtime"
+          export XDG_RUNTIME_DIR="$RUNNER_TEMP/gnosis-runtime" WAYLAND_DISPLAY=wayland-gnosis
+          export GDK_BACKEND=wayland XDG_SESSION_TYPE=wayland GNOSIS_SOFTWARE_RENDERING=1
+          weston --backend=headless-backend.so --socket=wayland-gnosis --idle-time=0 > "$RUNNER_TEMP/weston.log" 2>&1 &
+          weston_pid=$!
+          trap 'kill "$weston_pid" "$site_pid" 2>/dev/null || true' EXIT
+          for attempt in $(seq 1 20); do
+            test -S "$XDG_RUNTIME_DIR/$WAYLAND_DISPLAY" && break
+            sleep 1
+          done
+          test -S "$XDG_RUNTIME_DIR/$WAYLAND_DISPLAY" || { cat "$RUNNER_TEMP/weston.log"; exit 1; }
+          dbus-run-session -- "$GNOSIS_PACKAGE/bin/gnosis" --private-instance http://127.0.0.1:8765/ > "$RUNNER_TEMP/gnosis-browser.log" 2>&1 &
+          browser_pid=$!
+          for attempt in $(seq 1 60); do
+            if grep -q 'GET /__ready' "$RUNNER_TEMP/gnosis-site.log"; then kill "$browser_pid" 2>/dev/null || true; exit 0; fi
+            if ! kill -0 "$browser_pid" 2>/dev/null; then cat "$RUNNER_TEMP/gnosis-browser.log"; exit 1; fi
+            sleep 1
+          done
+          cat "$RUNNER_TEMP/weston.log" "$RUNNER_TEMP/gnosis-browser.log" "$RUNNER_TEMP/gnosis-site.log"
+          exit 1

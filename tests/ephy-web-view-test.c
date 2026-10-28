@@ -220,7 +220,7 @@ static const RegexTest test_non_search_regex[] = {
   /* FAIL */
   { "192.168.1.1:80 fails to load", FALSE },
   { "localhost.localdomain 8080/home/", FALSE },
-  { "io.github.doromiert.Jupiter: failed to start", FALSE },
+  { "com.neg-zero.Gnosis: failed to start", FALSE },
   { "ephy-web-view.c:130 error something", FALSE },
 
   { "[f80e::2a1:f85f:fc8f:a0d1]:80", TRUE },
@@ -331,7 +331,7 @@ test_ephy_web_view_normalize_or_autosearch (void)
 
   default_engine = ephy_search_engine_manager_get_default_engine (manager);
   test_engine = g_object_new (EPHY_TYPE_SEARCH_ENGINE,
-                              "name", "io.github.doromiert.Jupiter.EphyWebViewTest",
+                              "name", "com.neg-zero.Gnosis.EphyWebViewTest",
                               "url", "https://duckduckgo.com/?q=%s&t=epiphany",
                               NULL);
   ephy_search_engine_manager_add_engine (manager, test_engine);

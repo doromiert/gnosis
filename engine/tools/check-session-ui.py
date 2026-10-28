@@ -16,15 +16,15 @@ parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('binary', type=Path)
 parser.add_argument('--schemas', type=Path, required=True)
 args = parser.parse_args()
-root = Path(tempfile.mkdtemp(prefix='jupiter-session-ui-', dir='/tmp'))
+root = Path(tempfile.mkdtemp(prefix='gnosis-session-ui-', dir='/tmp'))
 env = dict(os.environ, XDG_CONFIG_HOME=str(root/'config'), XDG_DATA_HOME=str(root/'data'),
            XDG_CACHE_HOME=str(root/'cache'), GSETTINGS_BACKEND='keyfile',
            GSETTINGS_SCHEMA_DIR=str(args.schemas.resolve()))
 for key, value in [('ask-for-default', 'false'), ('restore-session-policy', "'always'"),
                    ('restore-session-delaying-loads', 'true')]:
-    subprocess.run(['gsettings', 'set', 'io.github.doromiert.Jupiter', key, value], env=env, check=True)
-base = os.environ['JUPITER_TEST_URL']
-subprocess.run(['gsettings', 'set', 'io.github.doromiert.Jupiter', 'content-filters',
+    subprocess.run(['gsettings', 'set', 'com.neg-zero.Gnosis', key, value], env=env, check=True)
+base = os.environ['GNOSIS_TEST_URL']
+subprocess.run(['gsettings', 'set', 'com.neg-zero.Gnosis', 'content-filters',
                 "['"+base+"obsolete-filter-fixture']"], env=env, check=True)
 urls = [base+'session-fixture?'+str(i) for i in range(1, 4)]
 log = (root/'app.log').open('w')

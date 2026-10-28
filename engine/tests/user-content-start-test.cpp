@@ -48,12 +48,12 @@ public:
     marker->SetString("committedURL", url);
     auto value = CefValue::Create();
     value->SetDictionary(marker);
-    const auto code = std::string("Object.defineProperty(globalThis,'__jupiterUserContentStart',{value:Object.freeze({...") +
+    const auto code = std::string("Object.defineProperty(globalThis,'__gnosisUserContentStart',{value:Object.freeze({...") +
       CefWriteJSON(value, JSON_WRITER_DEFAULT).ToString() +
       ",documentElementPresent:!!document.documentElement,injectedHref:String(location.href),injectedDocumentURL:String(document.URL),injectedReady:document.readyState}),writable:false,configurable:false});true";
     CefRefPtr<CefV8Value> result;
     CefRefPtr<CefV8Exception> exception;
-    const bool ok = context->Eval(code, "jupiter://native-user-content-start", 1, result, exception);
+    const bool ok = context->Eval(code, "gnosis://native-user-content-start", 1, result, exception);
     if (!ok || exception || !result || !result->IsBool() || !result->GetBoolValue()) {
       g_printerr("USER_CONTENT_START_NATIVE_EVAL_FAILED pid=%d url=%s error=%s\n", getpid(), url.c_str(),
                  exception ? exception->GetMessage().ToString().c_str() : "No successful boolean result");
@@ -172,15 +172,15 @@ NO_STACK_PROTECTOR int main(int argc, char** argv) {
   }
   const int child = ephy_engine_execute_process(argc, argv);
   if (child >= 0) return child;
-  auto* app = adw_application_new("io.github.doromiert.Jupiter.UserContentStartTest", G_APPLICATION_NON_UNIQUE);
+  auto* app = adw_application_new("com.neg-zero.Gnosis.UserContentStartTest", G_APPLICATION_NON_UNIQUE);
   GError* error = nullptr;
   g_assert_true(g_application_register(G_APPLICATION(app), nullptr, &error));
   g_assert_no_error(error);
-  char profile[] = "/tmp/jupiter-user-content-start-profile-XXXXXX";
+  char profile[] = "/tmp/gnosis-user-content-start-profile-XXXXXX";
   g_assert_nonnull(mkdtemp(profile));
   g_assert_true(ephy_engine_initialize(argc, argv, profile, true));
   disable_diagnostic_core_dumps();
-  const auto fixture = std::filesystem::path(g_getenv("JUPITER_USER_CONTENT_START_INTERNAL_HTML"));
+  const auto fixture = std::filesystem::path(g_getenv("GNOSIS_USER_CONTENT_START_INTERNAL_HTML"));
   for (const char* scheme : {"ephy-about", "ephy-reader"}) {
     ephy_engine_register_uri_scheme(scheme,
       +[](EphyEngineSchemeRequest* request, gpointer path) {
@@ -195,12 +195,12 @@ NO_STACK_PROTECTOR int main(int argc, char** argv) {
       }, g_strdup(fixture.c_str()), g_free);
   }
   auto* normal = page(GTK_APPLICATION(app), ephy_engine_session_get_default());
-  const auto normal_browser = check(normal, g_getenv("JUPITER_USER_CONTENT_START_URL"), true, "regular HTTP");
+  const auto normal_browser = check(normal, g_getenv("GNOSIS_USER_CONTENT_START_URL"), true, "regular HTTP");
   check(normal, "ephy-about:user-content-start", false, "regular ephy-about");
   check(normal, "ephy-reader:user-content-start", false, "regular ephy-reader");
   auto* private_session = ephy_engine_session_new(true);
   auto* private_view = page(GTK_APPLICATION(app), private_session);
-  const auto private_browser = check(private_view, g_getenv("JUPITER_USER_CONTENT_START_URL"), true, "private HTTP");
+  const auto private_browser = check(private_view, g_getenv("GNOSIS_USER_CONTENT_START_URL"), true, "private HTTP");
   g_assert_cmpint(normal_browser, !=, private_browser);
   check(private_view, "ephy-about:user-content-start", false, "private ephy-about");
   check(private_view, "ephy-reader:user-content-start", false, "private ephy-reader");

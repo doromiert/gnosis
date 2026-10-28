@@ -35,6 +35,7 @@ typedef struct {
   char *desktop_file; /* only used for legacy apps */
   char *desktop_path;
   guint64 install_date_uint64;
+  gboolean declarative;
 } EphyWebApplication;
 
 /**
@@ -69,6 +70,7 @@ typedef enum {
 #define EPHY_WEB_APP_GAPPLICATION_ID_PREFIX APPLICATION_ID ".WebApp_"
 
 char               *ephy_web_application_get_app_id_from_name (const char *name);
+gboolean            ephy_web_application_is_declarative (const char *id);
 
 const char         *ephy_web_application_get_gapplication_id_from_profile_directory (const char *profile_dir);
 
@@ -117,6 +119,7 @@ void                ephy_web_application_initialize_settings (const char *profil
 gboolean            ephy_web_application_is_uri_allowed (const char *uri);
 
 gboolean            ephy_web_application_save (EphyWebApplication *app);
+gboolean            ephy_web_application_set_extensions (const char *id, GKeyFile *config, GError **error);
 
 gboolean            ephy_web_application_is_system (EphyWebApplication *app);
 

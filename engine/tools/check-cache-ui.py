@@ -15,14 +15,14 @@ parser.add_argument('binary', type=Path)
 parser.add_argument('--schemas', type=Path, required=True)
 parser.add_argument('--incognito', action='store_true')
 args = parser.parse_args()
-root = Path(tempfile.mkdtemp(prefix='jupiter-cache-ui-', dir='/tmp'))
+root = Path(tempfile.mkdtemp(prefix='gnosis-cache-ui-', dir='/tmp'))
 env = dict(os.environ, XDG_CONFIG_HOME=str(root/'config'), XDG_DATA_HOME=str(root/'data'),
            XDG_CACHE_HOME=str(root/'cache'), GSETTINGS_BACKEND='keyfile',
            GSETTINGS_SCHEMA_DIR=str(args.schemas.resolve()))
 for key, value in [('ask-for-default', 'false'), ('active-clear-data-items', '2')]:
-    subprocess.run(['gsettings', 'set', 'io.github.doromiert.Jupiter', key, value], env=env, check=True)
+    subprocess.run(['gsettings', 'set', 'com.neg-zero.Gnosis', key, value], env=env, check=True)
 (root/'profile').mkdir()
-base = os.environ['JUPITER_TEST_URL']
+base = os.environ['GNOSIS_TEST_URL']
 log = (root/'app.log').open('w')
 command = [str(args.binary.resolve()), '--profile='+str(root/'profile')]
 if args.incognito:
@@ -52,12 +52,12 @@ try:
     time.sleep(.7)
     subprocess.run(['magick', 'import', '-window', 'root', str(root/'cache-dialog.png')], check=True)
     subprocess.run(['xdotool', 'mousemove', '257', '174', 'click', '1'], check=True)
-    wait_for(lambda: subprocess.check_output(['gsettings', 'get', 'io.github.doromiert.Jupiter', 'active-clear-data-items'], env=env, text=True).strip() == '0')
+    wait_for(lambda: subprocess.check_output(['gsettings', 'get', 'com.neg-zero.Gnosis', 'active-clear-data-items'], env=env, text=True).strip() == '0')
     subprocess.run(['xdotool', 'key', 'alt+c'], check=True)
     time.sleep(.7)
     assert reports()[-1] == original, 'An unchecked cache row cleared data'
     subprocess.run(['xdotool', 'mousemove', '257', '174', 'click', '1'], check=True)
-    wait_for(lambda: subprocess.check_output(['gsettings', 'get', 'io.github.doromiert.Jupiter', 'active-clear-data-items'], env=env, text=True).strip() == '2')
+    wait_for(lambda: subprocess.check_output(['gsettings', 'get', 'com.neg-zero.Gnosis', 'active-clear-data-items'], env=env, text=True).strip() == '2')
     subprocess.run(['xdotool', 'mousemove', '242', '108', 'click', '1'], check=True)
     time.sleep(.3)
     subprocess.run(['xdotool', 'mousemove', '400', '147', 'click', '1'], check=True)

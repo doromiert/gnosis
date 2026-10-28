@@ -16,8 +16,8 @@ parser.add_argument('--clean-app-environment', action='store_true')
 parser.add_argument('--proxy-profile-preparer', type=Path,
                     help='Native authentication-test binary that prepares an isolated proxy profile')
 args = parser.parse_args()
-base = os.environ['JUPITER_TEST_URL']
-artifacts = Path(tempfile.mkdtemp(prefix='jupiter-auth-ui-'))
+base = os.environ['GNOSIS_TEST_URL']
+artifacts = Path(tempfile.mkdtemp(prefix='gnosis-auth-ui-'))
 print('HTTP authentication UI artifacts:', artifacts, flush=True)
 env = dict(os.environ, GSETTINGS_BACKEND='keyfile', GSETTINGS_SCHEMA_DIR=str(args.schemas.resolve()),
            XDG_CONFIG_HOME=str(artifacts/'config'), XDG_CACHE_HOME=str(artifacts/'cache'),
@@ -44,7 +44,7 @@ def wait(predicate, description):
     deadline = time.monotonic()+25
     while time.monotonic() < deadline:
         if browser and browser.poll() is not None:
-            raise RuntimeError('Jupiter exited while waiting for '+description)
+            raise RuntimeError('Gnosis exited while waiting for '+description)
         if predicate():
             return
         time.sleep(.1)
@@ -85,7 +85,7 @@ def launch(kind, realm, private=False, cross=False, profile=None):
                                 capture_output=True, text=True, env=env)
         return [w for w in result.stdout.splitlines()
                 if int(dict(line.split('=', 1) for line in run('xdotool', 'getwindowgeometry', '--shell', w).splitlines())['WIDTH']) > 400]
-    wait(visible_window, 'real Jupiter window')
+    wait(visible_window, 'real Gnosis window')
     window = visible_window()[-1]
     run('xdotool', 'windowfocus', '--sync', window)
 
@@ -98,7 +98,7 @@ def challenge(realm):
 
 
 def credentials(password='fixture-password'):
-    run('xdotool', 'type', '--clearmodifiers', '--delay', 2, 'jupiter-user')
+    run('xdotool', 'type', '--clearmodifiers', '--delay', 2, 'gnosis-user')
     key('Tab')
     run('xdotool', 'type', '--clearmodifiers', '--delay', 2, password)
     key('Return')
@@ -112,13 +112,13 @@ def authenticated(realm):
 
 def quit_browser():
     key('ctrl+q')
-    assert browser.wait(timeout=15) == 0, 'Jupiter did not quit normally'
+    assert browser.wait(timeout=15) == 0, 'Gnosis did not quit normally'
     log.close()
 
 
 try:
-    run('gsettings', 'set', 'io.github.doromiert.Jupiter', 'ask-for-default', 'false')
-    run('gsettings', 'set', 'io.github.doromiert.Jupiter', 'restore-session-policy', "'crashed'")
+    run('gsettings', 'set', 'com.neg-zero.Gnosis', 'ask-for-default', 'false')
+    run('gsettings', 'set', 'com.neg-zero.Gnosis', 'restore-session-policy', "'crashed'")
     # Test direct protected-page startup. URL-entry completion has its own open
     # regression; do not make credential-dialog assertions depend on typed URLs.
     launch('basic', 'regular-basic')

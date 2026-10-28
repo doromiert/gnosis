@@ -146,7 +146,7 @@ cases, there is no shared state with the main Epiphany browser process.
 
 ## Epiphany Web Process Extension
 
-Jupiter does not build or install this WebKit plugin. Its source is retained as
+Gnosis does not build or install this WebKit plugin. Its source is retained as
 upstream reference while the remaining services are ported. CEF renderer hooks
 live in `engine/select/page-messages.cpp` and `engine/select/clipboard.cpp`; native
 extensions use Chromium rather than this plugin. The description below documents

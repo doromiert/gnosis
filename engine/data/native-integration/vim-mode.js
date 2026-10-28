@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Browser-owned isolated world: normal mode selects controls; i edits them.
 (() => {
-    const send = globalThis.__jupiterDocumentMetadata;
+    const send = globalThis.__gnosisDocumentMetadata;
     if (typeof send !== 'function' || globalThis.gnosisVim) return;
     const selector = 'a[href],area[href],button,input:not([type=hidden]),textarea,select,summary,[role="button"],[role="link"],[role="textbox"],[role="combobox"],[contenteditable]:not([contenteditable="false"]),[tabindex]:not([tabindex="-1"])';
     const alphabet = 'asdfghjkl';

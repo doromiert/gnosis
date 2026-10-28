@@ -39,8 +39,8 @@ def main():
 
     with tempfile.TemporaryDirectory(prefix='gnosis-context-media-') as profile:
         env = os.environ.copy()
-        env.pop('JUPITER_NATIVE_UI_FD', None)
-        env.pop('JUPITER_NATIVE_UI_SHIM', None)
+        env.pop('GNOSIS_NATIVE_UI_FD', None)
+        env.pop('GNOSIS_NATIVE_UI_SHIM', None)
         with open(profile + '/browser.log', 'w+') as log:
             process = subprocess.Popen([args.browser, '--headless=new', '--mute-audio', '--no-first-run',
                 '--no-default-browser-check', '--remote-debugging-pipe', '--user-data-dir=' + profile,
@@ -93,8 +93,8 @@ def main():
                 session = call('Target.attachToTarget', {'targetId': target, 'flatten': True})['sessionId']
                 call('Page.enable', session=session)
                 call('Runtime.enable', session=session)
-                call('Runtime.addBinding', {'name': '__jupiterContextMenu', 'executionContextName': 'JupiterContextMenu'}, session)
-                call('Page.addScriptToEvaluateOnNewDocument', {'worldName': 'JupiterContextMenu', 'source': source}, session)
+                call('Runtime.addBinding', {'name': '__gnosisContextMenu', 'executionContextName': 'GnosisContextMenu'}, session)
+                call('Page.addScriptToEvaluateOnNewDocument', {'worldName': 'GnosisContextMenu', 'source': source}, session)
                 call('Page.navigate', {'url': 'data:text/html;charset=utf-8,' + urllib.parse.quote(html)}, session)
 
                 def evaluate(expression, context=None):
@@ -110,7 +110,7 @@ def main():
                 while not evaluate("!!document.getElementById('audio') && document.getElementById('audio').readyState >= 2"):
                     assert time.monotonic() < deadline, 'Audio fixture did not load'
                     time.sleep(.05)
-                assert evaluate("typeof globalThis.__jupiterContextMenu + ':' + typeof globalThis.__gnosisContextMenuAction") == 'undefined:undefined'
+                assert evaluate("typeof globalThis.__gnosisContextMenu + ':' + typeof globalThis.__gnosisContextMenuAction") == 'undefined:undefined'
                 before = len([e for e in events if e.get('method') == 'Runtime.bindingCalled'])
                 evaluate("document.getElementById('audio').dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,button:2,clientX:30,clientY:30}))")
                 assert len([e for e in events if e.get('method') == 'Runtime.bindingCalled']) == before
@@ -123,7 +123,7 @@ def main():
                     deadline = time.monotonic() + 10
                     while True:
                         for event in events[offset:]:
-                            if event.get('method') != 'Runtime.bindingCalled' or event['params'].get('name') != '__jupiterContextMenu':
+                            if event.get('method') != 'Runtime.bindingCalled' or event['params'].get('name') != '__gnosisContextMenu':
                                 continue
                             value = json.loads(event['params']['payload'])
                             number = event['params']['executionContextId']

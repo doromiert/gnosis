@@ -25,9 +25,9 @@ const run = async () => {
     await handler({ ...event, composedPath: () => [new Input()] }); assert.equal(calls.length, 0);
     window.top = {}; await handler(event); assert.equal(calls.length, 0); window.top = window;
     state = 'unlocked'; await handler(event); assert.equal(calls.length, 0);
-    state = 'locked'; sandbox.kpxc.settings.jupiterAutoUnlock = false;
+    state = 'locked'; sandbox.kpxc.settings.gnosisAutoUnlock = false;
     await handler(event); assert.equal(calls.length, 0);
-    sandbox.kpxc.settings.jupiterAutoUnlock = true;
+    sandbox.kpxc.settings.gnosisAutoUnlock = true;
     await handler(event); assert.equal(calls.length, 1);
     assert.equal(calls[0][0], 'get_database_hash');
     assert.equal(calls[0][1][0], false); assert.equal(calls[0][1][1], true);

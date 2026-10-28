@@ -2,11 +2,11 @@
  * Native command entry and fixed operations for the renderer's modal editor. */
 void Page::set_vim_context(int context) {
   state_->vim_context = context;
-  if (state_->surface && JUPITER_IS_COMPOSITOR_VIEW(state_->surface))
-    jupiter_compositor_view_set_vim_field(JUPITER_COMPOSITOR_VIEW(state_->surface), context != 0);
+  if (state_->surface && GNOSIS_IS_COMPOSITOR_VIEW(state_->surface))
+    gnosis_compositor_view_set_vim_field(GNOSIS_COMPOSITOR_VIEW(state_->surface), context != 0);
 }
 bool Page::handle_vim_key(guint key, GdkModifierType modifiers) {
-  const char* operation = jupiter_compositor_vim_key(key, modifiers);
+  const char* operation = gnosis_compositor_vim_key(key, modifiers);
   if (!operation || !vim_mode || is_closed() || !state_->vim_context) return false;
   auto* root = gtk_widget_get_root(widget());
   auto* focus = root ? gtk_root_get_focus(root) : nullptr;

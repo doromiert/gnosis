@@ -40,6 +40,7 @@
 #include "ephy-string.h"
 #include "ephy-uri-helpers.h"
 #include "ephy-view-source-handler.h"
+#include "loopback.h"
 
 static GRegex *non_search_regex;
 static GRegex *domain_regex;
@@ -315,7 +316,12 @@ ephy_embed_utils_normalize_address (const char *input_address)
         g_strcmp0 (scheme, "localhost") == 0 ||
         g_hostname_is_ip_address (scheme) ||
         is_host_with_port (address))
-      effective_address = g_strconcat ("https://", address, NULL);
+      {
+        g_autofree char *candidate = g_strconcat ("https://", address, NULL);
+
+        effective_address = gnosis_uri_is_loopback (candidate) ?
+                            g_strconcat ("http://", address, NULL) : g_steal_pointer (&candidate);
+      }
   }
 
   return effective_address ? effective_address : g_strdup (address);

@@ -1,0 +1,60 @@
+--- a/gdk/wayland/gdksurface-wayland.c
++++ b/gdk/wayland/gdksurface-wayland.c
+@@ -263,6 +263,29 @@
+     }
+ }
+ 
++/* A surface (including its client-side shadow) can touch multiple outputs.
++ * Follow the fastest intersecting output rather than the last enter event. */
++static struct wl_output *
++gdk_wayland_surface_get_fastest_output (GdkWaylandSurface *impl)
++{
++  GdkWaylandDisplay *display = GDK_WAYLAND_DISPLAY (gdk_surface_get_display (GDK_SURFACE (impl)));
++  struct wl_output *selected = NULL;
++  int selected_refresh = -1;
++
++  for (GSList *l = impl->display_server.outputs; l; l = l->next)
++    {
++      GdkMonitor *monitor = gdk_wayland_display_get_monitor (display, l->data);
++      int refresh = monitor ? gdk_monitor_get_refresh_rate (monitor) : 0;
++      if (refresh > selected_refresh)
++        {
++          selected = l->data;
++          selected_refresh = refresh;
++        }
++    }
++
++  return selected;
++}
++
+ void
+ gdk_wayland_surface_frame_callback (GdkSurface *surface,
+                                     uint32_t    time)
+@@ -295,12 +318,10 @@
+   timings->refresh_interval = 16667; /* default to 1/60th of a second */
+   if (impl->display_server.outputs)
+     {
+-      /* We pick a random output out of the outputs that the surface touches
+-       * The rate here is in milli-hertz
+-       */
++      /* The rate here is in milli-hertz. */
+       GdkMonitor *monitor =
+          gdk_wayland_display_get_monitor (display_wayland,
+-                                          impl->display_server.outputs->data);
++                                          gdk_wayland_surface_get_fastest_output (impl));
+       int refresh_rate = monitor ? gdk_monitor_get_refresh_rate (monitor) : 0;
+       if (refresh_rate != 0)
+         timings->refresh_interval = G_GINT64_CONSTANT(1000000000) / refresh_rate;
+@@ -1375,11 +1396,7 @@
+   g_return_val_if_fail (GDK_IS_WAYLAND_SURFACE (surface), NULL);
+ 
+   impl = GDK_WAYLAND_SURFACE (surface);
+-  /* We pick the head of the list as this is the last entered output */
+-  if (impl->display_server.outputs)
+-    return (struct wl_output *) impl->display_server.outputs->data;
+-
+-  return NULL;
++  return gdk_wayland_surface_get_fastest_output (impl);
+ }
+ 
+ void

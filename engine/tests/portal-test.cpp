@@ -55,7 +55,7 @@ struct Test {
     const char *name = memory_write ? write_steps[memory_step] : read_steps[memory_step];
     std::string default_path;
     if (memory_write && memory_step == 5)
-      default_path = std::string(g_getenv("JUPITER_TEST_SCRATCH")) + "/files/alpha.txt";
+      default_path = std::string(g_getenv("GNOSIS_TEST_SCRATCH")) + "/files/alpha.txt";
     const auto step = memory_step;
     browser->GetHost()->RunFileDialog(FILE_DIALOG_OPEN, name, default_path, {},
       new FilterResult([this, step](const auto& paths) {
@@ -110,8 +110,8 @@ struct Test {
     if (stage == -2) {
       auto browser = ephy_engine_view_browser(view);
       if (!browser) { fail("No native Chromium browser for the file filter fixture"); return; }
-      browser->GetHost()->RunFileDialog(FILE_DIALOG_OPEN, "Jupiter native filter fixture", "",
-        {"Jupiter native filter fixture|.jup;.jupiter"}, new FilterResult([this](const auto& paths) {
+      browser->GetHost()->RunFileDialog(FILE_DIALOG_OPEN, "Gnosis native filter fixture", "",
+        {"Gnosis native filter fixture|.jup;.gnosis"}, new FilterResult([this](const auto& paths) {
           if (finished) return;
           char *contents = nullptr;
           bool valid = paths.size() == 1 && paths.front().ToString().ends_with("/alpha.JUP") &&
@@ -188,18 +188,18 @@ int main(int argc, char **argv) {
   disable_diagnostic_core_dumps();
   if (!cef_api_hash(CEF_API_VERSION, 0)) return 1;
   int sub = ephy_engine_execute_process(argc, argv); if (sub >= 0) return sub;
-  auto *app = adw_application_new("io.github.doromiert.Jupiter.PortalTest", G_APPLICATION_NON_UNIQUE);
+  auto *app = adw_application_new("com.neg-zero.Gnosis.PortalTest", G_APPLICATION_NON_UNIQUE);
   GError *error = nullptr;
   if (!g_application_register(G_APPLICATION(app), nullptr, &error)) { g_printerr("%s\n", error->message); return 1; }
   const bool memory_write = argc > 1 && !strcmp(argv[1], "--folder-memory-write");
   const bool memory_read = argc > 1 && !strcmp(argv[1], "--folder-memory-read");
   const bool memory_mode = memory_write || memory_read;
-  char temporary_profile[] = "/tmp/jupiter-portal-test-XXXXXX";
-  const char *profile = memory_mode ? g_getenv("JUPITER_PORTAL_PROFILE") : mkdtemp(temporary_profile);
+  char temporary_profile[] = "/tmp/gnosis-portal-test-XXXXXX";
+  const char *profile = memory_mode ? g_getenv("GNOSIS_PORTAL_PROFILE") : mkdtemp(temporary_profile);
   if (!profile || !*profile || !ephy_engine_initialize(argc, argv, profile, true)) return 1;
   disable_diagnostic_core_dumps();
   auto *window = ADW_APPLICATION_WINDOW(adw_application_window_new(GTK_APPLICATION(app)));
-  gtk_window_set_title(GTK_WINDOW(window), "Jupiter Portal Test");
+  gtk_window_set_title(GTK_WINDOW(window), "Gnosis Portal Test");
   gtk_window_set_default_size(GTK_WINDOW(window), 900, 650);
   auto *view = EPHY_ENGINE_VIEW(g_object_new(EPHY_TYPE_ENGINE_VIEW, nullptr));
   adw_application_window_set_content(window, GTK_WIDGET(view));
@@ -211,7 +211,7 @@ int main(int argc, char **argv) {
   if (memory_mode) {
     private_session = ephy_engine_session_new(true);
     private_window = GTK_WINDOW(adw_application_window_new(GTK_APPLICATION(app)));
-    gtk_window_set_title(private_window, "Jupiter Private Portal Test");
+    gtk_window_set_title(private_window, "Gnosis Private Portal Test");
     gtk_window_set_default_size(private_window, 900, 650);
     test.private_view = EPHY_ENGINE_VIEW(g_object_new(EPHY_TYPE_ENGINE_VIEW,
       "network-session", private_session, nullptr));
@@ -220,7 +220,7 @@ int main(int argc, char **argv) {
     g_signal_connect(test.private_view, "load-changed", G_CALLBACK(+[](EphyEngineView*, WebKitLoadEvent event, Test *test) {
       if (event == WEBKIT_LOAD_FINISHED) { test->private_ready = true; test->maybe_start(); }
     }), &test);
-    ephy_engine_web_view_load_uri(test.private_view, g_getenv("JUPITER_TEST_URL"));
+    ephy_engine_web_view_load_uri(test.private_view, g_getenv("GNOSIS_TEST_URL"));
     gtk_window_present(private_window);
   }
 
@@ -236,7 +236,7 @@ int main(int argc, char **argv) {
     test->regular_ready = true;
     test->maybe_start();
   }), &test);
-  ephy_engine_web_view_load_uri(view, g_getenv("JUPITER_TEST_URL"));
+  ephy_engine_web_view_load_uri(view, g_getenv("GNOSIS_TEST_URL"));
   gtk_window_present(GTK_WINDOW(window));
   auto timeout = g_timeout_add_seconds(30, +[](gpointer user) -> gboolean {
     static_cast<Test*>(user)->fail("Timed out waiting for a portal operation"); return G_SOURCE_REMOVE;

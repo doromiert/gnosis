@@ -77,7 +77,7 @@ or `120`, using `/perf-native.html`. It waits fifteen seconds after loading to
 exclude startup/fullscreen-placement transitions, then prints six seconds of
 rAF timing, GTK ticks, compositor invalidations and buffer imports. It measures
 the shipping command line without adding browser feature flags. To obtain the
-explicit uncapped diagnostic baseline, use `JUPITER_UNCAP_FRAMES=1` separately.
+explicit uncapped diagnostic baseline, use `GNOSIS_UNCAP_FRAMES=1` separately.
 `mixed-frame-pacing-gtk-probe.cpp` opens two actual shell windows sharing the
 browser process on separate 60/120 Hz monitors. It measures each window's rAF
 and GTK ticks independently. This does not diagnose the separate severe GPU stall.

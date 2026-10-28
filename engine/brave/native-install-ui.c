@@ -16,7 +16,7 @@
 #include <sys/mman.h>
 #include <sys/socket.h>
 #include <unistd.h>
-#include "jupiter-native-install-config.h"
+#include "gnosis-native-install-config.h"
 
 typedef void (*NativeVoid)(void *);
 typedef struct Request Request;
@@ -33,6 +33,27 @@ static Request *requests;
 static gint64 sequence;
 static NativeVoid original_destroy, original_permission_destroy, original_permission_show;
 static guint input_watch;
+static GMutex portal_parent_mutex;
+static char *portal_parent;
+
+char *gnosis_portal_parent(void) {
+  g_mutex_lock(&portal_parent_mutex);
+  char *copy = g_strdup(portal_parent);
+  g_mutex_unlock(&portal_parent_mutex);
+  return copy;
+}
+
+gboolean gnosis_adapter_enabled(const char *id) {
+  static gsize initialized;
+  static GHashTable *disabled;
+  if (g_once_init_enter(&initialized)) {
+    disabled = g_hash_table_new_full(g_str_hash,g_str_equal,g_free,NULL);
+    g_auto(GStrv) values = g_strsplit(g_getenv("GNOSIS_DISABLED_ADAPTERS") ? g_getenv("GNOSIS_DISABLED_ADAPTERS") : "",",",-1);
+    for (guint i=0;values[i];++i) if (*values[i]) g_hash_table_add(disabled,g_strdup(values[i]));
+    g_once_init_leave(&initialized,1);
+  }
+  return !g_hash_table_contains(disabled,id);
+}
 
 static void *pointer_at(void *object, size_t offset) {
   void *value;
@@ -266,6 +287,15 @@ static gboolean receive_response(gint fd, GIOCondition condition, gpointer unuse
       if (json_parser_load_from_data(parser, data, length, NULL) &&
           JSON_NODE_HOLDS_OBJECT(json_parser_get_root(parser))) {
         JsonObject *message = json_node_get_object(json_parser_get_root(parser));
+        if (!strcmp(json_object_get_string_member_with_default(message, "kind", ""), "parent-window")) {
+          const char *handle = json_object_get_string_member_with_default(message, "handle", "");
+          if (strlen(handle) <= 4096 && (!*handle || g_str_has_prefix(handle, "wayland:") || g_str_has_prefix(handle, "x11:"))) {
+            g_mutex_lock(&portal_parent_mutex);
+            g_free(portal_parent); portal_parent = g_strdup(handle);
+            g_mutex_unlock(&portal_parent_mutex);
+          }
+          return G_SOURCE_CONTINUE;
+        }
         if (native_close_request(message) || native_find_dispatch(message)) return G_SOURCE_CONTINUE;
         if (!strcmp(json_object_get_string_member_with_default(message, "kind", ""), "translation")) {
           translation_request(message); return G_SOURCE_CONTINUE;
@@ -309,7 +339,7 @@ static void show_install(void *widget, void *view) {
   memcpy(&kind, prompt, sizeof kind);
   /* Enterprise justification and host-withholding variants need additional
    * controls. Keep native handling until those controls have a GTK bridge. */
-  if (channel < 0 || (kind != 0 && kind != 3 && kind != 4) ||
+  if (!gnosis_adapter_enabled("extension-dialogs") || channel < 0 || (kind != 0 && kind != 3 && kind != 4) ||
       pointer_at(view, 0x818) || pointer_at(view, 0x820)) {
     native_call(UI_WIDGET_SHOW_RVA, widget); return;
   }
@@ -349,7 +379,7 @@ static void show_install(void *widget, void *view) {
 }
 
 static void show_permission(void *view) {
-  if (channel < 0) { original_permission_show(view); return; }
+  if (!gnosis_adapter_enabled("permission-dialogs") || channel < 0) { original_permission_show(view); return; }
   void *widget = ((void *(*)(void *))(image + UI_PERMISSION_GET_WIDGET_RVA))(view);
   void *delegate = (char *)view + 0x310;
   void *table = pointer_at(delegate, 0);
@@ -489,9 +519,11 @@ static gboolean show_uninstall(void *widget);
 static gboolean show_authenticator_widget(void *widget);
 
 static void show_widget(void *widget) {
-  if (show_authenticator_widget(widget)) return;
-  if (show_file_access(widget) || show_portal_capture(widget) || show_uninstall(widget)) return;
-  if (channel >= 0) for (Chooser *c = choosers; c; c = c->next) {
+  if (gnosis_adapter_enabled("passkeys") && show_authenticator_widget(widget)) return;
+  if ((gnosis_adapter_enabled("file-access") && show_file_access(widget)) ||
+      (gnosis_adapter_enabled("screen-capture") && show_portal_capture(widget)) ||
+      (gnosis_adapter_enabled("extension-dialogs") && show_uninstall(widget))) return;
+  if (gnosis_adapter_enabled("device-choosers") && channel >= 0) for (Chooser *c = choosers; c; c = c->next) {
     void *owner = ((void *(*)(void *))(image + UI_PERMISSION_GET_WIDGET_RVA))(c->view);
     if (owner != widget) continue;
     for (Request *r = requests; r; r = r->next) if (r->view == c->view) return;
@@ -558,7 +590,7 @@ static void (*original_model_host_construct)(void *, void *, void *, int, int, i
 static void show_extension_model(void *parent, void *extension, void *model) {
   gboolean uninstall = (uintptr_t)__builtin_return_address(0) == image + UI_UNINSTALL_MODEL_CALLER_RVA;
   void *previous_model = pending_uninstall_model;
-  if (uninstall) pending_uninstall_model = model;
+  if (uninstall && gnosis_adapter_enabled("extension-dialogs")) pending_uninstall_model = model;
   original_extension_model_show(parent, extension, model);
   pending_uninstall_model = previous_model;
 }
@@ -644,14 +676,8 @@ static gboolean show_uninstall(void *widget) {
   return TRUE;
 }
 static void decide_uninstall(Request *r, gboolean accept, const char *choice) {
-  void *model = pointer_at(r->view, 0x450), *widget = r->widget;
-  if (model) {
-    // The host owns this field. Update the real native checkbox before calling
-    // DialogModel::OnDialogAccept; the browser performs removal/report routing.
-    if (r->checkbox) *((unsigned char *)r->checkbox + 0xb0) = accept && choice && !strcmp(choice, "report-abuse");
-    native_call(accept ? UI_FILE_MODEL_ACCEPT_RVA : UI_FILE_MODEL_CANCEL_RVA, model);
-  }
-  native_call(UI_WIDGET_CLOSE_RVA, widget);
+  if (r->checkbox) *((unsigned char *)r->checkbox + 0xb0) = accept && choice && !strcmp(choice, "report-abuse");
+  native_call(accept ? UI_DIALOG_ACCEPT_RVA : UI_DIALOG_CANCEL_RVA, r->view);
   g_free(r);
 }
 static void destroy_model_host(void *host) {
@@ -667,7 +693,7 @@ static void destroy_model_host(void *host) {
 static void file_access_dialog(void *request, void *callback, void *contents) {
   void *model = ((void *(*)(void *, void *, void *))(image + UI_FILE_MODEL_CREATE_RVA))(contents, request, callback);
   void *previous_model = pending_file_model, *previous_host = pending_file_host;
-  pending_file_model = model; pending_file_host = NULL;
+  pending_file_model = gnosis_adapter_enabled("file-access") ? model : NULL; pending_file_host = NULL;
   ((void (*)(void *, void *))(image + UI_SHOW_TAB_MODAL_RVA))(model, contents);
   pending_file_model = previous_model; pending_file_host = previous_host;
 }
@@ -732,12 +758,10 @@ static gboolean show_file_access(void *widget) {
   return TRUE;
 }
 static void decide_file_access(Request *r, gboolean accept) {
-  void *model = pointer_at(r->view, 0x450);
-  void *widget = r->widget;
-  /* The browser model owns the original split-once permission callback. The
-   * host remains responsible for destruction and its close/dismiss callback. */
-  if (model) native_call(accept ? UI_FILE_MODEL_ACCEPT_RVA : UI_FILE_MODEL_CANCEL_RVA, model);
-  native_call(UI_WIDGET_CLOSE_RVA, widget);
+  /* DialogDelegate guards synchronous destruction and suppresses the close
+   * callback after a button decision. Calling the model then Widget::Close
+   * instead consumes FileSystemAccess's split-once callback twice. */
+  native_call(accept ? UI_DIALOG_ACCEPT_RVA : UI_DIALOG_CANCEL_RVA, r->view);
   g_free(r);
 }
 
@@ -772,7 +796,7 @@ static void capture_construct(void *view, void *params, void *parent, void *list
   /* Browser-tab-only requests keep their existing path. Never synthesize a
    * screen list when the caller/policy omitted it. Prefer the requested window
    * list; otherwise use the portal's monitor list for no-preference requests. */
-  if (channel >= 0 && items && count <= 8 && preference != 3) {
+  if (gnosis_adapter_enabled("screen-capture") && channel >= 0 && items && count <= 8 && preference != 3) {
     for (size_t i = 0; i < count; ++i) {
       void *list = pointer_at(items, i * 8);
       int type = list_type(list);
@@ -781,7 +805,7 @@ static void capture_construct(void *view, void *params, void *parent, void *list
           (type == preference || (!preference && (!selected || type == 1)))) selected = type;
     }
   }
-  Capture *c = channel >= 0 ? g_new0(Capture, 1) : NULL;
+  Capture *c = gnosis_adapter_enabled("screen-capture") && channel >= 0 ? g_new0(Capture, 1) : NULL;
   if (c) {
     c->view = view; c->type = selected; c->combined = selected && allowed == 3;
     c->next = captures; captures = c;
@@ -830,7 +854,7 @@ static void *capture_widget(void *browser, void *contents, void *view, void *con
   ((void (*)(void *, int))(image + UI_CAPTURE_SET_MODAL_RVA))(view, 0);
   void *widget = ((void *(*)(void *, void *, void *))(image + UI_CAPTURE_CREATE_WIDGET_RVA))(view, context, parent);
   c->hidden = TRUE;
-  g_printerr("Jupiter capture: portal-only widget created without Chromium modal\n");
+  g_printerr("Gnosis capture: portal-only widget created without Chromium modal\n");
   return widget;
 }
 static gboolean show_portal_capture(void *widget) {
@@ -838,7 +862,7 @@ static gboolean show_portal_capture(void *widget) {
     void *owner = ((void *(*)(void *))(image + UI_PERMISSION_GET_WIDGET_RVA))((char *)c->view + 0x2c8);
     if (c->type && owner == widget && capture_controller(c)) {
       c->hidden = TRUE;
-      g_printerr("Jupiter capture: XDG portal owns source selection\n");
+      g_printerr("Gnosis capture: XDG portal owns source selection\n");
       return TRUE;
     }
   }
@@ -857,7 +881,7 @@ static gboolean finish_portal_capture(gpointer view) {
   int type; memcpy(&type, id, 4);
   if (type != c->type) return G_SOURCE_REMOVE;
   c->completed = TRUE;
-  g_printerr("Jupiter capture: completing explicit portal selection\n");
+  g_printerr("Gnosis capture: completing explicit portal selection\n");
   ((void (*)(void *, void *))(image + UI_CAPTURE_ACCEPT_SOURCE_RVA))(view, id);
   return G_SOURCE_REMOVE;
 }
@@ -903,14 +927,14 @@ void g_dbus_proxy_call(GDBusProxy *proxy, const gchar *method, GVariant *paramet
     g_variant_dict_insert(&dictionary, "types", "u", 3u);
     GVariant *combined = g_variant_new("(o@a{sv})", handle, g_variant_dict_end(&dictionary));
     g_variant_unref(options); g_variant_unref(parameters); parameters = combined;
-    g_printerr("Jupiter capture: portal offers screens and windows\n");
+    g_printerr("Gnosis capture: portal offers screens and windows\n");
   }
   ((Call)next)(proxy, method, parameters, flags, timeout, cancellable, callback, data);
 }
 static void capture_dismissed(void *controller) {
   Capture *c = find_capture(pointer_at(controller, 0x10));
   if (c && c->hidden && capture_controller(c) == controller) {
-    g_printerr("Jupiter capture: portal cancelled\n");
+    g_printerr("Gnosis capture: portal cancelled\n");
     native_call(UI_CAPTURE_REJECT_RVA, c->view);
     return;
   }
@@ -926,7 +950,7 @@ static void download_begin(void *handler, void *frame, void *item) {
    * GTK moves its file too early; do not emit a user-download event or add the
    * DevTools progress observer. Ordinary CRX downloads are not filtered. */
   if (source == 5) {
-    g_printerr("Jupiter extension installer: retaining native CRX ownership\n");
+    g_printerr("Gnosis extension installer: retaining native CRX ownership\n");
     return;
   }
   original_download_begin(handler, frame, item);
@@ -940,7 +964,7 @@ static void download_begin(void *handler, void *frame, void *item) {
 __attribute__((constructor)) static void initialize(void) {
   /* Only the browser ELF is preloaded by our private runtime launcher. */
   void *main = dlsym(RTLD_DEFAULT, "ChromeMain");
-  const char *value = g_getenv("JUPITER_NATIVE_UI_FD");
+  const char *value = g_getenv("GNOSIS_NATIVE_UI_FD");
   if (!main || !value || strcmp(value, "5")) return;
   /* The shim is already mapped into this browser. Do not inject its GTK/GLib
    * dependencies into renderer/GPU execs or desktop tools using another libc. */
@@ -948,7 +972,9 @@ __attribute__((constructor)) static void initialize(void) {
   Dl_info info;
   if (!dladdr(main, &info)) return;
   image = (uintptr_t)info.dli_fbase;
-  g_unsetenv("JUPITER_NATIVE_UI_FD");
+  g_unsetenv("GNOSIS_NATIVE_UI_FD");
+  (void)gnosis_adapter_enabled("permission-dialogs");
+  g_unsetenv("GNOSIS_DISABLED_ADAPTERS");
   channel = 5;
   fcntl(channel, F_SETFD, FD_CLOEXEC);
   int type = 0; socklen_t size = sizeof type;
@@ -957,7 +983,7 @@ __attribute__((constructor)) static void initialize(void) {
   g_autoptr(GMappedFile) file = g_mapped_file_new("/proc/self/exe", FALSE, &error);
   g_autofree char *hash = file ? g_compute_checksum_for_data(G_CHECKSUM_SHA256,
     (const guchar *)g_mapped_file_get_contents(file), g_mapped_file_get_length(file)) : NULL;
-  if (!hash || strcmp(hash, UI_BINARY_SHA256) || !matches(UI_SHOW_TAIL_RVA, UI_SHOW_TAIL_BYTES) ||
+  if (!hash || (strcmp(hash, UI_BINARY_SHA256) && strcmp(hash, UI_NATIVE_SCROLLBAR_BINARY_SHA256)) || !matches(UI_SHOW_TAIL_RVA, UI_SHOW_TAIL_BYTES) ||
       !matches(UI_AUTHENTICATOR_SHOW_RVA, UI_AUTHENTICATOR_SHOW_BYTES) ||
       !matches(UI_AUTHENTICATOR_CONSTRUCT_RVA, UI_AUTHENTICATOR_CONSTRUCT_BYTES) ||
       !matches(UI_AUTHENTICATOR_UPDATE_RVA, UI_AUTHENTICATOR_UPDATE_BYTES) ||
@@ -975,6 +1001,8 @@ __attribute__((constructor)) static void initialize(void) {
       !matches(UI_FILE_DIALOG_RVA, UI_FILE_DIALOG_BYTES) ||
       !matches(UI_CREATE_MODAL_RVA, UI_CREATE_MODAL_BYTES) ||
       !matches(UI_MODEL_HOST_DESTROY_RVA, UI_MODEL_HOST_DESTROY_BYTES) ||
+      !matches(UI_DIALOG_ACCEPT_RVA, UI_DIALOG_ACCEPT_BYTES) ||
+      !matches(UI_DIALOG_CANCEL_RVA, UI_DIALOG_CANCEL_BYTES) ||
       !matches(UI_CAPTURE_CONSTRUCT_RVA, UI_CAPTURE_CONSTRUCT_BYTES) ||
       !matches(UI_CAPTURE_DESTROY_RVA, UI_CAPTURE_DESTROY_BYTES) ||
       !matches(UI_CAPTURE_SELECTED_RVA, UI_CAPTURE_SELECTED_BYTES) ||
@@ -994,8 +1022,14 @@ __attribute__((constructor)) static void initialize(void) {
       !matches(UI_TRANSLATE_IS_TRANSLATED_RVA, UI_TRANSLATE_IS_TRANSLATED_BYTES) ||
       !matches(UI_AGENT_FOR_ID_RVA, UI_AGENT_FOR_ID_BYTES) ||
       !matches(UI_GET_USER_DATA_RVA, UI_GET_USER_DATA_BYTES)) {
-    g_printerr("Jupiter native install UI: unsupported binary; keeping native dialog\n");
+    g_printerr("Gnosis native install UI: unsupported binary; keeping native dialog\n");
     close(channel); channel = -1; return;
+  }
+  /* Restore only the exact original instructions recorded by the binary pin.
+   * The on-disk hash was checked above; no browser policy is changed. */
+  for (size_t i=0;i<G_N_ELEMENTS(debug_optional_patches);++i) {
+    const struct DebugOptionalPatch *patch=&debug_optional_patches[i];
+    if (!gnosis_adapter_enabled(patch->id) && !replace_code(patch->offset,patch->original,patch->length)) _exit(126);
   }
   unsigned char *trampoline = mmap(NULL, 4096, PROT_READ | PROT_WRITE,
     MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
@@ -1124,7 +1158,7 @@ __attribute__((constructor)) static void initialize(void) {
   if (!replace_code(UI_CAPTURE_DISMISSED_RVA, jump, 14)) _exit(126);
   original_download_begin = (void (*)(void *, void *, void *))(trampoline + 896);
   absolute_jump(jump, download_begin);
-  if (!replace_code(UI_DOWNLOAD_BEGIN_RVA, jump, 14)) _exit(126);
+  if (gnosis_adapter_enabled("downloads") && !replace_code(UI_DOWNLOAD_BEGIN_RVA, jump, 14)) _exit(126);
   original_extension_model_show = (void (*)(void *, void *, void *))(trampoline + 960);
   original_model_host_construct = (void (*)(void *, void *, void *, int, int, int, int))(trampoline + 1024);
   absolute_jump(jump, show_extension_model);
@@ -1132,7 +1166,7 @@ __attribute__((constructor)) static void initialize(void) {
   absolute_jump(jump, model_host_construct);
   if (!replace_code(UI_MODEL_HOST_CONSTRUCT_RVA, jump, 14)) _exit(126);
   absolute_jump(jump, translate_ui);
-  if (!replace_code(UI_TRANSLATE_UI_RVA, jump, 14)) _exit(126);
+  if (gnosis_adapter_enabled("translation") && !replace_code(UI_TRANSLATE_UI_RVA, jump, 14)) _exit(126);
   absolute_jump(jump, authenticator_construct);
   if (!replace_code(UI_AUTHENTICATOR_CONSTRUCT_RVA, jump, 14)) _exit(126);
   absolute_jump(jump, authenticator_destroy);
@@ -1144,5 +1178,5 @@ __attribute__((constructor)) static void initialize(void) {
   if (!input_watch) input_watch = g_unix_fd_add(channel, G_IO_IN | G_IO_HUP | G_IO_ERR, receive_response, NULL);
   if (!native_close_install()) { g_printerr("Gnosis close checks: unsupported binary\n"); close(channel); channel = -1; return; }
   if (!native_find_install()) g_printerr("Gnosis native find: unsupported binary; find disabled\n");
-  g_printerr("Jupiter native install UI: exact-binary presentation hook ready\n");
+  g_printerr("Gnosis native install UI: exact-binary presentation hook ready\n");
 }

@@ -79,7 +79,7 @@ struct HeldResponse {
   std::filesystem::path marker;
   std::string key, uri;
   HeldResponse(const std::string& base, const char *name, bool redirect = false) : key(name) {
-    const char *directory = g_getenv("JUPITER_RESPONSE_FIXTURE_DIR");
+    const char *directory = g_getenv("GNOSIS_RESPONSE_FIXTURE_DIR");
     g_assert_nonnull(directory);
     marker = std::filesystem::path(directory) / key;
     uri = base + "response-hold?case=" + key + (redirect ? "&redirect=1" : "");
@@ -177,11 +177,11 @@ int main(int argc, char **argv) {
   disable_diagnostic_core_dumps();
   if (!cef_api_hash(CEF_API_VERSION, 0)) return 1;
   int sub = ephy_engine_execute_process(argc, argv); if (sub >= 0) return sub;
-  auto *app = adw_application_new("io.github.doromiert.Jupiter.ResponseTest", G_APPLICATION_NON_UNIQUE);
+  auto *app = adw_application_new("com.neg-zero.Gnosis.ResponseTest", G_APPLICATION_NON_UNIQUE);
   GError *error = nullptr;
   g_assert_true(g_application_register(G_APPLICATION(app), nullptr, &error));
   g_assert_no_error(error);
-  char profile[] = "/tmp/jupiter-response-test-XXXXXX";
+  char profile[] = "/tmp/gnosis-response-test-XXXXXX";
   g_assert_nonnull(mkdtemp(profile));
   g_assert_true(ephy_engine_initialize(argc, argv, profile, true));
   disable_diagnostic_core_dumps();
@@ -199,7 +199,7 @@ int main(int argc, char **argv) {
   auto *view = EPHY_ENGINE_VIEW(g_object_new(EPHY_TYPE_ENGINE_VIEW, nullptr));
   adw_application_window_set_content(window, GTK_WIDGET(view));
   gtk_window_present(GTK_WINDOW(window));
-  const std::string base = g_getenv("JUPITER_TEST_URL");
+  const std::string base = g_getenv("GNOSIS_TEST_URL");
   const auto document_uri = base + "response-document";
   const auto missing_uri = base + "response-missing";
   unsigned child_responses = 0;
@@ -225,7 +225,7 @@ int main(int argc, char **argv) {
   g_assert_cmpuint(ephy_engine_response_get_status_code(response), ==, 200);
   g_assert_cmpint(ephy_engine_response_get_content_length(response), >, 0);
   g_assert_cmpstr(ephy_engine_response_get_suggested_filename(response), ==, "report_é.html");
-  g_assert_cmpstr(soup_message_headers_get_one(ephy_engine_response_get_http_headers(response), "X-Jupiter-Fixture"), ==, "actual-response");
+  g_assert_cmpstr(soup_message_headers_get_one(ephy_engine_response_get_http_headers(response), "X-Gnosis-Fixture"), ==, "actual-response");
   g_print("CEF response metadata follows redirects, preserves headers and UTF-8 filenames, excludes subframe responses: PASS\n");
   navigate(view, base + "response-missing");
   auto *missing = ephy_engine_web_view_get_main_resource(view);

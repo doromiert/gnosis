@@ -96,7 +96,7 @@ void finished(const SharedPaste& paste) {
       document.execCommand('insertText', false, text);
     }
   })())JS";
-  paste->frame->ExecuteJavaScript(script, "jupiter://clipboard", 1);
+  paste->frame->ExecuteJavaScript(script, "gnosis://clipboard", 1);
 }
 struct Read {
   SharedPaste paste;
@@ -252,11 +252,11 @@ void Clipboard::paste(Browser& browser, bool plain_text) {
 }
 
 namespace {
-constexpr const char* write_message = "jupiter.clipboard.write";
-constexpr const char* result_message = "jupiter.clipboard.result";
-constexpr const char* read_message = "jupiter.clipboard.read-text";
-constexpr const char* rich_read_message = "jupiter.clipboard.read";
-constexpr const char* read_result_message = "jupiter.clipboard.read-text-result";
+constexpr const char* write_message = "gnosis.clipboard.write";
+constexpr const char* result_message = "gnosis.clipboard.result";
+constexpr const char* read_message = "gnosis.clipboard.read-text";
+constexpr const char* rich_read_message = "gnosis.clipboard.read";
+constexpr const char* read_result_message = "gnosis.clipboard.read-text-result";
 constexpr size_t clipboard_limit = 64 * 1024 * 1024;
 struct Context {
   CefRefPtr<CefBrowser> browser;
@@ -367,7 +367,7 @@ class Renderer final : public CefRenderProcessHandler {
 public:
   void OnContextCreated(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> frame,
                         CefRefPtr<CefV8Context> context) override {
-    auto* bytes = g_resources_lookup_data("/io/github/doromiert/Jupiter/clipboard/bridge.js",
+    auto* bytes = g_resources_lookup_data("/com/neg_zero/Gnosis/clipboard/bridge.js",
                                           G_RESOURCE_LOOKUP_FLAGS_NONE, nullptr);
     if (!bytes)
       return;
@@ -375,8 +375,8 @@ public:
     auto state = std::make_shared<Context>();
     state->browser = browser; state->frame = frame; state->value = context; state->token = token;
     context->GetGlobal()->SetValue(
-        "__jupiterClipboardWrite",
-        CefV8Value::CreateFunction("__jupiterClipboardWrite", new WriteHandler(frame, token)),
+        "__gnosisClipboardWrite",
+        CefV8Value::CreateFunction("__gnosisClipboardWrite", new WriteHandler(frame, token)),
         static_cast<cef_v8_propertyattribute_t>(V8_PROPERTY_ATTRIBUTE_READONLY |
                                                 V8_PROPERTY_ATTRIBUTE_DONTENUM));
     gsize size;
@@ -407,7 +407,7 @@ public:
         }
       }
     }
-    context->Eval(std::string(data, size), "jupiter://clipboard", 1, result, exception);
+    context->Eval(std::string(data, size), "gnosis://clipboard", 1, result, exception);
     if (!exception && result && result->IsFunction() &&
         result->ExecuteFunction(nullptr, {CefV8Value::CreateBool(main_world), read, rich_read}))
       contexts_.emplace(token, state);
@@ -447,7 +447,7 @@ public:
         promise->ResolvePromise(reply);
       }
     } else {
-      auto callback = context->GetGlobal()->GetValue("__jupiterClipboardResult");
+      auto callback = context->GetGlobal()->GetValue("__gnosisClipboardResult");
       if (callback && callback->IsFunction())
         callback->ExecuteFunction(nullptr, {CefV8Value::CreateString(args->GetString(1)),
                                           CefV8Value::CreateInt(args->GetInt(2)),
@@ -674,7 +674,7 @@ bool Clipboard::receive(Browser& browser, CefRefPtr<CefFrame> frame, CefProcessI
     ok = false;
   for (auto* provider : providers)
     g_object_unref(provider);
-  if (browser.owner()->app.render_test && g_getenv("JUPITER_TEST_COPY"))
+  if (browser.owner()->app.render_test && g_getenv("GNOSIS_TEST_COPY"))
     g_print("Clipboard bridge diagnostic: request=%d success=%s bytes=%zu widget-focus=%d gesture=%d frame-focus=%d\n",
       id, ok ? "yes" : "no", total, gtk_widget_has_focus(browser.surface()), browser.clipboard_allowed(),
       focused && focused->GetIdentifier() == frame->GetIdentifier());

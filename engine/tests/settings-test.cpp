@@ -61,7 +61,7 @@ int main(int argc, char **argv) {
     "default-monospace-font-size", 19u, "monospace-font-family", "DejaVu Sans Mono",
     "minimum-font-size", 7u, "preferred-languages", languages,
     "enable-spell-checking", false, "enable-caret-browsing", true,
-    "user-agent", "JupiterSettingsFixture/1.0", nullptr);
+    "user-agent", "GnosisSettingsFixture/1.0", nullptr);
   if (flags) {
     gsize count;
     auto *features = ephy_engine_settings_get_features(&count);
@@ -71,15 +71,15 @@ int main(int argc, char **argv) {
       g_assert_cmpint(ephy_engine_settings_get_feature_enabled(settings, &features[i]), ==, enabled);
     }
   }
-  auto *app = adw_application_new("io.github.doromiert.Jupiter.SettingsTest", G_APPLICATION_NON_UNIQUE);
+  auto *app = adw_application_new("com.neg-zero.Gnosis.SettingsTest", G_APPLICATION_NON_UNIQUE);
   GError *error = nullptr;
   g_assert_true(g_application_register(G_APPLICATION(app), nullptr, &error)); g_assert_no_error(error);
-  char profile[] = "/tmp/jupiter-settings-test-XXXXXX"; g_assert_nonnull(mkdtemp(profile));
+  char profile[] = "/tmp/gnosis-settings-test-XXXXXX"; g_assert_nonnull(mkdtemp(profile));
   g_assert_true(ephy_engine_initialize(argc, argv, profile, true)); disable_diagnostic_core_dumps();
   auto *normal = ephy_engine_session_get_default();
-  std::string uri = std::string(g_getenv("JUPITER_TEST_URL")) + "settings-fixture";
+  std::string uri = std::string(g_getenv("GNOSIS_TEST_URL")) + "settings-fixture";
   auto *view = page(GTK_APPLICATION(app), normal, uri.c_str());
-  assert_script(view, "initialHeaders.userAgent==='JupiterSettingsFixture/1.0' && navigator.userAgent===initialHeaders.userAgent");
+  assert_script(view, "initialHeaders.userAgent==='GnosisSettingsFixture/1.0' && navigator.userAgent===initialHeaders.userAgent");
   assert_script(view, "initialHeaders.language.startsWith('en-GB') && navigator.language==='en-GB'");
   assert_script(view, "getComputedStyle(sample).fontSize==='23px' && getComputedStyle(sample).fontFamily.includes('DejaVu Sans Mono') && getComputedStyle(fixed).fontSize==='19px'");
   auto context = ephy_engine_session_context(normal);
@@ -94,21 +94,21 @@ int main(int argc, char **argv) {
   }
   auto *private_session = ephy_engine_session_new(true);
   auto *private_view = page(GTK_APPLICATION(app), private_session, uri.c_str());
-  assert_script(private_view, "getComputedStyle(sample).fontSize==='23px' && navigator.language==='en-GB' && navigator.userAgent==='JupiterSettingsFixture/1.0'");
+  assert_script(private_view, "getComputedStyle(sample).fontSize==='23px' && navigator.language==='en-GB' && navigator.userAgent==='GnosisSettingsFixture/1.0'");
   const char *polish[] = {"pl-PL", "pl", nullptr};
   g_object_set(settings, "default-font-size", 29u, "preferred-languages", polish,
-    "user-agent", "JupiterSettingsFixture/2.0", "enable-spell-checking", true, nullptr);
+    "user-agent", "GnosisSettingsFixture/2.0", "enable-spell-checking", true, nullptr);
   for (auto *v : {view, private_view}) {
-    assert_script(v, "getComputedStyle(sample).fontSize==='29px' && navigator.language==='pl-PL' && navigator.userAgent==='JupiterSettingsFixture/2.0'");
-    assert_script(v, "fetch('/echo-headers').then(r=>r.json()).then(h=>h.userAgent==='JupiterSettingsFixture/2.0' && h.language.startsWith('pl-PL'))");
+    assert_script(v, "getComputedStyle(sample).fontSize==='29px' && navigator.language==='pl-PL' && navigator.userAgent==='GnosisSettingsFixture/2.0'");
+    assert_script(v, "fetch('/echo-headers').then(r=>r.json()).then(h=>h.userAgent==='GnosisSettingsFixture/2.0' && h.language.startsWith('pl-PL'))");
   }
   g_print("Live font, language and HTTP/JavaScript user-agent changes reach regular and private tabs: PASS\n");
   auto *another_session = ephy_engine_session_new(true);
   auto *another_view = page(GTK_APPLICATION(app), another_session, uri.c_str());
-  assert_script(another_view, "initialHeaders.userAgent==='JupiterSettingsFixture/2.0' && navigator.language==='pl-PL' && getComputedStyle(sample).fontSize==='29px'");
+  assert_script(another_view, "initialHeaders.userAgent==='GnosisSettingsFixture/2.0' && navigator.language==='pl-PL' && getComputedStyle(sample).fontSize==='29px'");
   g_print("New private contexts inherit current browser preferences: PASS\n");
   for (auto *session : {normal, another_session}) {
-    auto *download = ephy_engine_session_download_uri(session, (std::string(g_getenv("JUPITER_TEST_URL")) + "download-headers").c_str());
+    auto *download = ephy_engine_session_download_uri(session, (std::string(g_getenv("GNOSIS_TEST_URL")) + "download-headers").c_str());
     bool done = false;
     g_signal_connect(download, "finished", G_CALLBACK(+[](EphyEngineDownload*, bool *done) { *done = true; }), &done);
     g_signal_connect(download, "failed", G_CALLBACK(+[](EphyEngineDownload*, GError *error, gpointer) { g_error("Download settings check: %s", error->message); }), nullptr);
@@ -117,7 +117,7 @@ int main(int argc, char **argv) {
     wait_for([&]{ return done; }, "background identity download");
     char *bytes = nullptr;
     g_assert_true(g_file_get_contents(path.c_str(), &bytes, nullptr, &error)); g_assert_no_error(error);
-    g_assert_nonnull(strstr(bytes, "JupiterSettingsFixture/2.0"));
+    g_assert_nonnull(strstr(bytes, "GnosisSettingsFixture/2.0"));
     g_assert_nonnull(strstr(bytes, "\"language\": \"pl-PL"));
     g_free(bytes); g_object_unref(download);
   }
@@ -125,13 +125,13 @@ int main(int argc, char **argv) {
   ephy_engine_web_view_set_user_agent_override(private_view, "PrivateViewFixture/1.0");
   assert_script(private_view, "navigator.userAgent==='PrivateViewFixture/1.0'");
   assert_script(private_view, "fetch('/echo-headers').then(r=>r.json()).then(h=>h.userAgent==='PrivateViewFixture/1.0')");
-  assert_script(view, "fetch('/echo-headers').then(r=>r.json()).then(h=>h.userAgent==='JupiterSettingsFixture/2.0')");
+  assert_script(view, "fetch('/echo-headers').then(r=>r.json()).then(h=>h.userAgent==='GnosisSettingsFixture/2.0')");
   ephy_engine_web_view_set_user_agent_override(private_view, nullptr);
-  assert_script(private_view, "navigator.userAgent==='JupiterSettingsFixture/2.0'");
+  assert_script(private_view, "navigator.userAgent==='GnosisSettingsFixture/2.0'");
   g_print("Per-view identity overrides do not change other tabs: PASS\n");
   g_object_set(settings, "user-agent", "", nullptr);
   for (auto *v : {view, private_view, another_view}) {
-    assert_script(v, "navigator.userAgent.includes('Chrome/') && !navigator.userAgent.includes('JupiterSettingsFixture')");
+    assert_script(v, "navigator.userAgent.includes('Chrome/') && !navigator.userAgent.includes('GnosisSettingsFixture')");
     assert_script(v, "fetch('/echo-headers').then(r=>r.json()).then(h=>h.userAgent===navigator.userAgent)");
   }
   g_print("Clearing a custom user agent restores Chromium's actual identity: PASS\n");
@@ -150,7 +150,7 @@ int main(int argc, char **argv) {
   }
   assert_script(private_view, "fetch('/echo-cookie').then(r=>r.text()).then(cookie=>cookie.includes('storagePolicy=allowed'))");
   for (auto *session : {normal, another_session}) {
-    auto *download = ephy_engine_session_download_uri(session, (std::string(g_getenv("JUPITER_TEST_URL")) + "download-cookie").c_str());
+    auto *download = ephy_engine_session_download_uri(session, (std::string(g_getenv("GNOSIS_TEST_URL")) + "download-cookie").c_str());
     bool done = false;
     g_signal_connect(download, "finished", G_CALLBACK(+[](EphyEngineDownload*, bool *done) { *done = true; }), &done);
     g_signal_connect(download, "failed", G_CALLBACK(+[](EphyEngineDownload*, GError *error, gpointer) { g_error("Download storage policy: %s", error->message); }), nullptr);

@@ -1,0 +1,6 @@
+<gresources>
+  <gresource prefix="/com/neg_zero/Gnosis/mcp">
+    <file alias="tools.json">gnosis-mcp-tools.json</file>
+    <file alias="page.js">gnosis-mcp-page.js</file>
+  </gresource>
+</gresources>

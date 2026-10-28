@@ -11,7 +11,7 @@
 #include "pointer-constraints-client.h"
 #include "relative-pointer-client.h"
 
-struct JupiterOuterPointer {
+struct GnosisOuterPointer {
   GtkWidget *widget;
   GdkCursor *saved_cursor;
   struct wl_display *display;
@@ -26,11 +26,11 @@ struct JupiterOuterPointer {
   GSource *source;
   guint32 enter_serial;
   gboolean locked, cursor_hidden, releasing;
-  JupiterPointerState state;
-  JupiterPointerMotion motion;
+  GnosisPointerState state;
+  GnosisPointerMotion motion;
   gpointer data;
 };
-typedef struct { GSource source; GPollFD poll; JupiterOuterPointer *owner; } PointerSource;
+typedef struct { GSource source; GPollFD poll; GnosisOuterPointer *owner; } PointerSource;
 static gboolean source_prepare(GSource *source, gint *timeout) {
   PointerSource *s = (PointerSource *)source;
   *timeout = -1;
@@ -51,11 +51,11 @@ static gboolean source_dispatch(GSource *source, GSourceFunc callback, gpointer 
 static GSourceFuncs source_funcs = {.prepare = source_prepare, .check = source_check, .dispatch = source_dispatch};
 static void enter(void *data, struct wl_pointer *pointer, uint32_t serial, struct wl_surface *surface, wl_fixed_t x, wl_fixed_t y) {
   (void)pointer; (void)surface; (void)x; (void)y;
-  ((JupiterOuterPointer *)data)->enter_serial = serial;
+  ((GnosisOuterPointer *)data)->enter_serial = serial;
 }
 static void leave(void *data, struct wl_pointer *pointer, uint32_t serial, struct wl_surface *surface) {
   (void)pointer; (void)serial; (void)surface;
-  JupiterOuterPointer *self = data; self->enter_serial = 0;
+  GnosisOuterPointer *self = data; self->enter_serial = 0;
 }
 static void absolute_motion(void *d, struct wl_pointer *p, uint32_t t, wl_fixed_t x, wl_fixed_t y) {(void)d;(void)p;(void)t;(void)x;(void)y;}
 static void button(void *d, struct wl_pointer *p, uint32_t s, uint32_t t, uint32_t b, uint32_t v) {(void)d;(void)p;(void)s;(void)t;(void)b;(void)v;}
@@ -70,7 +70,7 @@ static const struct wl_pointer_listener pointer_listener = {
   .axis_stop = axis_stop, .axis_discrete = axis_discrete,
 };
 static void capabilities(void *data, struct wl_seat *seat, uint32_t caps) {
-  JupiterOuterPointer *self = data;
+  GnosisOuterPointer *self = data;
   if ((caps & WL_SEAT_CAPABILITY_POINTER) && !self->pointer) {
     self->pointer = wl_seat_get_pointer(seat);
     wl_pointer_add_listener(self->pointer, &pointer_listener, self);
@@ -79,7 +79,7 @@ static void capabilities(void *data, struct wl_seat *seat, uint32_t caps) {
 static void seat_name(void *d, struct wl_seat *s, const char *n) {(void)d;(void)s;(void)n;}
 static const struct wl_seat_listener seat_listener = {.capabilities = capabilities, .name = seat_name};
 static void global(void *data, struct wl_registry *registry, uint32_t name, const char *interface, uint32_t version) {
-  JupiterOuterPointer *self = data;
+  GnosisOuterPointer *self = data;
   if (!strcmp(interface, "wl_seat") && !self->seat) {
     self->seat = wl_registry_bind(registry, name, &wl_seat_interface, MIN(version, 7));
     wl_seat_add_listener(self->seat, &seat_listener, self);
@@ -92,20 +92,20 @@ static void global_remove(void *d, struct wl_registry *r, uint32_t n) {(void)d;(
 static const struct wl_registry_listener registry_listener = {.global = global, .global_remove = global_remove};
 static void relative_motion(void *data, struct zwp_relative_pointer_v1 *pointer, uint32_t hi, uint32_t lo,
                             wl_fixed_t dx, wl_fixed_t dy, wl_fixed_t raw_dx, wl_fixed_t raw_dy) {
-  (void)pointer; JupiterOuterPointer *self = data;
+  (void)pointer; GnosisOuterPointer *self = data;
   if (self->locked && self->motion)
     self->motion(self->data, ((guint64)hi << 32) | lo, wl_fixed_to_double(dx), wl_fixed_to_double(dy),
                  wl_fixed_to_double(raw_dx), wl_fixed_to_double(raw_dy));
 }
 static const struct zwp_relative_pointer_v1_listener relative_listener = {.relative_motion = relative_motion};
-static void restore_cursor(JupiterOuterPointer *self) {
+static void restore_cursor(GnosisOuterPointer *self) {
   if (!self->cursor_hidden) return;
   self->cursor_hidden = FALSE;
   gtk_widget_set_cursor(self->widget, self->saved_cursor);
   g_clear_object(&self->saved_cursor);
 }
 static void locked(void *data, struct zwp_locked_pointer_v1 *lock) {
-  (void)lock; JupiterOuterPointer *self = data;
+  (void)lock; GnosisOuterPointer *self = data;
   self->locked = TRUE;
   self->saved_cursor = gtk_widget_get_cursor(self->widget);
   if (self->saved_cursor) g_object_ref(self->saved_cursor);
@@ -114,17 +114,17 @@ static void locked(void *data, struct zwp_locked_pointer_v1 *lock) {
   if (self->state) self->state(self->data, TRUE);
 }
 static void unlocked(void *data, struct zwp_locked_pointer_v1 *lock) {
-  (void)lock; JupiterOuterPointer *self = data;
+  (void)lock; GnosisOuterPointer *self = data;
   self->locked = FALSE; restore_cursor(self);
   if (!self->releasing && self->state) self->state(self->data, FALSE);
 }
 static const struct zwp_locked_pointer_v1_listener lock_listener = {.locked = locked, .unlocked = unlocked};
-JupiterOuterPointer *jupiter_outer_pointer_new(GtkWidget *widget, JupiterPointerState state, JupiterPointerMotion motion, gpointer data, GError **error) {
+GnosisOuterPointer *gnosis_outer_pointer_new(GtkWidget *widget, GnosisPointerState state, GnosisPointerMotion motion, gpointer data, GError **error) {
   GdkDisplay *display = gtk_widget_get_display(widget);
   if (!GDK_IS_WAYLAND_DISPLAY(display)) {
     g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_NOT_SUPPORTED, "Relative capture requires the GTK Wayland backend"); return NULL;
   }
-  JupiterOuterPointer *self = g_new0(JupiterOuterPointer, 1);
+  GnosisOuterPointer *self = g_new0(GnosisOuterPointer, 1);
   self->widget = widget; self->state = state; self->motion = motion; self->data = data;
   self->display = gdk_wayland_display_get_wl_display(display);
   self->queue = wl_display_create_queue(self->display);
@@ -135,17 +135,17 @@ JupiterOuterPointer *jupiter_outer_pointer_new(GtkWidget *widget, JupiterPointer
       wl_display_roundtrip_queue(self->display, self->queue) < 0 ||
       !self->pointer || !self->constraints || !self->relative_manager) {
     g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_NOT_SUPPORTED, "The desktop does not provide Wayland relative-pointer capture");
-    jupiter_outer_pointer_free(self); return NULL;
+    gnosis_outer_pointer_free(self); return NULL;
   }
   self->relative = zwp_relative_pointer_manager_v1_get_relative_pointer(self->relative_manager, self->pointer);
   zwp_relative_pointer_v1_add_listener(self->relative, &relative_listener, self);
   PointerSource *source = (PointerSource *)g_source_new(&source_funcs, sizeof(PointerSource));
   source->owner = self; source->poll.fd = wl_display_get_fd(self->display); source->poll.events = G_IO_IN | G_IO_ERR | G_IO_HUP;
   g_source_add_poll((GSource *)source, &source->poll); self->source = (GSource *)source;
-  g_source_set_name(self->source, "Jupiter outer relative pointer"); g_source_attach(self->source, NULL);
+  g_source_set_name(self->source, "Gnosis outer relative pointer"); g_source_attach(self->source, NULL);
   return self;
 }
-gboolean jupiter_outer_pointer_lock(JupiterOuterPointer *self, GError **error) {
+gboolean gnosis_outer_pointer_lock(GnosisOuterPointer *self, GError **error) {
   if (self->lock) return TRUE;
   GtkNative *native = gtk_widget_get_native(self->widget);
   GdkSurface *surface = native ? gtk_native_get_surface(native) : NULL;
@@ -163,16 +163,16 @@ gboolean jupiter_outer_pointer_lock(JupiterOuterPointer *self, GError **error) {
   wl_region_destroy(region); zwp_locked_pointer_v1_add_listener(self->lock, &lock_listener, self);
   wl_display_flush(self->display); return TRUE;
 }
-void jupiter_outer_pointer_release(JupiterOuterPointer *self) {
+void gnosis_outer_pointer_release(GnosisOuterPointer *self) {
   if (!self) return;
   self->releasing = TRUE;
   if (self->lock) { zwp_locked_pointer_v1_destroy(self->lock); self->lock = NULL; }
   self->locked = FALSE; restore_cursor(self); self->releasing = FALSE;
   wl_display_flush(self->display);
 }
-void jupiter_outer_pointer_free(JupiterOuterPointer *self) {
+void gnosis_outer_pointer_free(GnosisOuterPointer *self) {
   if (!self) return;
-  jupiter_outer_pointer_release(self);
+  gnosis_outer_pointer_release(self);
   if (self->source) { g_source_destroy(self->source); g_source_unref(self->source); }
   if (self->relative) zwp_relative_pointer_v1_destroy(self->relative);
   if (self->relative_manager) zwp_relative_pointer_manager_v1_destroy(self->relative_manager);

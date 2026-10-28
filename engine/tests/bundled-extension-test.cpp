@@ -6,7 +6,7 @@
 #include <iostream>
 #include <sys/wait.h>
 namespace fs = std::filesystem;
-using JupiterBrave::BundledExtensionUpdate;
+using GnosisBrave::BundledExtensionUpdate;
 struct Fixture {
   fs::path root, profile, source;
   Fixture() {

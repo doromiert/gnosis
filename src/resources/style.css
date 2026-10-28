@@ -275,7 +275,7 @@ dnd > .boxed-list {
 
 /* GNOME Shell's installed .osd-window / %osd_panel metrics. Shell OSDs use
  * this dark panel in both light and dark styles; zoom feedback is a GTK overlay. */
-.jupiter-zoom-osd {
+.gnosis-zoom-osd {
   color: #ffffff;
   background-color: #2e2e33;
   border: 1px solid rgba(255, 255, 255, 0.02);
@@ -285,24 +285,24 @@ dnd > .boxed-list {
 }
 
 /* Opaque shell surface: thumbnails and labels must remain readable over pages. */
-.jupiter-tab-switcher-surface {
+.gnosis-tab-switcher-surface {
   background-color: var(--popover-bg-color);
   color: var(--popover-fg-color);
   border: 1px solid alpha(var(--popover-fg-color), .15);
   border-radius: 18px;
   box-shadow: 0 8px 24px alpha(black, .25);
 }
-.jupiter-tab-switcher-surface flowboxchild {
+.gnosis-tab-switcher-surface flowboxchild {
   color: var(--popover-fg-color);
   border-radius: 9px;
   padding: 6px;
 }
-.jupiter-tab-switcher-surface flowboxchild:selected {
+.gnosis-tab-switcher-surface flowboxchild:selected {
   background-color: var(--accent-bg-color);
   color: var(--accent-fg-color);
 }
-.jupiter-tab-switcher-surface flowboxchild label { color: inherit; }
-.jupiter-tab-switcher-surface picture {
+.gnosis-tab-switcher-surface flowboxchild label { color: inherit; }
+.gnosis-tab-switcher-surface picture {
   background-color: var(--view-bg-color);
   border: 1px solid alpha(var(--popover-fg-color), .12);
 }

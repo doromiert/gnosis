@@ -103,17 +103,17 @@ int main(int argc, char **argv) {
   int sub = ephy_engine_execute_process(argc, argv);
   if (sub >= 0) return sub;
   bool child = argc == 3 && !strcmp(argv[1], "--check-persistence");
-  auto *app = adw_application_new("io.github.doromiert.Jupiter.SessionTest", G_APPLICATION_NON_UNIQUE);
+  auto *app = adw_application_new("com.neg-zero.Gnosis.SessionTest", G_APPLICATION_NON_UNIQUE);
   GError *error = nullptr;
   g_assert_true(g_application_register(G_APPLICATION(app), nullptr, &error));
   g_assert_no_error(error);
-  char scratch[] = "/tmp/jupiter-session-test-XXXXXX";
+  char scratch[] = "/tmp/gnosis-session-test-XXXXXX";
   const char *profile = child ? argv[2] : mkdtemp(scratch);
   g_assert_nonnull(profile);
   g_assert_true(ephy_engine_initialize(argc, argv, profile, true));
   disable_diagnostic_core_dumps();
   auto *normal = ephy_engine_session_get_default();
-  const char *url = g_getenv("JUPITER_TEST_URL");
+  const char *url = g_getenv("GNOSIS_TEST_URL");
   g_assert_nonnull(url);
   if (child) {
     auto *list = cookies(normal, url);

@@ -3,7 +3,7 @@
 #include <filesystem>
 #include <fstream>
 namespace fs = std::filesystem;
-using JupiterBrave::PrivateProfile;
+using GnosisBrave::PrivateProfile;
 int main() {
   auto owned=PrivateProfile::create();assert(owned);fs::path path=owned->path();
   fs::create_directories(path/"Default/nested");std::ofstream(path/"Default/nested/Cookies")<<"fixture";

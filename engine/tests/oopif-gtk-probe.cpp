@@ -12,7 +12,7 @@ extern "C" GSubprocess* g_subprocess_launcher_spawnv(GSubprocessLauncher*l,const
   return real(l,args.data(),error);
 }
 static GtkWindow* window;
-static std::shared_ptr<JupiterBrave::Page> page;
+static std::shared_ptr<GnosisBrave::Page> page;
 static std::string child, grandchild;
 static GtkWidget* old_menu;
 static std::string old_action;
@@ -34,16 +34,16 @@ static JsonObject* value(JsonObject* result) {auto*r=result?json_object_get_obje
 static void eval(const std::string& frame,const char* script,std::function<void(JsonObject*)> next) {
   busy=true;
   auto callback=[next](JsonObject*r,const std::string&e){busy=false;if(!e.empty()||!r||json_object_has_member(r,"exceptionDetails"))return;next(value(r));};
-  auto params="{\"expression\":"+JupiterBrave::quote(script)+",\"returnByValue\":true}";
+  auto params="{\"expression\":"+GnosisBrave::quote(script)+",\"returnByValue\":true}";
   if(frame.empty())page->command("Runtime.evaluate",params,callback);
   else page->command_for_frame(frame,"Runtime.evaluate",params,callback);
 }
 static void click(double x,double y,bool right) {
   const auto button=right?"right":"left";const auto buttons=right?2:1;
-  for(auto type:{"mousePressed","mouseReleased"})page->command("Input.dispatchMouseEvent","{\"type\":"+JupiterBrave::quote(type)+",\"button\":"+JupiterBrave::quote(button)+",\"buttons\":"+std::to_string(!strcmp(type,"mousePressed")?buttons:0)+",\"x\":"+std::to_string(x)+",\"y\":"+std::to_string(y)+",\"clickCount\":1}");
+  for(auto type:{"mousePressed","mouseReleased"})page->command("Input.dispatchMouseEvent","{\"type\":"+GnosisBrave::quote(type)+",\"button\":"+GnosisBrave::quote(button)+",\"buttons\":"+std::to_string(!strcmp(type,"mousePressed")?buttons:0)+",\"x\":"+std::to_string(x)+",\"y\":"+std::to_string(y)+",\"clickCount\":1}");
 }
 static void hit(bool grand,const char* element,bool right,std::function<void()> next) {
-  const auto script="(()=>{const r=document.getElementById("+JupiterBrave::quote(element)+").getBoundingClientRect();return{x:r.x+8,y:r.y+8}})()";
+  const auto script="(()=>{const r=document.getElementById("+GnosisBrave::quote(element)+").getBoundingClientRect();return{x:r.x+8,y:r.y+8}})()";
   eval(grand?grandchild:child,script.c_str(),[grand,right,next](JsonObject*o){if(!o)return;const double x=json_object_get_double_member(o,"x"),y=json_object_get_double_member(o,"y");if(grand){eval(child,"(()=>{const r=nested.getBoundingClientRect();return{x:r.x,y:r.y}})()",[x,y,right,next](JsonObject*r){if(!r)return;click(x+json_object_get_double_member(r,"x"),y+json_object_get_double_member(r,"y"),right);next();});}else{click(x,y,right);next();}});
 }
 static std::string action_for(GMenuModel* model) {
@@ -67,15 +67,15 @@ static gboolean tick(gpointer) {
   auto*d=adw_application_window_get_visible_dialog(ADW_APPLICATION_WINDOW(window));
   if(d&&ADW_IS_ALERT_DIALOG(d)&&strstr(adw_alert_dialog_get_heading(ADW_ALERT_DIALOG(d)),"Default Browser")){auto*b=find(GTK_WIDGET(d),"GtkButton","No");if(b)gtk_widget_activate(b);return G_SOURCE_CONTINUE;}
   if(stage==0&&!page->session.empty()) {
-    busy=true;JupiterBrave::browser_command(false,"Target.getTargets","{}",[](JsonObject*r,const std::string&e){
+    busy=true;GnosisBrave::browser_command(false,"Target.getTargets","{}",[](JsonObject*r,const std::string&e){
       busy=false;auto*targets=r?json_object_get_array_member(r,"targetInfos"):nullptr;
       static gint64 last=0;if(g_get_monotonic_time()-last>5*G_USEC_PER_SEC){guint frames=0;for(guint i=0;targets&&i<json_array_get_length(targets);++i)frames+=!strcmp(json_object_get_string_member_with_default(json_array_get_object_element(targets,i),"type",""),"iframe");g_printerr("OOPIF_TARGETS total=%u iframe=%u parent_fixture=%d error=%s\n",targets?json_array_get_length(targets):0,frames,page->uri.find("oopif-parent.html")!=std::string::npos,e.c_str());last=g_get_monotonic_time();}
       for(guint i=0;targets&&i<json_array_get_length(targets);++i){auto*t=json_array_get_object_element(targets,i);if(strcmp(json_object_get_string_member_with_default(t,"type",""),"iframe"))continue;std::string url=json_object_get_string_member_with_default(t,"url","");if(url.find("oopif-child.html")!=std::string::npos)child=json_object_get_string_member(t,"targetId");if(url.find("oopif-grandchild.html")!=std::string::npos)grandchild=json_object_get_string_member(t,"targetId");}
       if(!child.empty()&&!grandchild.empty())stage=1;
     });
-  } else if(stage==1)eval(child,"({ready:frameMarker==='child'&&document.readyState==='complete',hidden:typeof __jupiterContextMenu==='undefined'&&typeof __jupiterDocumentMetadata==='undefined'})",[](JsonObject*o){if(!o||!json_object_get_boolean_member_with_default(o,"ready",false))return;if(!json_object_get_boolean_member(o,"hidden"))fail("private binding exposed to page scripts");JupiterBrave::set_user_content("body{color:rgb(1,2,3)!important}","");stage=23;});
+  } else if(stage==1)eval(child,"({ready:frameMarker==='child'&&document.readyState==='complete',hidden:typeof __gnosisContextMenu==='undefined'&&typeof __gnosisDocumentMetadata==='undefined'})",[](JsonObject*o){if(!o||!json_object_get_boolean_member_with_default(o,"ready",false))return;if(!json_object_get_boolean_member(o,"hidden"))fail("private binding exposed to page scripts");GnosisBrave::set_user_content("body{color:rgb(1,2,3)!important}","");stage=23;});
   else if(stage==23)eval(child,"({styled:getComputedStyle(document.body).color==='rgb(1, 2, 3)'})",[](JsonObject*o){if(o&&json_object_get_boolean_member_with_default(o,"styled",false))stage=24;});
-  else if(stage==24)eval(grandchild,"({styled:getComputedStyle(document.body).color==='rgb(1, 2, 3)'})",[](JsonObject*o){if(o&&json_object_get_boolean_member_with_default(o,"styled",false)){g_printerr("OOPIF_STYLE_PASS custom CSS reaches child and nested renderer sessions\n");JupiterBrave::set_user_content("","");stage=2;}});
+  else if(stage==24)eval(grandchild,"({styled:getComputedStyle(document.body).color==='rgb(1, 2, 3)'})",[](JsonObject*o){if(o&&json_object_get_boolean_member_with_default(o,"styled",false)){g_printerr("OOPIF_STYLE_PASS custom CSS reaches child and nested renderer sessions\n");GnosisBrave::set_user_content("","");stage=2;}});
   else if(stage==2)hit(false,"image",true,[]{stage=3;});
   else if(stage==3){auto*b=find(GTK_WIDGET(window),"GtkModelButton","Copy Image");if(b&&gtk_widget_get_mapped(b)&&gtk_widget_is_sensitive(b)){gtk_widget_activate(b);read_image(0,4);}}
   else if(stage==4)hit(false,"audio",true,[]{stage=5;});
@@ -100,6 +100,6 @@ static gboolean tick(gpointer) {
 }
 static gboolean start(gpointer) {
   window=gtk_application_get_active_window(GTK_APPLICATION(g_application_get_default()));if(!window)return G_SOURCE_CONTINUE;
-  auto e=reinterpret_cast<void*(*)(void*)>(dlsym(RTLD_DEFAULT,"ephy_window_get_active_embed"));auto v=reinterpret_cast<void*(*)(void*)>(dlsym(RTLD_DEFAULT,"ephy_embed_get_web_view"));auto p=reinterpret_cast<std::shared_ptr<JupiterBrave::Page>(*)(void*)>(dlsym(RTLD_DEFAULT,"_Z27ephy_engine_view_brave_pageP15_EphyEngineView"));if(!e(window))return G_SOURCE_CONTINUE;page=p(v(e(window)));started=g_get_monotonic_time();g_timeout_add(100,tick,nullptr);return G_SOURCE_REMOVE;
+  auto e=reinterpret_cast<void*(*)(void*)>(dlsym(RTLD_DEFAULT,"ephy_window_get_active_embed"));auto v=reinterpret_cast<void*(*)(void*)>(dlsym(RTLD_DEFAULT,"ephy_embed_get_web_view"));auto p=reinterpret_cast<std::shared_ptr<GnosisBrave::Page>(*)(void*)>(dlsym(RTLD_DEFAULT,"_Z27ephy_engine_view_brave_pageP15_EphyEngineView"));if(!e(window))return G_SOURCE_CONTINUE;page=p(v(e(window)));started=g_get_monotonic_time();g_timeout_add(100,tick,nullptr);return G_SOURCE_REMOVE;
 }
 __attribute__((constructor))static void setup(){char exe[2048];auto n=readlink("/proc/self/exe",exe,sizeof exe-1);if(n<0)return;exe[n]=0;if(strstr(exe,"/.gnosis-wrapped"))g_timeout_add_seconds(5,start,nullptr);}

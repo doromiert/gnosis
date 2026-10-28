@@ -4,7 +4,7 @@
 const managedExtension = item => item.id !== chrome.runtime.id &&
     item.id !== 'giohadoodmdcadnkcpdmhmmdnaidnckm' &&
     item.type === 'extension' && item.installType !== 'other';
-globalThis.jupiterExtensions = Object.freeze({
+globalThis.gnosisExtensions = Object.freeze({
     async inventory() {
         return (await chrome.management.getAll()).filter(managedExtension);
     },
@@ -12,7 +12,7 @@ globalThis.jupiterExtensions = Object.freeze({
         const item = await chrome.management.get(id);
         if (!managedExtension(item) || !item.mayDisable ||
             (enabled && item.mayEnable === false))
-            throw new Error('This extension cannot be changed by Jupiter');
+            throw new Error('This extension cannot be changed by Gnosis');
         await chrome.management.setEnabled(id, enabled);
         const actual = await chrome.management.get(id);
         if (actual.enabled !== enabled) throw new Error('Extension state did not change');
@@ -21,7 +21,7 @@ globalThis.jupiterExtensions = Object.freeze({
 });
 
 function handOffDownloads() {
-    globalThis.jupiterNativeReady = Promise.resolve(chrome.downloads.setUiOptions({enabled: false}))
+    globalThis.gnosisNativeReady = Promise.resolve(chrome.downloads.setUiOptions({enabled: false}))
         .then(() => true);
 }
 chrome.runtime.onStartup.addListener(handOffDownloads);
@@ -30,7 +30,7 @@ handOffDownloads();
 // Only the inherited private protocol pipe can install this worker binding.
 // Webpages have no access to it or to this extension's browser APIs.
 chrome.tabs.onZoomChange.addListener(change => {
-    const send = globalThis.__jupiterZoomChanged;
+    const send = globalThis.__gnosisZoomChanged;
     if (typeof send === 'function')
         send(JSON.stringify({tabId: change.tabId, factor: change.newZoomFactor, scope: change.zoomSettings.scope}));
 });
@@ -40,7 +40,7 @@ chrome.tabs.onZoomChange.addListener(change => {
 for (const event of [chrome.management.onInstalled, chrome.management.onUninstalled,
                      chrome.management.onEnabled, chrome.management.onDisabled]) {
     event.addListener(() => {
-        if (typeof globalThis.__jupiterExtensionsChanged === 'function')
-            globalThis.__jupiterExtensionsChanged('changed');
+        if (typeof globalThis.__gnosisExtensionsChanged === 'function')
+            globalThis.__gnosisExtensionsChanged('changed');
     });
 }

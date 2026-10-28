@@ -1,6 +1,6 @@
 Subject: [PATCH] Let the embedding GTK shell own native zoom feedback
 
-Opt in with --jupiter-native-ui. Preserve normal Brave behavior without the
+Opt in with --gnosis-native-ui. Preserve normal Brave behavior without the
 switch. Keep native zoom calculations, frame reflow and zoom notifications;
 only disable the zoom bubble, including mode-transition notifications.
 
@@ -22,7 +22,7 @@ Source-application verification does not establish runtime compatibility.
        browser_context_(web_contents->GetBrowserContext()) {
    DCHECK_CURRENTLY_ON(BrowserThread::UI);
 +  // The embedding GTK shell owns zoom feedback.
-+  if (base::CommandLine::ForCurrentProcess()->HasSwitch("jupiter-native-ui")) {
++  if (base::CommandLine::ForCurrentProcess()->HasSwitch("gnosis-native-ui")) {
 +    can_show_bubble_ = false;
 +  }
    host_zoom_map_ = content::HostZoomMap::Get(rfh->GetSiteInstance());
@@ -32,7 +32,7 @@ Source-application verification does not establish runtime compatibility.
    event_data_ = std::make_unique<ZoomChangedEventData>(
        web_contents(), rfh->GetFrameTreeNodeId(), original_zoom_level,
        original_zoom_level, new_mode, new_mode != ZOOM_MODE_DEFAULT);
-+  if (base::CommandLine::ForCurrentProcess()->HasSwitch("jupiter-native-ui")) {
++  if (base::CommandLine::ForCurrentProcess()->HasSwitch("gnosis-native-ui")) {
 +    event_data_->can_show_bubble = false;
 +  }
  

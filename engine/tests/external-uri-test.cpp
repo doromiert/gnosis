@@ -54,8 +54,8 @@ static std::string quote(const std::string& text) {
   g_autofree char *json = json_to_string(node, false);
   return json;
 }
-static constexpr const char *same_target = "jupiter-test-open://app/item?name=one%20two&value=%2F#section";
-static constexpr const char *blank_target = "jupiter-test-open://app/other?request=second";
+static constexpr const char *same_target = "gnosis-test-open://app/item?name=one%20two&value=%2F#section";
+static constexpr const char *blank_target = "gnosis-test-open://app/other?request=second";
 struct Request {
   EphyEngineView *view;
   std::string uri, context;
@@ -121,7 +121,7 @@ static void install_links(Page& page) {
     }
     document.addEventListener('click',event=>externalClicks.push({id:event.target.id,trusted:event.isTrusted}));
     const child=document.createElement('iframe');child.id='child';
-    child.srcdoc='<a id="child-link" target="_blank" href="jupiter-test-open://app/iframe">Child</a>';
+    child.srcdoc='<a id="child-link" target="_blank" href="gnosis-test-open://app/iframe">Child</a>';
     const loaded=new Promise(resolve=>child.onload=resolve);document.body.append(child);await loaded;
     child.contentDocument.querySelector('a').onclick=event=>{if(event.isTrusted)window.childTrustedClicks++};
     return 'installed';
@@ -168,16 +168,16 @@ int main(int argc, char **argv) {
   disable_diagnostic_core_dumps();
   if (!cef_api_hash(CEF_API_VERSION, 0)) return 1;
   int child = ephy_engine_execute_process(argc, argv); if (child >= 0) return child;
-  auto *app = adw_application_new("io.github.doromiert.Jupiter.ExternalURITest", G_APPLICATION_NON_UNIQUE);
+  auto *app = adw_application_new("com.neg-zero.Gnosis.ExternalURITest", G_APPLICATION_NON_UNIQUE);
   GError *error = nullptr;
   g_assert_true(g_application_register(G_APPLICATION(app), nullptr, &error)); g_assert_no_error(error);
-  char profile[] = "/tmp/jupiter-external-uri-XXXXXX"; g_assert_nonnull(mkdtemp(profile));
+  char profile[] = "/tmp/gnosis-external-uri-XXXXXX"; g_assert_nonnull(mkdtemp(profile));
   g_assert_true(ephy_engine_initialize(argc, argv, profile, true)); disable_diagnostic_core_dumps();
-  g_assert_nonnull(g_getenv("JUPITER_TEST_URL"));
-  const std::string fixture = g_getenv("JUPITER_TEST_URL");
+  g_assert_nonnull(g_getenv("GNOSIS_TEST_URL"));
+  const std::string fixture = g_getenv("GNOSIS_TEST_URL");
   Requests requests;
   auto normal = page(GTK_APPLICATION(app), ephy_engine_session_get_default(), fixture + "?external=normal",
-                     "Jupiter external normal", requests);
+                     "Gnosis external normal", requests);
   install_links(normal);
   const auto starts = requests.starts[normal.view];
   auto *resource = ephy_engine_web_view_get_main_resource(normal.view);
@@ -185,7 +185,7 @@ int main(int argc, char **argv) {
   // These run before any trusted gesture, so there is no inherited transient activation.
   evaluate(normal.view, "location.href=" + quote(same_target) + ";'scheduled'");
   evaluate(normal.view, "window.open(" + quote(blank_target) + ",'_blank');'scheduled'");
-  evaluate(normal.view, "(()=>{const frame=document.createElement('iframe');frame.src='jupiter-test-open://app/automatic';document.body.append(frame);return true})()");
+  evaluate(normal.view, "(()=>{const frame=document.createElement('iframe');frame.src='gnosis-test-open://app/automatic';document.body.append(frame);return true})()");
   evaluate(normal.view, "new Promise(resolve=>setTimeout(()=>resolve('settled'),500))");
   g_assert_true(requests.entries.empty());
   g_assert_true(ephy_engine_web_view_get_main_resource(normal.view) == resource);
@@ -215,7 +215,7 @@ int main(int argc, char **argv) {
   auto *normal_pending = activate(normal, requests, "same", same_target, false, false);
   auto *private_session = ephy_engine_session_new(true);
   auto private_page = page(GTK_APPLICATION(app), private_session, fixture + "?external=private",
-                           "Jupiter external private", requests);
+                           "Gnosis external private", requests);
   g_object_unref(private_session); install_links(private_page);
   auto *private_pending = activate(private_page, requests, "same", same_target, false, true);
   g_assert_false(g_cancellable_is_cancelled(normal_pending->token));

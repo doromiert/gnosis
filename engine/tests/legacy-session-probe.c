@@ -59,7 +59,7 @@ static gboolean check(gpointer unused) {
     website_data_manager = dlsym(RTLD_DEFAULT, "ephy_embed_shell_get_website_data_manager");
     if (!get_settings || !get_shell || !website_data_manager)
       fail("shell accessors unavailable");
-    settings = get_settings("io.github.doromiert.Jupiter.web");
+    settings = get_settings("com.neg-zero.Gnosis.web");
     shell = get_shell();
     initial_itp = g_settings_get_boolean(settings, "enable-itp");
     if (!g_settings_set_boolean(settings, "enable-itp", !initial_itp))

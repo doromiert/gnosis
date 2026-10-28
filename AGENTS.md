@@ -10,7 +10,7 @@ usage/quota reset; root observed that the current weekly window started at
 2026-10-26 07:05:30 Europe/Warsaw and stopped all subagents. Do not spawn or
 reactivate agents without another explicit user instruction.
 
-Do not use the interface-polish / make-interfaces-feel-better skill for Jupiter.
+Do not use the interface-polish / make-interfaces-feel-better skill for Gnosis.
 The user explicitly considers it irrelevant here. Follow Epiphany's source and
 GTK/libadwaita conventions directly for UI work.
 
@@ -21,7 +21,7 @@ application identifiers independent from Select and Epiphany.
 
 For local build-and-launch workflows, use `nix run`; it already builds the app.
 Do not run a separate `nix build` first.
-Close outdated Jupiter instances as soon as an application build starts. The
+Close outdated Gnosis instances as soon as an application build starts. The
 user explicitly prefers this to leaving old windows available during builds.
 
 Prefer small, version/hash-checked changes to the prebuilt Brave binary or a
@@ -32,6 +32,8 @@ source patches as reference and keep upgrade/application checks explicit.
 Run meaningful unit checks and the affected native integration checks. New
 extension adapters must enforce host permissions and isolate private contexts.
 
-The product is now Gnosis. Keep the existing Jupiter application/profile/schema
-identifiers as compatibility identities; they preserve current user data and
-KeePassXC pairing. Public names, the main executable and artwork use Gnosis.
+The product and internal namespaces are Gnosis. The application/schema ID is
+`com.neg-zero.Gnosis`; D-Bus interface names use `com.neg_zero.Gnosis` because
+interfaces cannot contain hyphens. Legacy Jupiter names belong only in the
+one-time migration code. Preserve user data and the bundled extension public
+keys, which retain KeePassXC pairing and extension storage.

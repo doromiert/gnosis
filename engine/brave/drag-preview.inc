@@ -66,7 +66,7 @@ static void preview_request_image(DragPreview *preview) {
     g_signal_emit_by_name(preview->host, "drag-preview-image", preview->drag, preview->image_url);
   }
 }
-void jupiter_compositor_drag_set_image(GdkDrag *drag, GdkTexture *image) {
+void gnosis_compositor_drag_set_image(GdkDrag *drag, GdkTexture *image) {
   GWeakRef *weak = g_object_get_data(G_OBJECT(drag), "gnosis-drag-preview");
   GtkWidget *box = weak ? g_weak_ref_get(weak) : NULL;
   if (!box) return;
@@ -105,7 +105,7 @@ static void preview_image_decoded(GObject *input, GAsyncResult *result, gpointer
     preview->binary_pending = FALSE;
     if (pixbuf) {
       GdkTexture *texture = gdk_texture_new_for_pixbuf(pixbuf);
-      jupiter_compositor_drag_set_image(preview->drag, texture); g_object_unref(texture);
+      gnosis_compositor_drag_set_image(preview->drag, texture); g_object_unref(texture);
     } else preview_request_image(preview);
   }
   g_clear_object(&pixbuf); g_clear_object(&box); preview_read_free(read);

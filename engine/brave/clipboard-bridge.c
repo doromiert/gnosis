@@ -28,14 +28,14 @@ typedef struct { GdkContentProviderClass parent; } InnerProviderClass;
 GType inner_provider_get_type(void);
 G_DEFINE_TYPE(InnerProvider, inner_provider, GDK_TYPE_CONTENT_PROVIDER)
 
-struct JupiterClipboardBridge {
+struct GnosisClipboardBridge {
   struct wl_display *display;
   struct wlr_seat *seat;
   GdkClipboard *clipboard;
   GdkContentProvider *exported;
   struct wl_listener selection;
   gulong changed;
-  JupiterClipboardAllowed allowed;
+  GnosisClipboardAllowed allowed;
   gpointer user;
 };
 static void inner_source_destroyed(struct wl_listener *listener, void *data) {
@@ -90,7 +90,7 @@ static void inner_provider_class_init(InnerProviderClass *klass) {
   provider->write_mime_type_async = inner_write; provider->write_mime_type_finish = inner_write_finish;
 }
 static void inner_provider_init(InnerProvider *self) { wl_list_init(&self->destroyed.link); }
-GdkContentProvider *jupiter_wayland_source_provider_new(struct wl_display *display, struct wlr_data_source *source) {
+GdkContentProvider *gnosis_wayland_source_provider_new(struct wl_display *display, struct wlr_data_source *source) {
   InnerProvider *self = g_object_new(inner_provider_get_type(), NULL);
   self->source = source; self->display = display;
   GdkContentFormatsBuilder *builder = gdk_content_formats_builder_new();
@@ -106,7 +106,7 @@ typedef struct {
   struct wlr_data_source source;
   GdkClipboard *clipboard;
   GCancellable *cancel;
-  JupiterClipboardAllowed allowed;
+  GnosisClipboardAllowed allowed;
   gpointer user;
 } DesktopSource;
 typedef struct {
@@ -154,7 +154,7 @@ static void desktop_destroy(struct wlr_data_source *source) {
   g_cancellable_cancel(self->cancel); g_object_unref(self->cancel); g_object_unref(self->clipboard); g_free(self);
 }
 static const struct wlr_data_source_impl desktop_impl = {.send = desktop_send, .destroy = desktop_destroy};
-static void desktop_changed(GdkClipboard *clipboard, JupiterClipboardBridge *self) {
+static void desktop_changed(GdkClipboard *clipboard, GnosisClipboardBridge *self) {
   if (self->exported && gdk_clipboard_get_content(clipboard) == self->exported) return;
   g_clear_object(&self->exported);
   DesktopSource *source = g_new0(DesktopSource, 1);
@@ -172,20 +172,20 @@ static void desktop_changed(GdkClipboard *clipboard, JupiterClipboardBridge *sel
   wl_display_flush_clients(self->display);
 }
 static void selection_requested(struct wl_listener *listener, void *data) {
-  JupiterClipboardBridge *self = wl_container_of(listener, self, selection);
+  GnosisClipboardBridge *self = wl_container_of(listener, self, selection);
   struct wlr_seat_request_set_selection_event *event = data;
   if (self->allowed && !self->allowed(self->user)) return;
   wlr_seat_set_selection(self->seat, event->source, event->serial);
-  GdkContentProvider *provider = event->source ? jupiter_wayland_source_provider_new(self->display, event->source) : NULL;
+  GdkContentProvider *provider = event->source ? gnosis_wayland_source_provider_new(self->display, event->source) : NULL;
   g_set_object(&self->exported, provider);
   // The changed callback sees the provider set before the notification, avoiding
   // a desktop -> private -> desktop selection loop.
   gdk_clipboard_set_content(self->clipboard, provider);
   g_clear_object(&provider);
 }
-JupiterClipboardBridge *jupiter_clipboard_bridge_new(struct wl_display *display, struct wlr_seat *seat,
-                                                    GdkClipboard *clipboard, JupiterClipboardAllowed allowed, gpointer user) {
-  JupiterClipboardBridge *self = g_new0(JupiterClipboardBridge, 1);
+GnosisClipboardBridge *gnosis_clipboard_bridge_new(struct wl_display *display, struct wlr_seat *seat,
+                                                    GdkClipboard *clipboard, GnosisClipboardAllowed allowed, gpointer user) {
+  GnosisClipboardBridge *self = g_new0(GnosisClipboardBridge, 1);
   self->display = display; self->seat = seat; self->clipboard = g_object_ref(clipboard);
   self->allowed = allowed; self->user = user;
   self->selection.notify = selection_requested; wl_signal_add(&seat->events.request_set_selection, &self->selection);
@@ -193,7 +193,7 @@ JupiterClipboardBridge *jupiter_clipboard_bridge_new(struct wl_display *display,
   desktop_changed(clipboard, self);
   return self;
 }
-void jupiter_clipboard_bridge_free(JupiterClipboardBridge *self) {
+void gnosis_clipboard_bridge_free(GnosisClipboardBridge *self) {
   if (!self) return;
   wl_list_remove(&self->selection.link); g_signal_handler_disconnect(self->clipboard, self->changed);
   if (self->exported && gdk_clipboard_get_content(self->clipboard) == self->exported) gdk_clipboard_set_content(self->clipboard, NULL);

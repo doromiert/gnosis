@@ -15,13 +15,13 @@ parser.add_argument('binary', type=Path)
 parser.add_argument('--schemas', type=Path, required=True)
 parser.add_argument('--incognito', action='store_true')
 args = parser.parse_args()
-root = Path(tempfile.mkdtemp(prefix='jupiter-page-messages-ui-', dir='/tmp'))
+root = Path(tempfile.mkdtemp(prefix='gnosis-page-messages-ui-', dir='/tmp'))
 env = dict(os.environ, XDG_CONFIG_HOME=str(root/'config'), XDG_DATA_HOME=str(root/'data'),
            XDG_CACHE_HOME=str(root/'cache'), GSETTINGS_BACKEND='keyfile',
            GSETTINGS_SCHEMA_DIR=str(args.schemas.resolve()))
-subprocess.run(['gsettings', 'set', 'io.github.doromiert.Jupiter', 'ask-for-default', 'false'], env=env, check=True)
-base = os.environ['JUPITER_TEST_URL']
-app_id = 'io.github.doromiert.Jupiter.WebApp_native-message-fixture'
+subprocess.run(['gsettings', 'set', 'com.neg-zero.Gnosis', 'ask-for-default', 'false'], env=env, check=True)
+base = os.environ['GNOSIS_TEST_URL']
+app_id = 'com.neg-zero.Gnosis.WebApp_native-message-fixture'
 fixture = root/'data'/app_id
 fixture.mkdir(parents=True)
 (fixture/'.app').touch()

@@ -110,7 +110,7 @@ ephy_permissions_manager_get_settings_for_origin (EphyPermissionsManager *manage
                                  ephy_engine_origin_get_host (security_origin),
                                  ephy_engine_origin_get_port (security_origin));
 
-  settings = g_settings_new_with_backend_and_path ("io.github.doromiert.Jupiter.permissions", manager->backend, origin_path);
+  settings = g_settings_new_with_backend_and_path ("com.neg-zero.Gnosis.permissions", manager->backend, origin_path);
   g_free (trimmed_protocol);
   g_free (origin_path);
   ephy_engine_origin_unref (security_origin);

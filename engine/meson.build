@@ -36,8 +36,8 @@ else
   wrapper_project = cmake.subproject('cef-wrapper', options: wrapper_options)
   wrapper_dep = wrapper_project.dependency('libcef_dll_wrapper')
 endif
-engine_resource = gnome.compile_resources('jupiter-engine-resources',
-  'data/engine.gresource.xml', c_name: 'jupiter_engine', source_dir: 'data')
+engine_resource = gnome.compile_resources('gnosis-engine-resources',
+  'data/engine.gresource.xml', c_name: 'gnosis_engine', source_dir: 'data')
 engine_includes = include_directories('.', 'select', cef_root)
 bridge_dir = developer_mode ? meson.current_source_dir() / 'data/tab-bridge' : pkgdatadir / 'tab-bridge'
 manager_dir = developer_mode ? meson.current_source_dir() / 'data/extension-manager' : pkgdatadir / 'extension-manager'
@@ -46,6 +46,7 @@ scanner = find_program('wayland-scanner')
 protocol_dir = dependency('wayland-protocols').get_variable(pkgconfig: 'pkgdatadir')
 compositor_protocols = []
 foreach item : [
+  ['staging/cursor-shape/cursor-shape-v1.xml', 'cursor-shape-v1-protocol.h', 'server-header'],
   ['stable/xdg-shell/xdg-shell.xml', 'xdg-shell-protocol.h', 'server-header'],
   ['unstable/xdg-decoration/xdg-decoration-unstable-v1.xml', 'xdg-decoration-unstable-v1-protocol.h', 'server-header'],
   ['unstable/pointer-constraints/pointer-constraints-unstable-v1.xml', 'pointer-constraints-unstable-v1-protocol.h', 'server-header'],
@@ -57,20 +58,32 @@ foreach item : [
   compositor_protocols += custom_target(item[1], input: protocol_dir / item[0], output: item[1], command: [scanner, item[2], '@INPUT@', '@OUTPUT@'])
 endforeach
 compositor_deps = [gtk_dep, json_glib_dep, libxml_dep, dependency('gio-unix-2.0'), dependency('wlroots-0.19'), dependency('wayland-server'), dependency('wayland-client'), dependency('xkbcommon'), dependency('libdrm'), dependency('glesv2'), dependency('pixman-1')]
-compositor_lib = static_library('jupiter-compositor', ['brave/compositor.c', 'brave/outer-pointer.c', 'brave/clipboard-bridge.c', 'brave/profile.c', compositor_protocols],
+compositor_lib = static_library('gnosis-compositor', ['brave/compositor.c', 'brave/wayland-source.c', 'brave/outer-pointer.c', 'brave/clipboard-bridge.c', 'brave/profile.c', compositor_protocols],
   dependencies: compositor_deps, c_args: ['-Wno-declaration-after-statement'], pic: true)
 compositor_dep = declare_dependency(link_with: compositor_lib, dependencies: compositor_deps)
-engine = static_library('jupiter-engine',
-  ['brave/browser.cpp', 'ephy-engine-download.cpp', 'ephy-engine-authentication.cpp', 'ephy-engine-client-certificate.cpp', 'ephy-engine-extensions.cpp', 'ephy-engine-permission.cpp', 'ephy-engine-session.cpp', 'ephy-engine-response.cpp', 'ephy-engine-settings.cpp', 'ephy-engine-origin.cpp', 'ephy-engine-certificate.cpp', 'ephy-engine-favicon.c', 'ephy-engine-view.cpp', 'ephy-engine-scheme.cpp', 'ephy-engine-print.cpp', 'select/application.cpp', 'select/browser.cpp', 'select/file-dialog.cpp', 'select/page-messages.cpp', 'select/webstore-guard.cpp', 'select/clipboard.cpp',
+if get_option('unit_tests').enabled()
+  wayland_source_test = executable('wayland-source-test',
+    ['brave/wayland-source.c', 'tests/wayland-source-test.c'],
+    include_directories: include_directories('brave'),
+    dependencies: [dependency('glib-2.0'), dependency('wayland-server')])
+  test('Nested Wayland idle dispatch', wayland_source_test)
+  foreach name : ['web-app-config', 'loopback']
+    check = executable(name + '-test', 'tests/' + name + '-test.c',
+      include_directories: include_directories('.'), dependencies: dependency('gio-2.0'))
+    test(name, check)
+  endforeach
+endif
+engine = static_library('gnosis-engine',
+  ['brave/browser.cpp', 'brave/debug-adapters.cpp', 'ephy-engine-download.cpp', 'ephy-engine-authentication.cpp', 'ephy-engine-client-certificate.cpp', 'ephy-engine-extensions.cpp', 'ephy-engine-permission.cpp', 'ephy-engine-session.cpp', 'ephy-engine-response.cpp', 'ephy-engine-settings.cpp', 'ephy-engine-origin.cpp', 'ephy-engine-certificate.cpp', 'ephy-engine-favicon.c', 'ephy-engine-view.cpp', 'ephy-engine-scheme.cpp', 'ephy-engine-print.cpp', 'select/application.cpp', 'select/browser.cpp', 'select/file-dialog.cpp', 'select/page-messages.cpp', 'select/webstore-guard.cpp', 'select/clipboard.cpp',
    'select/cursor.cpp', 'select/policy.cpp', 'select/extensions.cpp', 'select/extension-host.cpp', engine_resource],
   include_directories: engine_includes,
   dependencies: [gtk_dep, libadwaita_dep, json_glib_dep, libsoup_dep, webkitgtk_dep, dependency('epoxy'), dependency('x11'), dependency('libqrencode'), compositor_dep, cef_dep, wrapper_dep],
   cpp_args: ['-DCEF_RESOURCE_DIR="' + cef_root / 'Resources' + '"',
-    '-DJUPITER_UBLOCK_DIR="' + ublock_dir + '"',
-    '-DJUPITER_BRIDGE_DIR="' + bridge_dir + '"',
-    '-DJUPITER_MANAGER_DIR="' + manager_dir + '"',
-    '-DJUPITER_KEEPASSXC_DIR="' + get_option('keepassxc_dir') + '"',
-    '-DJUPITER_NATIVE_INTEGRATION_DIR="' + integration_dir + '"'],
+    '-DGNOSIS_UBLOCK_DIR="' + ublock_dir + '"',
+    '-DGNOSIS_BRIDGE_DIR="' + bridge_dir + '"',
+    '-DGNOSIS_MANAGER_DIR="' + manager_dir + '"',
+    '-DGNOSIS_KEEPASSXC_DIR="' + get_option('keepassxc_dir') + '"',
+    '-DGNOSIS_NATIVE_INTEGRATION_DIR="' + integration_dir + '"'],
   pic: true)
 ephyengine_dep = declare_dependency(link_with: engine, include_directories: include_directories('.'), dependencies: [cef_dep, wrapper_dep, json_glib_dep])
 if get_option('cef_runtime') == 'copy'
@@ -80,8 +93,14 @@ endif
 install_subdir('data/tab-bridge', install_dir: pkgdatadir)
 install_subdir('data/extension-manager', install_dir: pkgdatadir)
 install_subdir('data/native-integration', install_dir: pkgdatadir)
-install_data(cef_root / 'LICENSE.txt', cef_root / 'CREDITS.html', install_dir: datadir / 'licenses/jupiter-cef')
+install_data(cef_root / 'LICENSE.txt', cef_root / 'CREDITS.html', install_dir: datadir / 'licenses/gnosis-cef')
 if get_option('unit_tests').enabled()
+  debug_adapters_test = executable('brave-debug-adapters-test',
+    ['tests/brave-debug-adapters-test.cpp', 'brave/debug-adapters.cpp'],
+    dependencies: [gtk_dep, json_glib_dep], include_directories: include_directories('.'))
+  foreach mode : ['defaults', 'overrides', 'invalid']
+    test('Brave debug adapters ' + mode, debug_adapters_test, args: [mode])
+  endforeach
   private_profile_test = executable('brave-private-profile-test', 'tests/private-profile-test.cpp',
     dependencies: [glib_dep], include_directories: include_directories('.'), cpp_args: ['-UNDEBUG'])
   test('Brave private profile ownership', private_profile_test)

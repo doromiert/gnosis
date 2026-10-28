@@ -2,7 +2,7 @@
 // Only installed for an extension action popup, in the private metadata world.
 (() => {
     if (window !== top || location.protocol !== 'chrome-extension:') return;
-    const send = globalThis.__jupiterDocumentMetadata;
+    const send = globalThis.__gnosisDocumentMetadata;
     if (typeof send !== 'function') return;
     let timer = 0, previous = '';
     const update = () => {

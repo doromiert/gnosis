@@ -6,7 +6,7 @@
 #include "include/cef_task.h"
 
 namespace {
-constexpr const char* message_name = "jupiter.webstore-install-guard";
+constexpr const char* message_name = "gnosis.webstore-install-guard";
 bool trusted(const std::string& url) {
   CefURLParts parts;
   if (!CefParseURL(url, parts)) return false;
@@ -61,7 +61,7 @@ public:
       CefPostTask(TID_RENDERER, new FailureReply(context, args[1]));
     } else {
       result = CefV8Value::CreatePromise();
-      result->RejectPromise("Chrome Web Store installation is not supported by Jupiter yet (feature_disabled).");
+      result->RejectPromise("Chrome Web Store installation is not supported by Gnosis yet (feature_disabled).");
     }
     return true;
   }

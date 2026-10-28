@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 void Page::find(const std::string& query, bool forward, bool sensitive, bool match, Reply callback) {
+  if (!adapter_enabled("find")) { callback(nullptr, _("Native find is disabled in Debugging settings")); return; }
   if (is_closed() || !state_->attached || !state_->process || target.empty()) {
     callback(nullptr, _("The search page is not available")); return;
   }
@@ -42,6 +43,7 @@ void Page::find(const std::string& query, bool forward, bool sensitive, bool mat
     });
 }
 void Page::stop_find() {
+  if (!adapter_enabled("find")) return;
   ++state_->find_generation;
   if (state_->process && !target.empty())
     state_->process->find_request(target, "", true, false, false, {}, true, vim_mode);

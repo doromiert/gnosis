@@ -3,21 +3,21 @@
 #include <gtk/gtk.h>
 G_BEGIN_DECLS
 
-gboolean jupiter_compositor_is_host_shortcut(guint keyval, GdkModifierType modifiers);
-const char *jupiter_compositor_vim_key(guint keyval, GdkModifierType modifiers);
-#define JUPITER_TYPE_COMPOSITOR (jupiter_compositor_get_type())
-G_DECLARE_FINAL_TYPE(JupiterCompositor, jupiter_compositor, JUPITER, COMPOSITOR, GObject)
-JupiterCompositor *jupiter_compositor_new(GError **error);
-const char *jupiter_compositor_get_socket(JupiterCompositor *self);
-#define JUPITER_TYPE_COMPOSITOR_VIEW (jupiter_compositor_view_get_type())
-G_DECLARE_FINAL_TYPE(JupiterCompositorView, jupiter_compositor_view, JUPITER, COMPOSITOR_VIEW, GtkWidget)
-void jupiter_compositor_view_set_vim_field(JupiterCompositorView *self, gboolean enabled);
-GtkWidget *jupiter_compositor_view_new(GError **error);
-GtkWidget *jupiter_compositor_view_new_for_server(JupiterCompositor *server, const char *token);
-gboolean jupiter_compositor_view_has_surface(JupiterCompositorView *self);
-const char *jupiter_compositor_view_get_socket(JupiterCompositorView *self);
-gboolean jupiter_compositor_view_edit(JupiterCompositorView *self, const char *command);
-gboolean jupiter_compositor_view_context_position(JupiterCompositorView *self, double *x, double *y);
-void jupiter_compositor_view_release_buttons(JupiterCompositorView *self);
-void jupiter_compositor_drag_set_image(GdkDrag *drag, GdkTexture *image);
+gboolean gnosis_compositor_is_host_shortcut(guint keyval, GdkModifierType modifiers);
+const char *gnosis_compositor_vim_key(guint keyval, GdkModifierType modifiers);
+#define GNOSIS_TYPE_COMPOSITOR (gnosis_compositor_get_type())
+G_DECLARE_FINAL_TYPE(GnosisCompositor, gnosis_compositor, GNOSIS, COMPOSITOR, GObject)
+GnosisCompositor *gnosis_compositor_new(GError **error);
+const char *gnosis_compositor_get_socket(GnosisCompositor *self);
+#define GNOSIS_TYPE_COMPOSITOR_VIEW (gnosis_compositor_view_get_type())
+G_DECLARE_FINAL_TYPE(GnosisCompositorView, gnosis_compositor_view, GNOSIS, COMPOSITOR_VIEW, GtkWidget)
+void gnosis_compositor_view_set_vim_field(GnosisCompositorView *self, gboolean enabled);
+GtkWidget *gnosis_compositor_view_new(GError **error);
+GtkWidget *gnosis_compositor_view_new_for_server(GnosisCompositor *server, const char *token);
+gboolean gnosis_compositor_view_has_surface(GnosisCompositorView *self);
+const char *gnosis_compositor_view_get_socket(GnosisCompositorView *self);
+gboolean gnosis_compositor_view_edit(GnosisCompositorView *self, const char *command);
+gboolean gnosis_compositor_view_context_position(GnosisCompositorView *self, double *x, double *y);
+void gnosis_compositor_view_release_buttons(GnosisCompositorView *self);
+void gnosis_compositor_drag_set_image(GdkDrag *drag, GdkTexture *image);
 G_END_DECLS

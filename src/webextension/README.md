@@ -1,6 +1,6 @@
-# Jupiter native extensions
+# Gnosis native extensions
 
-Jupiter runs Manifest V2 and V3 extensions through CEF/Chromium. The shell catalog
+Gnosis runs Manifest V2 and V3 extensions through CEF/Chromium. The shell catalog
 uses the native owned extension store and Chromium inventory for the running
 profile. It does not import the default profile's legacy `web_extensions`
 directory; existing files there are left untouched.

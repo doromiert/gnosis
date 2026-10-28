@@ -46,26 +46,26 @@ public:
     CefRefPtr<ExtensionHost> detached = new ExtensionHost;
     detached->attach(browser);
     detached->command(browser, "Runtime.evaluate", args, [counts](auto result) {
-      counts->detached++; counts->ok &= result->GetBool("jupiterError");
+      counts->detached++; counts->ok &= result->GetBool("gnosisError");
     });
     detached->OnDevToolsAgentDetached(browser);
     detached->OnDevToolsAgentDetached(browser);
     host->command(nullptr, "Runtime.evaluate", args, [counts](auto result) {
-      counts->invalid++; counts->ok &= result->GetBool("jupiterError");
+      counts->invalid++; counts->ok &= result->GetBool("gnosisError");
     });
     ExtensionHost::Origin stale{"", browser, 0, "", host->pages_.at(browser->GetIdentifier()).generation+1};
     host->send(stale, "Runtime.evaluate", args, [counts](auto result) {
-      counts->stale++; counts->ok &= result->GetBool("jupiterError");
+      counts->stale++; counts->ok &= result->GetBool("gnosisError");
     });
-    ExtensionHost::Origin missing{"jupiter-regression-nonexistent-session", browser, 0, "",
+    ExtensionHost::Origin missing{"gnosis-regression-nonexistent-session", browser, 0, "",
       host->pages_.at(browser->GetIdentifier()).generation};
     host->send(missing, "Runtime.evaluate", args, [counts](auto result) {
-      counts->invalid++; counts->ok &= result->GetBool("jupiterError");
+      counts->invalid++; counts->ok &= result->GetBool("gnosisError");
     });
     // The host owns this session, but Chromium does not: exercise an actual outer CDP rejection.
     host->sessions_[missing.session] = missing;
     host->send(missing, "Runtime.evaluate", args, [host, browser, counts, missing, done](auto result) {
-      counts->transport++; counts->ok &= result->GetBool("jupiterError");
+      counts->transport++; counts->ok &= result->GetBool("gnosisError");
       auto late = CefDictionaryValue::Create(); late->SetInt("id", counts->inner);
       late->SetDictionary("result", CefDictionaryValue::Create());
       auto value = CefValue::Create(); value->SetDictionary(late);
@@ -107,17 +107,17 @@ class Client final : public CefClient,
                      public CefLoadHandler,
                      public CefDevToolsMessageObserver {
 public:
-  explicit Client(Client* parent = nullptr) : anchor(parent), lifecycle(getenv("JUPITER_PROBE_LIFECYCLE")) {}
+  explicit Client(Client* parent = nullptr) : anchor(parent), lifecycle(getenv("GNOSIS_PROBE_LIFECYCLE")) {}
   CefRefPtr<CefLoadHandler> GetLoadHandler() override { return this; }
   void OnLoadEnd(CefRefPtr<CefBrowser> b, CefRefPtr<CefFrame> f, int) override {
     if (anchor && f->IsMain()) { page_loaded = true; anchor->start_lifecycle(); }
-    if (f->IsMain() && getenv("JUPITER_PUBLIC_ADBLOCK_SCRIPT") &&
+    if (f->IsMain() && getenv("GNOSIS_PUBLIC_ADBLOCK_SCRIPT") &&
         f->GetURL().ToString().starts_with("https://adblock.turtlecute.org/")) {
-      f->ExecuteJavaScript("console.log('PUBLIC_ADBLOCK_OBSERVER_STATE:'+JSON.stringify({href:location.href,readyState:document.readyState,installed:!!window.__jupiterPublicObserver,storage:localStorage.getItem('adb_tool')}))", f->GetURL(), 1);
+      f->ExecuteJavaScript("console.log('PUBLIC_ADBLOCK_OBSERVER_STATE:'+JSON.stringify({href:location.href,readyState:document.readyState,installed:!!window.__gnosisPublicObserver,storage:localStorage.getItem('adb_tool')}))", f->GetURL(), 1);
     }
     if (f->IsMain() && f->GetURL().ToString().starts_with("chrome-extension://") &&
-        getenv("JUPITER_PROBE_SCRIPT")) {
-      std::ifstream file(getenv("JUPITER_PROBE_SCRIPT"));
+        getenv("GNOSIS_PROBE_SCRIPT")) {
+      std::ifstream file(getenv("GNOSIS_PROBE_SCRIPT"));
       std::string js((std::istreambuf_iterator<char>(file)), {});
       f->ExecuteJavaScript(js, f->GetURL(), 1);
     }
@@ -132,11 +132,11 @@ public:
     ++browsers;
     browser = b;
     printf("Created Alloy browser %d\n", b->GetIdentifier());
-    if (!anchor && getenv("JUPITER_PUBLIC_ADBLOCK_SCRIPT")) {
+    if (!anchor && getenv("GNOSIS_PUBLIC_ADBLOCK_SCRIPT")) {
       public_trace = b->GetHost()->AddDevToolsMessageObserver(this);
       b->GetHost()->ExecuteDevToolsMethod(1000000, "Page.enable", nullptr);
       b->GetHost()->ExecuteDevToolsMethod(1000001, "Network.enable", nullptr);
-      std::ifstream file(getenv("JUPITER_PUBLIC_ADBLOCK_SCRIPT"));
+      std::ifstream file(getenv("GNOSIS_PUBLIC_ADBLOCK_SCRIPT"));
       std::string script((std::istreambuf_iterator<char>(file)), {});
       auto args = CefDictionaryValue::Create(); args->SetString("source", script);
       b->GetHost()->ExecuteDevToolsMethod(1000002, "Page.addScriptToEvaluateOnNewDocument", args);
@@ -144,12 +144,12 @@ public:
     if (anchor && !anchor->browser) { CefPostTask(TID_UI, new Close(browser)); return; }
     if (anchor) { host = anchor->host; host->attach(b); return; }
     host = new ExtensionHost;
-    std::string path = getenv("JUPITER_PROBE_EXTENSION");
+    std::string path = getenv("GNOSIS_PROBE_EXTENSION");
     path = path.substr(0, path.find(','));
     auto extension = Extensions::read_manifest(path);
     auto ext = extension.id;
     extension_name = ext;
-    std::string paths = getenv("JUPITER_PROBE_EXTENSION");
+    std::string paths = getenv("GNOSIS_PROBE_EXTENSION");
     auto split = paths.find(',');
     if (split != std::string::npos)
       host->tab_bridge_id = Extensions::id_for_path(paths.substr(split + 1));
@@ -182,8 +182,8 @@ public:
   }
   bool OnConsoleMessage(CefRefPtr<CefBrowser>, cef_log_severity_t severity, const CefString& m, const CefString& source,
                         int line) override {
-    if (m.ToString().starts_with("JUPITER_NATIVE_TAB_ID:")) {
-      native_id = atoi(m.ToString().substr(sizeof("JUPITER_NATIVE_TAB_ID:") - 1).c_str());
+    if (m.ToString().starts_with("GNOSIS_NATIVE_TAB_ID:")) {
+      native_id = atoi(m.ToString().substr(sizeof("GNOSIS_NATIVE_TAB_ID:") - 1).c_str());
       if (anchor) anchor->start_lifecycle();
     }
     if (anchor && m == "EXTENSION_LIFECYCLE_PENDING") {
@@ -198,11 +198,11 @@ public:
     fflush(stdout);
     if (m.ToString().starts_with("UBO_SETUP_ERROR:") && browser)
       CefPostTask(TID_UI, new Close(browser));
-    std::set<std::string> expected = getenv("JUPITER_PROBE_SCRIPT") ?
+    std::set<std::string> expected = getenv("GNOSIS_PROBE_SCRIPT") ?
       std::set<std::string>{"UBO_NETWORK", "UBO_COSMETIC", "UBO_SCRIPTLET", "UBO_FRAME"} :
       std::set<std::string>{"EXTENSION_RUNTIME", "EXTENSION_BLOCKING", "EXTENSION_HOST_ISOLATION"};
-    if (getenv("JUPITER_PUBLIC_ADBLOCK_SCRIPT")) expected = {"PUBLIC_ADBLOCK"};
-    if (getenv("JUPITER_PROBE_NETWORK")) expected.insert("UBO_NETWORK_PROBES");
+    if (getenv("GNOSIS_PUBLIC_ADBLOCK_SCRIPT")) expected = {"PUBLIC_ADBLOCK"};
+    if (getenv("GNOSIS_PROBE_NETWORK")) expected.insert("UBO_NETWORK_PROBES");
     for (const auto& marker : expected) {
       if (m == marker + ":FAIL") {
         if (browser) CefPostTask(TID_UI, new Close(browser));
@@ -213,7 +213,7 @@ public:
       else if (!destination) {
         destination = new Client(this);
         CefWindowInfo w; w.SetAsWindowless(0); CefBrowserSettings s;
-        auto target = std::string(getenv("JUPITER_PROBE_URL"));
+        auto target = std::string(getenv("GNOSIS_PROBE_URL"));
         target = target.substr(0, target.find_last_of('/')+1)+"extension-child.html?lifecycle-target";
         ++creating;
         if (!CefBrowserHost::CreateBrowser(w, destination, target, s, nullptr, nullptr)) {
@@ -255,7 +255,7 @@ public:
       printf("Lifecycle native background result: %s\n", CefWriteJSON(diagnostic, JSON_WRITER_DEFAULT).ToString().c_str());
       auto remote = response->GetDictionary("result");
       auto result = remote ? remote->GetDictionary("value") : nullptr;
-      bool ok = !response->GetBool("jupiterError") && result && result->GetBool("anchor") &&
+      bool ok = !response->GetBool("gnosisError") && result && result->GetBool("anchor") &&
         result->GetBool("removed") && result->GetString("caught").ToString().find("closed") != std::string::npos;
       ok &= self->destination_callbacks && !self->destination_callbacks->empty();
       if (self->destination_callbacks)
@@ -300,7 +300,7 @@ public:
   explicit Reload(CefRefPtr<Client> c) : client(c) {}
   void Execute() override {
     if (client->browser && !client->dashboard_ready)
-      client->browser->GetMainFrame()->LoadURL(getenv("JUPITER_PROBE_URL"));
+      client->browser->GetMainFrame()->LoadURL(getenv("GNOSIS_PROBE_URL"));
   }
 
 private:
@@ -312,7 +312,7 @@ public:
   CefRefPtr<CefBrowserProcessHandler> GetBrowserProcessHandler() override { return this; }
   void OnBeforeCommandLineProcessing(const CefString& process, CefRefPtr<CefCommandLine> c) override {
     if (process.empty()) {
-      configure_extensions(c, getenv("JUPITER_PROBE_EXTENSION"));
+      configure_extensions(c, getenv("GNOSIS_PROBE_EXTENSION"));
       c->AppendSwitch("enable-unsafe-extension-debugging");
       c->AppendSwitch("disable-gpu");
       c->AppendSwitchWithValue("ozone-platform", "x11");
@@ -327,14 +327,14 @@ public:
     CefBrowserSettings s;
     client = new Client;
     ++creating;
-    if (!CefBrowserHost::CreateBrowser(w, client, getenv("JUPITER_PROBE_URL"), s, nullptr, nullptr)) {
+    if (!CefBrowserHost::CreateBrowser(w, client, getenv("GNOSIS_PROBE_URL"), s, nullptr, nullptr)) {
       --creating;
       finished = true;
       fprintf(stderr, "Native extension browser creation was rejected\n");
     }
-    if (getenv("JUPITER_PROBE_SCRIPT"))
+    if (getenv("GNOSIS_PROBE_SCRIPT"))
       CefPostDelayedTask(TID_UI, new Reload(client), 8000);
-    CefPostDelayedTask(TID_UI, new Exit(client), getenv("JUPITER_PUBLIC_ADBLOCK_SCRIPT") ? 165000 : 35000);
+    CefPostDelayedTask(TID_UI, new Exit(client), getenv("GNOSIS_PUBLIC_ADBLOCK_SCRIPT") ? 165000 : 35000);
   }
   CefRefPtr<Client> client;
 
@@ -355,7 +355,7 @@ NO_STACK_PROTECTOR int main(int argc, char** argv) {
   std::string sdk = getenv("CEF_ROOT");
   CefString(&s.resources_dir_path) = sdk + "/Resources";
   CefString(&s.locales_dir_path) = sdk + "/Resources/locales";
-  char profile[] = "/tmp/jupiter-extension-probe-XXXXXX";
+  char profile[] = "/tmp/gnosis-extension-probe-XXXXXX";
   if (!mkdtemp(profile))
     return 3;
   CefString(&s.root_cache_path) = profile;

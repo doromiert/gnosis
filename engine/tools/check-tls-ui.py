@@ -15,13 +15,13 @@ parser.add_argument('binary', type=Path)
 parser.add_argument('--schemas', type=Path, required=True)
 parser.add_argument('--incognito', action='store_true')
 args = parser.parse_args()
-root = Path(tempfile.mkdtemp(prefix='jupiter-tls-ui-', dir='/tmp'))
+root = Path(tempfile.mkdtemp(prefix='gnosis-tls-ui-', dir='/tmp'))
 env = dict(os.environ, XDG_CONFIG_HOME=str(root/'config'), XDG_DATA_HOME=str(root/'data'),
            XDG_CACHE_HOME=str(root/'cache'), GSETTINGS_BACKEND='keyfile',
            GSETTINGS_SCHEMA_DIR=str(args.schemas.resolve()))
-subprocess.run(['gsettings', 'set', 'io.github.doromiert.Jupiter', 'ask-for-default', 'false'],
+subprocess.run(['gsettings', 'set', 'com.neg-zero.Gnosis', 'ask-for-default', 'false'],
                env=env, check=True)
-fixtures = json.loads(os.environ['JUPITER_TLS_FIXTURES'])
+fixtures = json.loads(os.environ['GNOSIS_TLS_FIXTURES'])
 required = {'plain', 'valid', 'replacement'}
 assert required <= fixtures.keys(), 'Missing TLS UI fixtures: '+repr(required-fixtures.keys())
 log = (root/'app.log').open('w')
@@ -108,7 +108,7 @@ try:
             window = found.stdout.splitlines()[-1]
             break
         time.sleep(.1)
-    assert window, 'Jupiter did not create a visible browser window'
+    assert window, 'Gnosis did not create a visible browser window'
     subprocess.run(['xdotool', 'windowfocus', '--sync', window], check=True)
     wait_for_title('Security Violation')
     time.sleep(.5)

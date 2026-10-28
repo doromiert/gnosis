@@ -1,0 +1,261 @@
+{
+  "schema": 1,
+  "brave_version": "1.97.56",
+  "chromium_version": "155.0.8059.40",
+  "architecture": "x86_64-linux",
+  "executable": "opt/brave.com/brave/brave",
+  "input_sha256": "b3b6068cd5a5e8db376be3ad2d5d5639d76f074753cb7b80f99646b46e069fb6",
+  "output_sha256": "5b11c1e6b45d8342a2d9f8ca17a4126d5ad3bc5d092ee6f9296ebdff76cae1b4",
+  "patches": [
+    {
+      "function": "Native scrollbar paint helpers",
+      "file_offset": 121068928,
+      "virtual_address": "0x7376d80",
+      "expected_prefix": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "replacement": "80397f7449807908000f8501182cfe807910000f85f7172cfe52e8f1172cfe5a3d000000ff741a83f8ff7415b8ffffff3383fa01740c83fa03740d85d2750231c0c3b8ffffff66c3b8ffffff99c3b8ffffff1ac3ccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccb808000000c3cccccccccccccccccccc807c2410000f8565f32bfe837c2418010f845af32bfe4180791c000f854ff32bfe554889e54883ec40660fefc0f30f7f442408660fd6442418c64424087f488d44240848890424488b4510f30f6f00f30f7f44242083f910740c8344242409836c242c12eb0a8344242009836c242812837c2428007e11837c242c007e0a4c8d4c2420e85834e8064889ec5dc3cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc0000803f0000803f",
+      "intent": "Native scrollbar paint helpers",
+      "adapter": "scrollbars"
+    },
+    {
+      "function": "NativeThemeFluent::GetVerticalScrollbarButtonSize",
+      "file_offset": 236950022,
+      "virtual_address": "0xe1fa206",
+      "expected_prefix": "0f00000012000000",
+      "replacement": "1800000000000000",
+      "intent": "NativeThemeFluent::GetVerticalScrollbarButtonSize",
+      "adapter": "scrollbars"
+    },
+    {
+      "function": "NativeThemeFluent::GetVerticalScrollbarThumbSize",
+      "file_offset": 236950038,
+      "virtual_address": "0xe1fa216",
+      "expected_prefix": "0900000011000000",
+      "replacement": "080000002a000000",
+      "intent": "NativeThemeFluent::GetVerticalScrollbarThumbSize",
+      "adapter": "scrollbars"
+    },
+    {
+      "function": "NativeThemeFluent::GetPaintedScrollbarTrackInset vtable",
+      "file_offset": 4335856,
+      "virtual_address": "0x12b33110",
+      "expected_prefix": "a01ff30300000000",
+      "replacement": "006e370700000000",
+      "intent": "NativeThemeFluent::GetPaintedScrollbarTrackInset vtable",
+      "adapter": "scrollbars"
+    },
+    {
+      "function": "NativeThemeFluent::GetScrollbarThumbColor vtable",
+      "file_offset": 4336000,
+      "virtual_address": "0x12b33140",
+      "expected_prefix": "9085630500000000",
+      "replacement": "806d370700000000",
+      "intent": "NativeThemeFluent::GetScrollbarThumbColor vtable",
+      "adapter": "scrollbars"
+    },
+    {
+      "function": "NativeThemeFluent::PaintScrollbarTrack vtable",
+      "file_offset": 4336456,
+      "virtual_address": "0x12b331d8",
+      "expected_prefix": "8061630500000000",
+      "replacement": "106e370700000000",
+      "intent": "NativeThemeFluent::PaintScrollbarTrack vtable",
+      "adapter": "scrollbars"
+    },
+    {
+      "function": "NativeThemeFluent::PaintScrollbarThumb color call",
+      "file_offset": 236950337,
+      "virtual_address": "0xe1fa341",
+      "expected_prefix": "e84ae243f7",
+      "replacement": "e83aca17f9",
+      "intent": "NativeThemeFluent::PaintScrollbarThumb color call",
+      "adapter": "scrollbars"
+    },
+    {
+      "function": "blink::ScrollbarThemeFluent::UsesNinePatchTrackAndButtonsResource vtable",
+      "file_offset": 5207440,
+      "virtual_address": "0x12b8e3f0",
+      "expected_prefix": "1845400400000000",
+      "replacement": "f8df2b0d00000000",
+      "intent": "blink::ScrollbarThemeFluent::UsesNinePatchTrackAndButtonsResource vtable",
+      "adapter": "scrollbars"
+    },
+    {
+      "function": "WebThemeEngineDefault::GetOverlayScrollbarStyle idle scale",
+      "file_offset": 262678352,
+      "virtual_address": "0xfa83750",
+      "expected_prefix": "cdcccc3e",
+      "replacement": "0000c03e",
+      "intent": "WebThemeEngineDefault::GetOverlayScrollbarStyle idle scale",
+      "adapter": "scrollbars"
+    },
+    {
+      "function": "Native scrollbar auto/thin proportion lookup 0x3d8f599",
+      "file_offset": 64546204,
+      "virtual_address": "0x3d8f59c",
+      "expected_prefix": "e035f2fd",
+      "replacement": "60795e03",
+      "intent": "Native scrollbar auto/thin proportion lookup 0x3d8f599",
+      "adapter": "scrollbars"
+    },
+    {
+      "function": "Native scrollbar auto/thin proportion lookup 0x3d97385",
+      "file_offset": 64578440,
+      "virtual_address": "0x3d97388",
+      "expected_prefix": "f4b7f1fd",
+      "replacement": "74fb5d03",
+      "intent": "Native scrollbar auto/thin proportion lookup 0x3d97385",
+      "adapter": "scrollbars"
+    },
+    {
+      "function": "Native scrollbar auto/thin proportion lookup 0x3d975f6",
+      "file_offset": 64579065,
+      "virtual_address": "0x3d975f9",
+      "expected_prefix": "83b5f1fd",
+      "replacement": "03f95d03",
+      "intent": "Native scrollbar auto/thin proportion lookup 0x3d975f6",
+      "adapter": "scrollbars"
+    },
+    {
+      "function": "Native scrollbar auto/thin proportion lookup 0x3d97f98",
+      "file_offset": 64581531,
+      "virtual_address": "0x3d97f9b",
+      "expected_prefix": "e1abf1fd",
+      "replacement": "61ef5d03",
+      "intent": "Native scrollbar auto/thin proportion lookup 0x3d97f98",
+      "adapter": "scrollbars"
+    },
+    {
+      "function": "Native scrollbar auto/thin proportion lookup 0x3d9807f",
+      "file_offset": 64581762,
+      "virtual_address": "0x3d98082",
+      "expected_prefix": "faaaf1fd",
+      "replacement": "7aee5d03",
+      "intent": "Native scrollbar auto/thin proportion lookup 0x3d9807f",
+      "adapter": "scrollbars"
+    },
+    {
+      "function": "Native scrollbar auto/thin proportion lookup 0x3da2821",
+      "file_offset": 64624676,
+      "virtual_address": "0x3da2824",
+      "expected_prefix": "5803f1fd",
+      "replacement": "d8465d03",
+      "intent": "Native scrollbar auto/thin proportion lookup 0x3da2821",
+      "adapter": "scrollbars"
+    },
+    {
+      "function": "Native scrollbar auto/thin proportion lookup 0x3da2c12",
+      "file_offset": 64625685,
+      "virtual_address": "0x3da2c15",
+      "expected_prefix": "67fff0fd",
+      "replacement": "e7425d03",
+      "intent": "Native scrollbar auto/thin proportion lookup 0x3da2c12",
+      "adapter": "scrollbars"
+    },
+    {
+      "function": "Native scrollbar auto/thin proportion lookup 0x46ac22b",
+      "file_offset": 74101294,
+      "virtual_address": "0x46ac22e",
+      "expected_prefix": "4e6960fd",
+      "replacement": "ceaccc02",
+      "intent": "Native scrollbar auto/thin proportion lookup 0x46ac22b",
+      "adapter": "scrollbars"
+    },
+    {
+      "function": "Native scrollbar auto/thin proportion lookup 0x494bca3",
+      "file_offset": 76852390,
+      "virtual_address": "0x494bca6",
+      "expected_prefix": "d66e36fd",
+      "replacement": "56b2a202",
+      "intent": "Native scrollbar auto/thin proportion lookup 0x494bca3",
+      "adapter": "scrollbars"
+    },
+    {
+      "function": "Native scrollbar auto/thin proportion lookup 0x4951a16",
+      "file_offset": 76876313,
+      "virtual_address": "0x4951a19",
+      "expected_prefix": "631136fd",
+      "replacement": "e354a202",
+      "intent": "Native scrollbar auto/thin proportion lookup 0x4951a16",
+      "adapter": "scrollbars"
+    },
+    {
+      "function": "Native scrollbar auto/thin proportion lookup 0x4a7a22a",
+      "file_offset": 78090797,
+      "virtual_address": "0x4a7a22d",
+      "expected_prefix": "4f8923fd",
+      "replacement": "cfcc8f02",
+      "intent": "Native scrollbar auto/thin proportion lookup 0x4a7a22a",
+      "adapter": "scrollbars"
+    },
+    {
+      "function": "Native scrollbar auto/thin proportion lookup 0x4a7a626",
+      "file_offset": 78091817,
+      "virtual_address": "0x4a7a629",
+      "expected_prefix": "538523fd",
+      "replacement": "d3c88f02",
+      "intent": "Native scrollbar auto/thin proportion lookup 0x4a7a626",
+      "adapter": "scrollbars"
+    },
+    {
+      "function": "Native scrollbar auto/thin proportion lookup 0xf844f7b",
+      "file_offset": 260325246,
+      "virtual_address": "0xf844f7e",
+      "expected_prefix": "fedb46f2",
+      "replacement": "7e1fb3f7",
+      "intent": "Native scrollbar auto/thin proportion lookup 0xf844f7b",
+      "adapter": "scrollbars"
+    },
+    {
+      "function": "NativeThemeFluent track inset const-propagation slot",
+      "file_offset": 313725172,
+      "virtual_address": "0x12b330f4",
+      "expected_prefix": "01000000",
+      "replacement": "08000000",
+      "intent": "NativeThemeFluent track inset const-propagation slot",
+      "adapter": "scrollbars"
+    },
+    {
+      "function": "ScrollbarThemeFluent track cache const-propagation slot",
+      "file_offset": 314098279,
+      "virtual_address": "0x12b8e267",
+      "expected_prefix": "06",
+      "replacement": "02",
+      "intent": "ScrollbarThemeFluent track cache const-propagation slot",
+      "adapter": "scrollbars"
+    },
+    {
+      "function": "ui::GetOverlayScrollbarFadeDuration Fluent duration",
+      "virtual_address": "0xe1fdf2b",
+      "file_offset": 236965675,
+      "expected_prefix": "b9a0860100",
+      "replacement": "b9400d0300",
+      "intent": "Use a 200 ms compositor transition, matching libadwaita, instead of Fluent\u2019s 100 ms.",
+      "adapter": "scrollbars"
+    },
+    {
+      "function": "blink::GenerateLayerTreeSettings Fluent thinning duration",
+      "virtual_address": "0x6053bed",
+      "file_offset": 101002221,
+      "expected_prefix": "b8a0860100",
+      "replacement": "b8400d0300",
+      "intent": "Use a 200 ms compositor transition, matching libadwaita, instead of Fluent\u2019s 100 ms.",
+      "adapter": "scrollbars"
+    }
+  ],
+  "helper_source": "native-scrollbars-x86_64.S",
+  "helper_source_sha256": "8720fb29be1170454fc7dcf4d531da1c6108e414169c5651f3cb61d7a056f5dc",
+  "chromium_sources": {
+    "ui/native_theme/native_theme_fluent.cc": "04e09946d00eeaa7f355ed226589ddbd3b3b1073ce64fa4f5529acaad9135bf5",
+    "ui/native_theme/native_theme_fluent.h": "23747fb847036bc095804a92ebbaaf7ead3d963bebfae95070b2b8275b202aa0",
+    "ui/native_theme/native_theme_base.cc": "f52abae8be22b2de9a4478e851bec7292840f616e03af59166d1339deb07a561",
+    "ui/native_theme/native_theme_base.h": "d59e8c80f77b85a8ab13e89f565842debe3bd63bad5d72caf09527221df90e93",
+    "ui/native_theme/native_theme.h": "9f09fec2ac0acde00f229abb7c36d197c5e2fb2231b0c760aea7f5f8da04ed8b",
+    "ui/native_theme/overlay_scrollbar_constants.cc": "0ea75a2da1e69e3877029426adafae1ff60dea7960914432cfef2088cede7fd2",
+    "third_party/blink/renderer/core/scroll/scrollbar_theme_aura.cc": "190ef775e64f989a960e4681d44eae25cbc567460a94e3a079704a7631de0b32",
+    "third_party/blink/renderer/core/scroll/scrollbar_theme.h": "6c4f07ac0550d609777694d2fc74a9b4961cf1d894e19ade26a07a72e86f9f4c",
+    "third_party/blink/renderer/core/scroll/scrollbar_theme_fluent.cc": "c229d3d1bf05f4dc248f0ffd11c4b64e9612b3004a968f1ac3d61f499411560b",
+    "third_party/blink/renderer/platform/theme/web_theme_engine_default.cc": "dcf28013c558f57519ffefd73cf8abc49e886b596a2732bc304775e5d7bf3651",
+    "third_party/blink/renderer/platform/widget/compositing/layer_tree_settings.cc": "5122ba89ecb928037aea1b5ca3a5d038f975e04340430cc6f1936bffb48d09fe",
+    "cc/layers/painted_scrollbar_layer_impl.cc": "c795a766ff6300cc3ef21f56cb5f6c62660f907bbaa5013e9b472f7458bc4fd5"
+  }
+}

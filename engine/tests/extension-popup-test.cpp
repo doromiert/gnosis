@@ -85,7 +85,7 @@ static EphyEngineView *make_popup(GtkApplication *app, EphyEngineView *owner, co
   std::string status, previous_status;
   wait_for([&] {
     status = evaluate(popup, R"JS((async()=>{try {
-      if (!chrome.tabs.__jupiter) return 'bridge pending';
+      if (!chrome.tabs.__gnosis) return 'bridge pending';
       const nativeURL = chrome.runtime.getURL('');
       if (!chrome.runtime.getManifest().version) return 'manifest pending';
       const lists = await vAPI.messaging.send('dashboard', {what:'getLists'});
@@ -96,7 +96,7 @@ static EphyEngineView *make_popup(GtkApplication *app, EphyEngineView *owner, co
     if (status != previous_status) {
       g_print("Popup readiness (%s): %s\n", expected.c_str(), status.c_str());
       auto details = evaluate(popup, R"JS((()=>{
-        const report={url:location.href,bridge:!!globalThis.chrome?.tabs?.__jupiter,
+        const report={url:location.href,bridge:!!globalThis.chrome?.tabs?.__gnosis,
           hostname:document.querySelector('#hostname')?.innerText,
           loading:document.body?.classList.contains('loading'),ready:document.readyState};
         try {report.nativeURL=chrome.runtime.getURL('');report.version=chrome.runtime.getManifest().version}
@@ -115,10 +115,10 @@ int main(int argc, char **argv) {
   disable_diagnostic_core_dumps();
   if (!cef_api_hash(CEF_API_VERSION, 0)) return 1;
   int child = ephy_engine_execute_process(argc, argv); if (child >= 0) return child;
-  auto *app = adw_application_new("io.github.doromiert.Jupiter.ExtensionPopupTest", G_APPLICATION_NON_UNIQUE);
+  auto *app = adw_application_new("com.neg-zero.Gnosis.ExtensionPopupTest", G_APPLICATION_NON_UNIQUE);
   GError *error = nullptr;
   g_assert_true(g_application_register(G_APPLICATION(app), nullptr, &error)); g_assert_no_error(error);
-  char profile[] = "/tmp/jupiter-extension-popup-XXXXXX"; g_assert_nonnull(mkdtemp(profile));
+  char profile[] = "/tmp/gnosis-extension-popup-XXXXXX"; g_assert_nonnull(mkdtemp(profile));
   g_assert_true(ephy_engine_initialize(argc, argv, profile, true)); disable_diagnostic_core_dumps();
   g_autoptr(JsonArray) catalog = ephy_engine_extensions_dup_installed();
   g_assert_cmpuint(json_array_get_length(catalog), >=, 1);
@@ -129,8 +129,8 @@ int main(int argc, char **argv) {
   g_assert_true(json_object_get_boolean_member(ubo, "has_action"));
   const std::string extension = std::string("chrome-extension://") + json_object_get_string_member(ubo, "id") + "/";
   const auto popup_url = extension + json_object_get_string_member(ubo, "popup");
-  g_assert_nonnull(g_getenv("JUPITER_TEST_URL"));
-  const std::string fixture = g_getenv("JUPITER_TEST_URL");
+  g_assert_nonnull(g_getenv("GNOSIS_TEST_URL"));
+  const std::string fixture = g_getenv("GNOSIS_TEST_URL");
   auto a = make_window(GTK_APPLICATION(app)), b = make_window(GTK_APPLICATION(app));
   auto *a1 = add_tab(&a, fixture + "?owner=a1");
   gtk_window_present(GTK_WINDOW(a.window));
@@ -242,7 +242,7 @@ int main(int argc, char **argv) {
       ephy_engine_web_view_get_extension_tab_id(b.created), ephy_engine_web_view_is_loading(b.created),
       ephy_engine_web_view_get_uri(b.created));
     const auto native = evaluate(b.created, R"JS(new Promise(resolve=>{
-      const report={url:location.href,ready:document.readyState,bridge:!!globalThis.chrome?.tabs?.__jupiter,
+      const report={url:location.href,ready:document.readyState,bridge:!!globalThis.chrome?.tabs?.__gnosis,
         title:document.title,frames:[...document.querySelectorAll('iframe')].map(frame=>frame.src)};
       let finished=false;
       const done=()=>{if(finished)return;finished=true;clearTimeout(timer);resolve(JSON.stringify(report))};

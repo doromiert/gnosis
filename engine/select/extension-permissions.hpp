@@ -4,7 +4,7 @@
 #include <string>
 
 // Chromium host permissions ignore paths and ports. File access needs a separate
-// user grant, which Jupiter's extension manager does not provide yet.
+// user grant, which Gnosis's extension manager does not provide yet.
 inline bool extension_host_permission_matches(const std::string& pattern, const std::string& url) {
   auto *uri = g_uri_parse(url.c_str(), G_URI_FLAGS_PARSE_RELAXED, nullptr);
   if (!uri) return false;

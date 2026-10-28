@@ -57,10 +57,10 @@ static void outcome(EphyEngineView *view, const char *expected) {
 int main(int argc, char **argv) {
   disable_diagnostic_core_dumps(); if (!cef_api_hash(CEF_API_VERSION, 0)) return 1;
   int sub = ephy_engine_execute_process(argc, argv); if (sub >= 0) return sub;
-  auto *app = adw_application_new("io.github.doromiert.Jupiter.PermissionTest", G_APPLICATION_NON_UNIQUE);
+  auto *app = adw_application_new("com.neg-zero.Gnosis.PermissionTest", G_APPLICATION_NON_UNIQUE);
   GError *error = nullptr; g_assert_true(g_application_register(G_APPLICATION(app), nullptr, &error)); g_assert_no_error(error);
-  char profile[] = "/tmp/jupiter-permission-test-XXXXXX"; g_assert_nonnull(mkdtemp(profile));
-  const std::string base = g_getenv("JUPITER_TEST_URL");
+  char profile[] = "/tmp/gnosis-permission-test-XXXXXX"; g_assert_nonnull(mkdtemp(profile));
+  const std::string base = g_getenv("GNOSIS_TEST_URL");
   const std::string uri = base + "permission-fixture";
   const std::string origin = base.substr(0, base.size()-1);
   auto *regular = ephy_engine_session_get_default();

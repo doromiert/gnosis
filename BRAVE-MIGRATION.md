@@ -7,10 +7,10 @@ to the real Brave browser. This replaces the previous CEF engine direction.
 User constraints: work solo, prioritize implementation, use `nix run` to build and
 launch, keep the Chromium sandbox enabled and core dumps disabled, no interface-
 polish skills. The original X11 PoC can be closed; preserve useful test windows
-while replacing their backend. Brave supplies the web-content backend; Jupiter
+while replacing their backend. Brave supplies the web-content backend; Gnosis
 owns all browser UI and user-facing browser behavior.
 
-Launch preference: reuse the normal ~/.local/share/jupiter profile for user test
+Launch preference: reuse the normal ~/.local/share/gnosis profile for user test
 builds. Earlier per-build /tmp profiles made history appear to disappear. Their
 databases remain intact; the default history had 43 saved URLs when checked.
 Use a fresh isolated profile only for a specific isolation test, not each build.
@@ -38,7 +38,7 @@ injection verifies both choices. Cross-process-frame interaction invalidation
 and broader live-editor coverage remain follow-up work.
 
 Default browsing no longer passes --disable-frame-rate-limit. Composited Brave
-uses WaylandExternalBeginFrameSource; explicit JUPITER_UNCAP_FRAMES=1 remains a
+uses WaylandExternalBeginFrameSource; explicit GNOSIS_UNCAP_FRAMES=1 remains a
 diagnostic override. Steady-state packaged checks measured 59.79 fps at 60 Hz
 and 119.55 fps at 120 Hz, versus 1698.37 fps in the earlier uncapped 60 Hz sample.
 Startup/fullscreen monitor transitions affected one earlier sample; mixed
@@ -156,7 +156,7 @@ establish the cause of an individual challenge.
 - [ ] Actual packaged GTK acceptance, including normal/private/multiple windows,
   iframe behavior, close lifetime, keyboard and real games' pointer lock.
 
-The standalone PoC in ../jupiter-brave-poc is already visibly verified: GTK native
+The standalone PoC in ../gnosis-brave-poc is already visibly verified: GTK native
 surface -> native child container -> actual Brave app window. Its normal-window
 coordinates add GTK's CSD shadow offset; native window extents are cleared and
 Mutter withdrawal completes before reparenting. F12 opens GTK Inspector and F9
@@ -166,7 +166,7 @@ source fork of Brave or native Wayland integration; don't claim otherwise.
 Integration evidence (2026-10-24): the first extraction incorrectly matched a
 Mutter decoration frame by its copied page title. Restoring the PoC's exact
 Brave WM_CLASS and normal-client-window checks removed the ghost frames and
-clipped viewport. The corrected live run has only the GTK Jupiter client in
+clipped viewport. The corrected live run has only the GTK Gnosis client in
 _NET_CLIENT_LIST; the real Brave client is an override-redirect child at (0,0)
 inside its GTK content container. The visible page fills that content area.
 Closed tabs now retain at most one blank, unmapped reusable app window to avoid
@@ -200,13 +200,13 @@ the GTK Wayland backend; X11 capture and inner confined-pointer requests are not
 implemented. This does not establish full game/IME/clipboard compatibility.
 
 Epiphany integration now defaults to compositor-backed Wayland page widgets.
-Each normal/private Brave process owns a shared JupiterCompositor GObject;
+Each normal/private Brave process owns a shared GnosisCompositor GObject;
 registered widgets bind their bootstrap tokens to the corresponding xdg
 toplevel. The actual shell has run with two independently registered GPU-backed
 tabs on a single Brave process and compositor. A hidden reusable widget retains
 the last app window across tab closure. Renderer ownership is held by imported
 buffer leases until GTK releases those buffers. The X11 path remains a temporary
-fallback via JUPITER_SURFACE=x11, not the intended final architecture.
+fallback via GNOSIS_SURFACE=x11, not the intended final architecture.
 
 The current live follow-up build includes held-key cleanup on focus loss and
 GTK modifier synchronization before pointer/scroll events; resize-time scaling
@@ -238,7 +238,7 @@ chrome. Both the fullscreen transitions and header restoration need another chec
 
 Brave's analytics infobar is disabled before backend launch using the exact
 v1.97.56 Local State prefs from Brave's own source: brave.p3a.enabled=false and
-brave.p3a.notice_acknowledged=true. This only prepares Jupiter's backend profiles,
+brave.p3a.notice_acknowledged=true. This only prepares Gnosis's backend profiles,
 preserves other Local State keys, and fails on invalid JSON instead of resetting
 the profile. The successful native-services run has those values in its actual
 Local State file. It does not claim all other Brave UI has been replaced.
@@ -262,7 +262,7 @@ remove the cap. Local rAF samples stayed around 57–63 fps with 16.7 ms median
 intervals. With Chromium's frame limiter disabled, the same page measured
 1541–1787 callbacks/s and GTK recorded about 118–120 callbacks/s; the user
 confirmed the run feels 120 Hz. Composited mode now defaults to that workaround
-(JUPITER_UNCAP_FRAMES=0 restores the internal limiter). This is not an efficient
+(GNOSIS_UNCAP_FRAMES=0 restores the internal limiter). This is not an efficient
 final scheduler: most inner frames are unnecessary. Parent-driven begin-frame
 production/backpressure and accurate mixed-monitor feedback remain pending.
 
@@ -304,7 +304,7 @@ original stylesheet and overview.js, not a replacement layout.
 Live overview messages initially retained raw ephy-resource thumbnail URLs.
 They are now translated as well; the normal-profile run loaded eight cached
 JPEG screenshots through the existing authorized thumbnail endpoint. The normal
-profile remains ~/.local/share/jupiter. Native full-document snapshot requests
+profile remains ~/.local/share/gnosis. Native full-document snapshot requests
 now capture a bounded taller clip matching Epiphany's 650x540 cache envelope,
 rather than only a wide viewport. Existing images refresh on real page visits.
 The packaged run refreshed permission.site's real cached JPEG to 650x540;
@@ -405,7 +405,7 @@ zoom, reset and sibling-tab isolation. Ctrl+wheel is routed to GTK's zoom action
 The native zoom popup is still unresolved in stock Brave. The allowlisted
 extension behavior does not suppress automatic/mode-change notifications; that
 ineffective allowlist flag has been removed. `engine/brave/patches/` now contains
-an opt-in `--jupiter-native-ui` source patch in one stable component file, with
+an opt-in `--gnosis-native-ui` source patch in one stable component file, with
 pinned hashes and an upgrade checker exposed through Nix. Source application
 and exact reversal pass for 1.97.56/155.0.8059.40 and the newer candidate
 1.100.31/156.0.8078.48. Drift/context/hash failures are rejected. This is not a
@@ -491,7 +491,7 @@ LD_PRELOAD after loading the shim, keeping the shim mapped only where needed.
 The GPU crash must not be described as conclusively fixed by that change.
 
 JavaScript GTK verification completed: scoped accessibility actions on the new
-Jupiter process accepted the native alert, rejected confirm, entered Unicode
+Gnosis process accepted the native alert, rejected confirm, entered Unicode
 prompt text and cancelled a second prompt. The fixture webpage received exactly
 false / "GTK response ✓" / null. Navigation beforeunload and tab-close handling
 remain separate pending checks/work. The native shell was built/launched with
@@ -506,8 +506,8 @@ Target.getTargets filter [{type:"tab",exclude:false}] exposes native tab targets
 triggering uBlock on one of those in the current --app setup terminates Brave.
 The probe's private pipe closes; crashpad reports a snapshot, but no native stack
 or exact cause has been recovered. Do not route production GTK action clicks to
-this API until app-window popup hosting is fixed. Main Jupiter stayed running.
-Probe script: /tmp/jupiter-brave-extension-native-probe.py; source inputs remain
+this API until app-window popup hosting is fixed. Main Gnosis stayed running.
+Probe script: /tmp/gnosis-brave-extension-native-probe.py; source inputs remain
 pinned to 1.97.56 / 155.0.8059.40. No extension UI change shipped in this step.
 
 
@@ -579,7 +579,7 @@ similarly default-disabled; the launch configuration enables both while retainin
 the Nix package's video acceleration features. Packaged picker validation remains.
 
 The notification transport now rewrites only this browser's freedesktop Notify
-application identity from Brave to Jupiter, including desktop-entry and the
+application identity from Brave to Gnosis, including desktop-entry and the
 packaged icon. The original connection, IDs, website content and action callbacks
 are preserved. A narrowly filtered live D-Bus capture and notification show event
 verified the new identity. Context-menu actions now copy their invocation before
@@ -624,7 +624,7 @@ and upstream TOTP/passkey initialization pass. Password/TOTP/passkey functionali
 uses upstream encrypted browser integration and still requires first-use database
 pairing. The added unlock adapter requests KeePassXC's own prompt on a real user
 gesture in a detected login field; its gesture/frame/cooldown/coalescing test
-passes. No database password is handled by Jupiter. See
+passes. No database password is handled by Gnosis. See
 `engine/data/keepassxc/README.md` for maintenance and remaining live validation.
 
 KeePassXC UI follow-up: the upstream provider is now an invisible internal
@@ -690,9 +690,12 @@ map/layout the menu before selecting the actual row passes reopen and More/Less.
 The product name, launcher, About UI, notifications and primary executable now
 use Gnosis. The supplied root `gnosis.svg` is packaged unchanged for the normal,
 development and Canary application icons; the symbolic icon follows its globe
-geometry. The existing application/schema/profile identifiers and internal
-KeePassXC identity remain compatibility identities. The old `jupiter` command
-and Nix package selector remain aliases, so current launch scripts and data work.
+geometry. The later deep rebrand also renames internal namespaces, protocols,
+widgets, build targets, resources, environment variables and application/schema
+IDs to Gnosis. The current application ID is `com.neg-zero.Gnosis`, with
+`com.neg_zero.Gnosis` for D-Bus interfaces. The first normal launch migrates
+profile directories and settings; compatibility redirects preserve stored
+absolute extension paths and their IDs. KeePassXC's public key remains stable.
 
 The context menu now offers Copy Image. It reads the original resource through
 the owning frame's Brave cache/network context, decodes asynchronously, then
@@ -736,4 +739,4 @@ also repaired. A multi-tab switching probe remains a follow-up.
 
 Native context menus now open the actual GTK-hosted Developer Tools window.
 Actual menu activation and full native uBlock regressions pass. See the dated
-handoff in JUPITER-TODO.md for the next session and persistent test artifacts.
+handoff in GNOSIS-TODO.md for the next session and persistent test artifacts.

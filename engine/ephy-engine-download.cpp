@@ -116,7 +116,7 @@ void start_target(EphyEngineDownload *download) {
   // Chromium writes a private sibling file. Publishing it must never clobber an
   // existing destination unless the user explicitly approved replacement.
   auto *directory = g_path_get_dirname(data->destination.c_str());
-  auto *pattern = g_build_filename(directory, ".jupiter-download-XXXXXX", nullptr);
+  auto *pattern = g_build_filename(directory, ".gnosis-download-XXXXXX", nullptr);
   int file = g_mkstemp_full(pattern, O_RDWR | O_CLOEXEC, 0600);
   g_free(directory);
   if (file < 0) {
@@ -414,7 +414,7 @@ void ephy_engine_downloads_shutdown() {
   for (auto *download : pending) { ephy_engine_download_cancel(download); g_object_unref(download); }
   auto deadline = g_get_monotonic_time() + 5 * G_TIME_SPAN_SECOND;
   while ((!live.empty() || pending_browsers) && g_get_monotonic_time() < deadline) {
-    if (!JupiterBrave::enabled()) CefDoMessageLoopWork();
+    if (!GnosisBrave::enabled()) CefDoMessageLoopWork();
     while (g_main_context_pending(nullptr)) g_main_context_iteration(nullptr, false);
     g_usleep(1000);
   }

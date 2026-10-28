@@ -2,11 +2,11 @@
 #pragma once
 #include <gtk/gtk.h>
 G_BEGIN_DECLS
-typedef struct JupiterOuterPointer JupiterOuterPointer;
-typedef void (*JupiterPointerState)(gpointer data, gboolean locked);
-typedef void (*JupiterPointerMotion)(gpointer data, guint64 time_usec, double dx, double dy, double raw_dx, double raw_dy);
-JupiterOuterPointer *jupiter_outer_pointer_new(GtkWidget *widget, JupiterPointerState state, JupiterPointerMotion motion, gpointer data, GError **error);
-gboolean jupiter_outer_pointer_lock(JupiterOuterPointer *self, GError **error);
-void jupiter_outer_pointer_release(JupiterOuterPointer *self);
-void jupiter_outer_pointer_free(JupiterOuterPointer *self);
+typedef struct GnosisOuterPointer GnosisOuterPointer;
+typedef void (*GnosisPointerState)(gpointer data, gboolean locked);
+typedef void (*GnosisPointerMotion)(gpointer data, guint64 time_usec, double dx, double dy, double raw_dx, double raw_dy);
+GnosisOuterPointer *gnosis_outer_pointer_new(GtkWidget *widget, GnosisPointerState state, GnosisPointerMotion motion, gpointer data, GError **error);
+gboolean gnosis_outer_pointer_lock(GnosisOuterPointer *self, GError **error);
+void gnosis_outer_pointer_release(GnosisOuterPointer *self);
+void gnosis_outer_pointer_free(GnosisOuterPointer *self);
 G_END_DECLS

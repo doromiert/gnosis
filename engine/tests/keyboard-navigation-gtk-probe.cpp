@@ -18,7 +18,7 @@ extern "C" GSubprocess* g_subprocess_launcher_spawnv(GSubprocessLauncher*l,const
 }
 static GtkWindow* window;
 static GSettings* settings;
-static std::shared_ptr<JupiterBrave::Page> page;
+static std::shared_ptr<GnosisBrave::Page> page;
 static std::vector<std::pair<std::string,std::function<void()>>> steps;
 static size_t step;
 static bool busy,ready,cleaning;
@@ -38,7 +38,7 @@ static GtkWidget* vim_row(GtkWidget* node) {
 }
 static void eval(const std::string& script,std::function<void(JsonObject*)> done) {
   busy=true;
-  page->command("Runtime.evaluate","{\"expression\":"+JupiterBrave::quote(script)+",\"returnByValue\":true}",[done](JsonObject*r,const std::string&e){
+  page->command("Runtime.evaluate","{\"expression\":"+GnosisBrave::quote(script)+",\"returnByValue\":true}",[done](JsonObject*r,const std::string&e){
     busy=false;if(!r||!e.empty()||json_object_has_member(r,"exceptionDetails"))fail("script evaluation");
     done(json_object_get_object_member(r,"result"));
   });
@@ -83,14 +83,14 @@ static gboolean start(gpointer) {
   window=gtk_application_get_active_window(GTK_APPLICATION(g_application_get_default()));if(!window)return G_SOURCE_CONTINUE;
   auto embed=reinterpret_cast<void*(*)(void*)>(dlsym(RTLD_DEFAULT,"ephy_window_get_active_embed"));
   auto view=reinterpret_cast<void*(*)(void*)>(dlsym(RTLD_DEFAULT,"ephy_embed_get_web_view"));
-  auto get=reinterpret_cast<std::shared_ptr<JupiterBrave::Page>(*)(void*)>(dlsym(RTLD_DEFAULT,"_Z27ephy_engine_view_brave_pageP15_EphyEngineView"));
+  auto get=reinterpret_cast<std::shared_ptr<GnosisBrave::Page>(*)(void*)>(dlsym(RTLD_DEFAULT,"_Z27ephy_engine_view_brave_pageP15_EphyEngineView"));
   auto prefs=reinterpret_cast<GSettings*(*)(const char*)>(dlsym(RTLD_DEFAULT,"ephy_settings_get"));
   if(!embed(window))return G_SOURCE_CONTINUE;
-  page=get(view(embed(window)));settings=prefs("io.github.doromiert.Jupiter.web");
+  page=get(view(embed(window)));settings=prefs("com.neg-zero.Gnosis.web");
   auto* toolbarGroup=reinterpret_cast<GActionMap*(*)(void*,const char*)>(dlsym(RTLD_DEFAULT,"ephy_window_get_action_group"))(window,"toolbar");
   if(!g_getenv("GNOSIS_KEYBOARD_PREVIEW"))g_signal_connect(g_action_map_lookup_action(toolbarGroup,"reload"),"activate",G_CALLBACK(+[](GSimpleAction*,GVariant*,gpointer){fail("field Ctrl+R reached browser reload");}),nullptr);
 
-  g_settings_set_boolean(prefs("io.github.doromiert.Jupiter"),"ask-for-default",false);
+  g_settings_set_boolean(prefs("com.neg-zero.Gnosis"),"ask-for-default",false);
   if(auto*d=adw_application_window_get_visible_dialog(ADW_APPLICATION_WINDOW(window))){
     g_printerr("KEYBOARD_STARTUP_DIALOG %s %s\n",adw_dialog_get_title(d),ADW_IS_ALERT_DIALOG(d)?adw_alert_dialog_get_heading(ADW_ALERT_DIALOG(d)):"");
     adw_dialog_force_close(d);
@@ -149,7 +149,7 @@ static gboolean start(gpointer) {
   key("slash");wait();add("search a control",[]{gtk_editable_set_text(GTK_EDITABLE(entry),"Right action");});wait();key("Return");
   add("confirmed search focuses page",[]{if(gtk_widget_get_mapped(entry)||GTK_IS_TEXT(gtk_window_get_focus(window)))fail("Vim Enter did not return to page");});expect("getSelection().toString()==='Right action'");key("Return");expect("rightClicks===1");
   key("slash");wait();add("search a cross-process control",[]{gtk_editable_set_text(GTK_EDITABLE(entry),"OOPIF search control");});wait();key("Return");key("Return");expect("childActivated===true");
-  expect("typeof gnosisVim==='undefined'&&typeof gnosisVimField==='undefined'&&typeof __jupiterDocumentMetadata==='undefined'");
+  expect("typeof gnosisVim==='undefined'&&typeof gnosisVimField==='undefined'&&typeof __gnosisDocumentMetadata==='undefined'");
   script("document.querySelector('#frame').contentWindow.focus()");key("g");key("g");key("Return");key("i");key("a");key("b");expect("childValue==='ab'");
   key("Escape");key("h");key("x");expect("childValue==='a'");key("u");expect("childValue==='ab'");key("ctrl+r");expect("childValue==='a'");key("Escape");
   script("document.activeElement?.blur();document.body.tabIndex=-1;document.body.focus()");

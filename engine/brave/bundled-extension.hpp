@@ -20,8 +20,9 @@
 #include <sys/syscall.h>
 #include <linux/fs.h>
 #include <unistd.h>
+#include "../../lib/gnosis-rebrand.h"
 
-namespace JupiterBrave {
+namespace GnosisBrave {
 class BundledExtensionUpdate {
   struct Fd {
     int value = -1;
@@ -220,14 +221,16 @@ public:
   BundledExtensionUpdate(const BundledExtensionUpdate&) = delete;
   BundledExtensionUpdate& operator=(const BundledExtensionUpdate&) = delete;
   static std::string packaged_id(const std::string& profile, const std::string& source) {
+    g_autofree char* identity_profile = gnosis_legacy_extension_profile(profile.c_str());
     auto directory = open_directory(AT_FDCWD, source.c_str(), false);
-    return identity(manifest(directory.value), profile + '/' + target_name);
+    return identity(manifest(directory.value), std::string(identity_profile) + '/' + target_name);
   }
   /* Empty native_version means a requested first registration. A newer already
    * installed provider is never downgraded during an application rollback. */
   static std::shared_ptr<BundledExtensionUpdate> prepare(const std::string& profile, const std::string& source,
                                                         const std::string& native_version) {
-    auto update = std::shared_ptr<BundledExtensionUpdate>(new BundledExtensionUpdate(profile));
+    g_autofree char* identity_profile = gnosis_legacy_extension_profile(profile.c_str());
+    auto update = std::shared_ptr<BundledExtensionUpdate>(new BundledExtensionUpdate(identity_profile));
     auto input = open_directory(AT_FDCWD, source.c_str(), false);
     const auto packaged = manifest(input.value);
     update->id_ = identity(packaged, update->directory_);

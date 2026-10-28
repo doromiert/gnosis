@@ -158,12 +158,12 @@ int main(int argc, char **argv) {
   disable_diagnostic_core_dumps();
   if (!cef_api_hash(CEF_API_VERSION, 0)) return 1;
   int sub = ephy_engine_execute_process(argc, argv); if (sub >= 0) return sub;
-  auto *app = adw_application_new("io.github.doromiert.Jupiter.ScriptTest", G_APPLICATION_NON_UNIQUE);
+  auto *app = adw_application_new("com.neg-zero.Gnosis.ScriptTest", G_APPLICATION_NON_UNIQUE);
   GError *error = nullptr;
   g_assert_true(g_application_register(G_APPLICATION(app), nullptr, &error)); g_assert_no_error(error);
-  char profile[] = "/tmp/jupiter-script-test-XXXXXX"; g_assert_nonnull(mkdtemp(profile));
+  char profile[] = "/tmp/gnosis-script-test-XXXXXX"; g_assert_nonnull(mkdtemp(profile));
   g_assert_true(ephy_engine_initialize(argc, argv, profile, true)); disable_diagnostic_core_dumps();
-  std::string uri = std::string(g_getenv("JUPITER_TEST_URL")) + "script-fixture";
+  std::string uri = std::string(g_getenv("GNOSIS_TEST_URL")) + "script-fixture";
   auto *view = page(GTK_APPLICATION(app), ephy_engine_session_get_default(), uri.c_str());
   same_document_navigation(view, uri);
   serialized_results(view);

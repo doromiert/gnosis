@@ -5,8 +5,12 @@
 #include <functional>
 #include <memory>
 #include <string>
-namespace JupiterBrave {
+namespace GnosisBrave {
 bool enabled();
+void configure_debug_adapters(const std::string&);
+bool adapter_enabled(const char*);
+bool adapter_overridden(const char*);
+std::string disabled_adapters();
 bool composited();
 void initialize(const std::string& profile);
 void set_automation_mode(bool);
@@ -95,6 +99,7 @@ private:
   explicit Page(GtkWidget*, bool);
   void attach(); void handle(const std::string&, JsonObject*, bool frame_event = false); void layout();
   void adopt_surface(GtkWidget*); void surface_ready();
+  void update_portal_parent();
   void history(int); void refresh_history();
   void internal_request(JsonObject*);
   void show_context_menu(JsonObject*, int context);
@@ -104,6 +109,8 @@ private:
   void dismiss_script_dialog(bool cancel);
   void show_install_dialog(JsonObject*);
   void dismiss_install_dialog(bool cancel);
+  void dismiss_http_retry();
+  void offer_http_retry(const std::string&);
   void theme_document(const std::string&, const std::string&);
   void update_web_theme();
   void update_vim(int context);
@@ -118,6 +125,8 @@ private:
   void dismiss_password_manager();
   void show_authenticator(JsonObject*);
   void dismiss_authenticator(bool cancel);
+  void show_passkey_provider(JsonObject*);
+  void dismiss_passkey_provider();
   void authenticator_action(const std::string&, int, guint64);
   void poll_password_manager();
   void update_password_manager(JsonObject*, const std::string&);

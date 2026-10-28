@@ -7,8 +7,8 @@
 #include <cstring>
 struct Test { GtkWindow* window; EphyEngineView* view; GMainLoop* loop; bool passed=false; bool failed=false; bool favicon=false; bool private_started=false; int stage=0; };
 static void maybe_finish(Test* t) {
-  if (!t->passed || (g_getenv("JUPITER_TEST_URL") && !t->favicon)) return;
-  if (g_getenv("JUPITER_TEST_URL") && !t->private_started) {
+  if (!t->passed || (g_getenv("GNOSIS_TEST_URL") && !t->favicon)) return;
+  if (g_getenv("GNOSIS_TEST_URL") && !t->private_started) {
     t->private_started=true;
     auto* session=ephy_engine_session_new(true);
     t->view=EPHY_ENGINE_VIEW(g_object_new(EPHY_TYPE_ENGINE_VIEW,"network-session",session,nullptr));
@@ -20,7 +20,7 @@ static void maybe_finish(Test* t) {
       g_print("CEF private favicon excluded from shared cache: PASS\n");
       maybe_finish(t);
     }),t);
-    std::string url=std::string(g_getenv("JUPITER_TEST_URL"))+"?private=1";
+    std::string url=std::string(g_getenv("GNOSIS_TEST_URL"))+"?private=1";
     ephy_engine_web_view_load_uri(t->view,url.c_str());
     adw_application_window_set_content(ADW_APPLICATION_WINDOW(t->window),GTK_WIDGET(t->view));
     return;
@@ -32,9 +32,9 @@ int main(int argc, char** argv) {
   disable_diagnostic_core_dumps();
   if (!cef_api_hash(CEF_API_VERSION, 0)) return 1;
   int sub=ephy_engine_execute_process(argc,argv);if(sub>=0)return sub;
-  auto* app=adw_application_new("io.github.doromiert.Jupiter.EngineTest",G_APPLICATION_NON_UNIQUE);
+  auto* app=adw_application_new("com.neg-zero.Gnosis.EngineTest",G_APPLICATION_NON_UNIQUE);
   GError* error=nullptr;if(!g_application_register(G_APPLICATION(app),nullptr,&error)){g_printerr("%s\n",error->message);return 1;}
-  char profile[]="/tmp/jupiter-native-engine-XXXXXX";if(!mkdtemp(profile))return 1;
+  char profile[]="/tmp/gnosis-native-engine-XXXXXX";if(!mkdtemp(profile))return 1;
   if(!ephy_engine_initialize(argc,argv,profile,true))return 1;
   disable_diagnostic_core_dumps();
   Test test;
@@ -69,7 +69,7 @@ int main(int argc, char** argv) {
       },t);
     }
   }),&test);
-  const char* fixture=g_getenv("JUPITER_TEST_URL");
+  const char* fixture=g_getenv("GNOSIS_TEST_URL");
   ephy_engine_web_view_load_uri(test.view,fixture?fixture:"data:text/html,<title>CEF native contract</title><h1>Chromium in GTK</h1>");
   gtk_window_present(test.window);
   guint timeout=g_timeout_add_seconds(20,+[](gpointer p)->gboolean{auto*t=static_cast<Test*>(p);t->failed=true;g_printerr("CEF view test: TIMEOUT\n");g_main_loop_quit(t->loop);return G_SOURCE_REMOVE;},&test);

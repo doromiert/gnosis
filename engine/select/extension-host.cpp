@@ -2,7 +2,7 @@
 #include "devtools.hpp"
 extern "C" {
 #include <gio/gio.h>
-GResource* jupiter_engine_get_resource(void);
+GResource* gnosis_engine_get_resource(void);
 }
 #include "extension-host.hpp"
 #include "include/cef_parser.h"
@@ -52,7 +52,7 @@ std::string extension_id(const std::string& url) {
 }
 CefRefPtr<CefDictionaryValue> failure(const std::string& message) {
   auto result = dict();
-  result->SetBool("jupiterError", true);
+  result->SetBool("gnosisError", true);
   result->SetString("message", message);
   return result;
 }
@@ -227,10 +227,10 @@ void ExtensionHost::OnDevToolsMethodResult(CefRefPtr<CefBrowser> browser, int id
   auto page = pages_.find(it->second.browser);
   if (page == pages_.end() || page->second.generation != it->second.generation) return;
   auto result = parse(data, size);
-  if (!success && g_getenv("JUPITER_EXTENSION_DEBUG"))
+  if (!success && g_getenv("GNOSIS_EXTENSION_DEBUG"))
     g_print("Extension CDP error: %s\n", encode(value(result)).c_str());
   if (!success)
-    result->SetBool("jupiterError", true);
+    result->SetBool("gnosisError", true);
   complete(id, result);
 }
 void ExtensionHost::send(const Origin& origin, const std::string& method,
@@ -255,7 +255,7 @@ void ExtensionHost::send(const Origin& origin, const std::string& method,
   args->SetString("sessionId", origin.session);
   args->SetString("message", encode(value(message)));
   command(origin.browser, "Target.sendMessageToTarget", args, [self, id](auto result) {
-    if (result->GetBool("jupiterError")) self->complete(id, result);
+    if (result->GetBool("gnosisError")) self->complete(id, result);
   }, origin.session);
 }
 void ExtensionHost::prepare_popup(const std::string& extension, std::function<bool()> live,
@@ -342,7 +342,7 @@ void ExtensionHost::scan() {
     return;
   auto b = pages_.begin()->second.browser;
   command(b, "Target.getTargets", dict(), [this, b](auto result) {
-    if (g_getenv("JUPITER_EXTENSION_DEBUG"))
+    if (g_getenv("GNOSIS_EXTENSION_DEBUG"))
       g_print("Extension targets: %s\n", encode(value(result)).c_str());
     auto list = result->GetList("targetInfos");
     if (!list)
@@ -379,17 +379,17 @@ void ExtensionHost::scan() {
 }
 void ExtensionHost::hook(const Origin& origin) {
   if (!current(origin)) return;
-  if (g_getenv("JUPITER_EXTENSION_DEBUG"))
+  if (g_getenv("GNOSIS_EXTENSION_DEBUG"))
     g_print("Extension hook session=%s context=%d\n", origin.session.c_str(), origin.context);
   if (origin.context)
     trusted_contexts_[{origin.browser->GetIdentifier(), origin.context}] = origin.extension;
   auto args = dict();
-  args->SetString("name", "__jupiterExtensionRequest");
+  args->SetString("name", "__gnosisExtensionRequest");
   if (origin.context)
     args->SetInt("executionContextId", origin.context);
   send(origin, "Runtime.addBinding", args, [this, origin](auto result) {
-    if (result->GetBool("jupiterError") || !current(origin)) return;
-    auto* bytes = g_resource_lookup_data(jupiter_engine_get_resource(), "/io/github/doromiert/Jupiter/extension-tabs.js",
+    if (result->GetBool("gnosisError") || !current(origin)) return;
+    auto* bytes = g_resource_lookup_data(gnosis_engine_get_resource(), "/com/neg_zero/Gnosis/extension-tabs.js",
                                           G_RESOURCE_LOOKUP_FLAGS_NONE, nullptr);
     if (!bytes)
       return;
@@ -408,7 +408,7 @@ void ExtensionHost::OnDevToolsEvent(CefRefPtr<CefBrowser> b, const CefString& me
   if (!b || !b->IsValid() || !pages_.contains(b->GetIdentifier())) return;
   auto args = parse(data, size);
   std::string name = method;
-  if (g_getenv("JUPITER_EXTENSION_DEBUG") && name.starts_with("Target."))
+  if (g_getenv("GNOSIS_EXTENSION_DEBUG") && name.starts_with("Target."))
     g_print("Extension event %s: %.300s\n", name.c_str(), encode(value(args)).c_str());
   if (name == "Target.receivedMessageFromTarget") {
     auto session = args->GetString("sessionId").ToString();
@@ -431,7 +431,7 @@ void ExtensionHost::OnDevToolsEvent(CefRefPtr<CefBrowser> b, const CefString& me
       }
     } else if (event->GetString("method") == "Runtime.bindingCalled") {
       auto params = event->GetDictionary("params");
-      if (params && params->GetString("name") == "__jupiterExtensionRequest") {
+      if (params && params->GetString("name") == "__gnosisExtensionRequest") {
         auto payload = params->GetString("payload").ToString();
         request(sessions_[session], parse(payload.data(), payload.size()));
       }
@@ -478,7 +478,7 @@ void ExtensionHost::OnDevToolsEvent(CefRefPtr<CefBrowser> b, const CefString& me
         found->second.extension == tab_bridge_id) {
       auto first = all->GetDictionary(0);
       auto text = first ? first->GetString("value").ToString() : "";
-      constexpr std::string_view prefix = "JUPITER_NATIVE_FRAME:";
+      constexpr std::string_view prefix = "GNOSIS_NATIVE_FRAME:";
       if (text.starts_with(prefix)) {
         auto frame = parse(text.data() + prefix.size(), text.size() - prefix.size());
         frame_ids_[{b->GetIdentifier(), frame->GetInt("frameId")}] = found->second.frame;
@@ -491,14 +491,14 @@ void ExtensionHost::OnDevToolsEvent(CefRefPtr<CefBrowser> b, const CefString& me
       return;
     auto ext = extension_id(context->GetString("origin"));
     auto aux = context->GetDictionary("auxData");
-    if (g_getenv("JUPITER_EXTENSION_DEBUG"))
+    if (g_getenv("GNOSIS_EXTENSION_DEBUG"))
       g_print("Extension context: %s\n", encode(value(context)).c_str());
     if (aux)
       contexts_[b->GetIdentifier()][context->GetInt("id")] = {context->GetInt("id"), ext,
                                                               aux->GetString("frameId")};
     if (extension_ids.contains(ext) && aux && aux->GetBool("isDefault"))
       hook({"", b, context->GetInt("id"), ext, pages_.at(b->GetIdentifier()).generation});
-  } else if (name == "Runtime.bindingCalled" && args->GetString("name") == "__jupiterExtensionRequest") {
+  } else if (name == "Runtime.bindingCalled" && args->GetString("name") == "__gnosisExtensionRequest") {
     auto payload = args->GetString("payload").ToString();
     auto key = std::make_pair(b->GetIdentifier(), args->GetInt("executionContextId"));
     if (trusted_contexts_.contains(key))
@@ -509,7 +509,7 @@ void ExtensionHost::OnDevToolsEvent(CefRefPtr<CefBrowser> b, const CefString& me
 void ExtensionHost::reply(const Origin& origin, int id, CefRefPtr<CefValue> result,
                           const std::string& error) {
   auto args = dict();
-  args->SetString("expression", "globalThis.__jupiterExtensionReply?.(" + std::to_string(id) + "," +
+  args->SetString("expression", "globalThis.__gnosisExtensionReply?.(" + std::to_string(id) + "," +
                                     encode(result) + "," + quote(error) + ")");
   if (origin.context)
     args->SetInt("contextId", origin.context);
@@ -651,7 +651,7 @@ void ExtensionHost::css(const ExtensionTab& tab, CefRefPtr<CefDictionaryValue> d
   // Nested CEF values become invalid when the incoming request is released.
   details = details->Copy(false);
   auto code = details->GetString("code").ToString();
-  if (g_getenv("JUPITER_EXTENSION_DEBUG"))
+  if (g_getenv("GNOSIS_EXTENSION_DEBUG"))
     g_print("CSS adapter: tab=%d ext=%s url=%s bytes=%zu frame=%d\n", tab.id, extension.c_str(),
             tab.info->GetString("url").ToString().c_str(), code.size(), details->GetInt("frameId"));
   auto frame_key = details->HasKey("frameId") ? std::to_string(details->GetInt("frameId"))
@@ -670,7 +670,7 @@ void ExtensionHost::css(const ExtensionTab& tab, CefRefPtr<CefDictionaryValue> d
   }
   command(tab.browser, "Page.getFrameTree", dict(),
           [this, tab, code, key, details, done, extension](auto result) {
-            if (g_getenv("JUPITER_EXTENSION_DEBUG"))
+            if (g_getenv("GNOSIS_EXTENSION_DEBUG"))
               g_print("CSS frame tree: %s\n", encode(value(result)).c_str());
             auto tree = result->GetDictionary("frameTree");
             if (!tree) {
@@ -707,7 +707,7 @@ void ExtensionHost::css(const ExtensionTab& tab, CefRefPtr<CefDictionaryValue> d
               args->SetBool("force", true);
               command(tab.browser, "CSS.createStyleSheet", args,
                       [this, tab, code, key, pending, done](auto result) {
-                        if (g_getenv("JUPITER_EXTENSION_DEBUG"))
+                        if (g_getenv("GNOSIS_EXTENSION_DEBUG"))
                           g_print("CSS stylesheet: %s\n", encode(value(result)).c_str());
                         auto sheet = result->GetString("styleSheetId").ToString();
                         if (sheet.empty()) {
@@ -765,7 +765,7 @@ void ExtensionHost::script(const ExtensionTab& tab, CefRefPtr<CefDictionaryValue
   }
   command(tab.browser, "Page.getFrameTree", dict(),
           [this, tab, details, extension, code, result, output, done](auto response) {
-            if (response->GetBool("jupiterError")) {
+            if (response->GetBool("gnosisError")) {
               done(result, error_message(response));
               return;
             }
@@ -808,7 +808,7 @@ void ExtensionHost::script(const ExtensionTab& tab, CefRefPtr<CefDictionaryValue
                 args->SetBool("awaitPromise", true);
                 command(tab.browser, "Runtime.evaluate", args,
                         [result, output, done, count, error, i](auto response) {
-                          if (response->GetBool("jupiterError"))
+                          if (response->GetBool("gnosisError"))
                             *error = error_message(response);
                           else if (response->HasKey("exceptionDetails"))
                             *error = "The extension script raised an exception";
@@ -833,11 +833,11 @@ void ExtensionHost::script(const ExtensionTab& tab, CefRefPtr<CefDictionaryValue
               else {
                 auto args = dict();
                 args->SetString("frameId", frames[i]);
-                args->SetString("worldName", "Jupiter extension " + extension);
+                args->SetString("worldName", "Gnosis extension " + extension);
                 command(tab.browser, "Page.createIsolatedWorld", args,
                         [evaluate, result, done, count, error](auto response) {
-                          if (response->GetBool("jupiterError") || !response->GetInt("executionContextId")) {
-                            *error = response->GetBool("jupiterError") ? error_message(response)
+                          if (response->GetBool("gnosisError") || !response->GetInt("executionContextId")) {
+                            *error = response->GetBool("gnosisError") ? error_message(response)
                               : "The extension execution context is unavailable";
                             if (!--*count) done(result, *error);
                             return;

@@ -123,5 +123,7 @@ void              ephy_window_add_toast                  (EphyWindow *window,
 
 gboolean ephy_window_can_commit_close (EphyWindow *window);
 void ephy_window_cancel_close (EphyWindow *window);
+void ephy_window_set_ai_cursor (EphyWindow *window, EphyWebView *view,
+                               double x, double y, double viewport_width, double viewport_height);
 
 G_END_DECLS

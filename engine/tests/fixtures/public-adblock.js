@@ -1,8 +1,8 @@
 /* Observes the public page without replacing its requests or filter results. */
 console.log('PUBLIC_ADBLOCK_OBSERVER_BOOT:' + JSON.stringify({href: location.href, readyState: document.readyState}));
 if (top === window && location.hostname === 'adblock.turtlecute.org') {
-  window.__jupiterPublicObserver = true;
-  const stage = sessionStorage.getItem('jupiter-public-retest') ? 'retest' : 'initial';
+  window.__gnosisPublicObserver = true;
+  const stage = sessionStorage.getItem('gnosis-public-retest') ? 'retest' : 'initial';
   const storedCount = () => JSON.parse(localStorage.getItem('adb_tool') || '{}').results?.length || 0;
   const baseline = storedCount();
   const originalFetch = window.fetch;
@@ -28,7 +28,7 @@ if (top === window && location.hostname === 'adblock.turtlecute.org') {
         if (stage === 'initial') {
           const button = document.querySelector('#start_test');
           if (!button) throw new Error('Public Re-test button missing');
-          sessionStorage.setItem('jupiter-public-retest', '1');
+          sessionStorage.setItem('gnosis-public-retest', '1');
           console.log('PUBLIC_ADBLOCK_RETEST_CLICK');
           button.click();
         } else {

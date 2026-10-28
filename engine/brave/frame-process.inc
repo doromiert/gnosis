@@ -60,6 +60,7 @@
     for (auto& id : sources) forget_frame(id);
   }
   void attach_frames(const std::string& source) {
+    if (!adapter_enabled("frame-sessions")) return;
     command("Target.setAutoAttach",R"({"autoAttach":true,"waitForDebuggerOnStart":true,"flatten":true,"filter":[{"type":"iframe","exclude":false},{"exclude":true}]})",source,
       [](JsonObject*,const std::string& error){if(!error.empty())g_warning("Native iframe adapters could not attach: %s",error.c_str());});
   }
@@ -96,14 +97,6 @@
       },new Resume{weak_from_this(),child},+[](gpointer data){delete static_cast<Resume*>(data);});
       attach_frames(child);
       command("Page.enable","{}",child); command("Network.enable","{}",child);
-      command("DOM.enable","{}",child);
-      command("CSS.enable","{}",child,[weak=weak_from_this(),child](JsonObject*,const std::string& error) {
-        if (auto process=weak.lock();process&&error.empty()) {
-          auto found=process->frame_sessions.find(child);
-          if (found!=process->frame_sessions.end())
-            if (auto page=found->second.owner.lock();page&&!page->is_closed()) page->update_web_theme();
-        }
-      });
       command("Page.getFrameTree","{}",child,[weak=weak_from_this(),child](JsonObject* result,const std::string&) {
         auto process=weak.lock();if(!process||!result)return;
         auto found=process->frame_sessions.find(child);if(found==process->frame_sessions.end())return;
@@ -119,16 +112,17 @@
         };
         register_tree(object(result,"frameTree"));
       });
-      command("Runtime.addBinding",R"({"name":"__jupiterContextMenu","executionContextName":"JupiterContextMenu"})",child);
-      command("Runtime.addBinding",R"({"name":"__jupiterDocumentMetadata","executionContextName":"JupiterDocumentMetadata"})",child);
+      command("Runtime.addBinding",R"({"name":"__gnosisContextMenu","executionContextName":"GnosisContextMenu"})",child);
+      command("Runtime.addBinding",R"({"name":"__gnosisDocumentMetadata","executionContextName":"GnosisDocumentMetadata"})",child);
       command("Runtime.enable","{}",child);
-      for (auto item : {std::pair{"JupiterContextMenu","context-menu.js"},std::pair{"JupiterScrollbars","scrollbars.js"}}) {
-        g_autofree char* path = g_build_filename(JUPITER_NATIVE_INTEGRATION_DIR,item.second,nullptr);
+      for (auto item : {std::pair{"GnosisContextMenu","context-menu.js"}}) {
+        if (!adapter_enabled("context-menu")) continue;
+        g_autofree char* path = g_build_filename(GNOSIS_NATIVE_INTEGRATION_DIR,item.second,nullptr);
         g_autofree char* script = nullptr;
         if (g_file_get_contents(path,&script,nullptr,nullptr))
           command("Page.addScriptToEvaluateOnNewDocument","{\"worldName\":"+quote(item.first)+",\"source\":"+quote(script)+",\"runImmediately\":true}",child);
       }
-      command("Page.addScriptToEvaluateOnNewDocument","{\"worldName\":\"JupiterDocumentMetadata\",\"source\":"+quote(document_adapter_source())+",\"runImmediately\":true}",child,
+      if (adapter_enabled("document-metadata")) command("Page.addScriptToEvaluateOnNewDocument","{\"worldName\":\"GnosisDocumentMetadata\",\"source\":"+quote(document_adapter_source())+",\"runImmediately\":true}",child,
         [this,child](JsonObject*,const std::string&){resume_frame(child);});
       return true;
     }
@@ -156,7 +150,7 @@
     } else if (method == "Runtime.executionContextCreated") {
       auto* context=object(params,"context");
       const std::string name=text(context,"name");
-      if (name != "JupiterContextMenu" && name != "JupiterDocumentMetadata") return true;
+      if (name != "GnosisContextMenu" && name != "GnosisDocumentMetadata") return true;
       const int runtime=json_object_get_int_member_with_default(context,"id",0);
       if (runtime <= 0 || frame_context_sequence == G_MAXINT) return true;
       const std::string frame_id=text(object(context,"auxData"),"frameId");

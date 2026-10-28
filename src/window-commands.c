@@ -79,6 +79,7 @@
 #include "ephy-zoom.h"
 #include "prefs-general-page.h"
 #include "prefs-search-engine-page.h"
+#include "ephy-web-app-dialog.h"
 
 #define DEFAULT_ICON_SIZE 192
 #define FAVICON_SIZE 16
@@ -1223,7 +1224,7 @@ window_cmd_show_about (GSimpleAction *action,
     authors[author_index++] = g_strdup (contributors[index]);
   }
 
-  dialog = ADW_ABOUT_DIALOG (adw_about_dialog_new_from_appdata ("/org/gnome/Epiphany/io.github.doromiert.Jupiter.metainfo.xml", NULL));
+  dialog = ADW_ABOUT_DIALOG (adw_about_dialog_new_from_appdata ("/org/gnome/Epiphany/com.neg-zero.Gnosis.metainfo.xml", NULL));
 
   if (g_str_equal (PROFILE, "Canary"))
     adw_about_dialog_set_application_name (dialog, _("Gnosis Canary"));
@@ -1568,8 +1569,8 @@ window_cmd_open (GSimpleAction *action,
 
 typedef struct {
   EphyWebView *view;
-  const char *display_address;
-  const char *url;
+  char *display_address;
+  char *url;
   char *manifest_url;
   char *icon_href;
   char *title;
@@ -1585,6 +1586,9 @@ typedef struct {
   EphyEngineDownload *download;
   EphyWindow *window;
   EphyDownload *download_manifest;
+  EphyWebAppDialog *setup;
+  gboolean setup_accepted;
+  GKeyFile *web_app_config;
 } EphyApplicationDialogData;
 
 static void
@@ -1638,6 +1642,11 @@ static void download_failed_cb (EphyEngineDownload            *download,
 static void
 ephy_application_dialog_data_free (EphyApplicationDialogData *data)
 {
+  if (data->setup) {
+    g_signal_handlers_disconnect_by_data (data->setup, data);
+    g_clear_object (&data->setup);
+  }
+  g_clear_pointer (&data->web_app_config, g_key_file_unref);
   if (data->download) {
     g_signal_handlers_disconnect_by_data (data->download, data);
 
@@ -1652,6 +1661,8 @@ ephy_application_dialog_data_free (EphyApplicationDialogData *data)
   if (data->icon_v)
     g_variant_unref (data->icon_v);
   g_free (data->manifest_url);
+  g_free (data->display_address);
+  g_free (data->url);
   g_free (data->icon_href);
   g_free (data->title);
   g_free (data->chosen_name);
@@ -2043,6 +2054,11 @@ save_as_application_proceed (EphyApplicationDialogData *data)
                                          data->webapp_options,
                                          &error);
 
+  if (success && !ephy_web_application_set_extensions (data->app_id, data->web_app_config, &error)) {
+    ephy_web_application_delete (data->app_id, NULL);
+    success = FALSE;
+  }
+
   send_web_app_install_notification (data, error);
 
   if (success)
@@ -2124,7 +2140,7 @@ prepare_install_cb (GObject      *object,
 }
 
 static void
-create_install_dialog_when_ready (EphyApplicationDialogData *data)
+prepare_web_app_install (EphyApplicationDialogData *data)
 {
   XdpPortal *portal;
   g_autoptr (XdpParent) parent = NULL;
@@ -2138,10 +2154,47 @@ create_install_dialog_when_ready (EphyApplicationDialogData *data)
   xdp_portal_dynamic_launcher_prepare_install (portal, parent,
                                                data->title, data->icon_v,
                                                XDP_LAUNCHER_WEBAPP, data->url,
-                                               TRUE, TRUE, /* editable name, icon */
+                                               FALSE, FALSE, /* Selected in the native setup. */
                                                data->cancellable,
                                                prepare_install_cb,
                                                data);
+}
+
+static void
+web_app_setup_closed (AdwDialog *dialog, EphyApplicationDialogData *data)
+{
+  if (!data->setup_accepted)
+    ephy_application_dialog_data_free (data);
+}
+
+static void
+web_app_setup_accepted (EphyWebAppDialog *dialog, EphyApplicationDialogData *data)
+{
+  g_autoptr (GBytes) png = ephy_web_app_dialog_dup_icon_bytes (dialog, NULL);
+  g_autoptr (GIcon) icon = g_bytes_icon_new (png);
+
+  data->setup_accepted = TRUE;
+  data->web_app_config = ephy_web_app_dialog_dup_config (dialog);
+  g_set_str (&data->title, ephy_web_app_dialog_get_name (dialog));
+  g_clear_pointer (&data->icon_v, g_variant_unref);
+  data->icon_v = g_icon_serialize (icon);
+  prepare_web_app_install (data);
+  adw_dialog_close (ADW_DIALOG (dialog));
+}
+
+static void
+create_install_dialog_when_ready (EphyApplicationDialogData *data)
+{
+  g_autoptr (GIcon) icon = NULL;
+
+  if (data->setup || !data->webapp_options_set || !data->title || !data->icon_v)
+    return;
+
+  icon = g_icon_deserialize (data->icon_v);
+  data->setup = EPHY_WEB_APP_DIALOG (g_object_ref_sink (ephy_web_app_dialog_new (data->title, data->url, icon, NULL, TRUE)));
+  g_signal_connect (data->setup, "accepted", G_CALLBACK (web_app_setup_accepted), data);
+  g_signal_connect (data->setup, "closed", G_CALLBACK (web_app_setup_closed), data);
+  adw_dialog_present (ADW_DIALOG (data->setup), GTK_WIDGET (data->window));
 }
 
 static void
@@ -2346,8 +2399,8 @@ window_cmd_save_as_application (GSimpleAction *action,
   data = g_new0 (EphyApplicationDialogData, 1);
   data->window = g_object_ref (window);
   data->view = EPHY_WEB_VIEW (EPHY_GET_WEBKIT_WEB_VIEW_FROM_EMBED (embed));
-  data->display_address = ephy_web_view_get_display_address (data->view);
-  data->url = ephy_engine_web_view_get_uri (EPHY_ENGINE_VIEW (data->view));
+  data->display_address = g_strdup (ephy_web_view_get_display_address (data->view));
+  data->url = g_strdup (ephy_engine_web_view_get_uri (EPHY_ENGINE_VIEW (data->view)));
   data->cancellable = g_cancellable_new ();
 
   ephy_web_view_get_web_app_manifest_url (data->view, data->cancellable, got_manifest_url_cb, data);
@@ -3433,18 +3486,11 @@ window_cmd_open_application_manager (GSimpleAction *action,
                                      GVariant      *parameter,
                                      gpointer       user_data)
 {
-  EphyWindow *window = EPHY_WINDOW (user_data);
-  EphyEmbed *embed;
-  EphyWebView *web_view;
+  AdwPreferencesDialog *dialog;
 
-  embed = ephy_shell_new_tab (ephy_shell_get_default (),
-                              window,
-                              NULL,
-                              EPHY_NEW_TAB_JUMP);
-
-  web_view = ephy_embed_get_web_view (embed);
-
-  ephy_web_view_load_url (web_view, "about:applications");
+  window_cmd_show_preferences (NULL, NULL, user_data);
+  dialog = ADW_PREFERENCES_DIALOG (ephy_shell_get_prefs_dialog (ephy_shell_get_default ()));
+  adw_preferences_dialog_set_visible_page_name (dialog, "web-apps-page");
 }
 
 void

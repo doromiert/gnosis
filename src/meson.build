@@ -12,7 +12,18 @@ enums = gnome.mkenums_simple('ephy-type-builtins',
 
 subdir('webextension')
 
+mcp_resources = gnome.compile_resources('gnosis-mcp-resources', 'gnosis-mcp.gresource.xml',
+  source_dir: meson.current_source_dir(), c_name: 'gnosis_mcp')
+mcp_server = executable('gnosis-mcp', ['gnosis-mcp-main.c', mcp_resources],
+  dependencies: [dependency('gio-2.0'), json_glib_dep], include_directories: include_directories('..'), install: true)
+if get_option('unit_tests').enabled()
+  test('Gnosis MCP protocol', find_program('python3'),
+    args: [files('../engine/tests/mcp_protocol_test.py'), mcp_server])
+endif
+
 libephymain_sources = [
+  'gnosis-mcp.cpp',
+  mcp_resources,
   'bookmarks/ephy-bookmark.c',
   'bookmarks/ephy-bookmark-properties.c',
   'bookmarks/ephy-bookmark-row.c',
@@ -62,10 +73,13 @@ libephymain_sources = [
   'preferences/ephy-lang-row.c',
   'preferences/ephy-prefs-dialog.c',
   'preferences/extension-view.c',
+  'preferences/ephy-web-app-dialog.c',
   'preferences/ephy-search-engine-listbox.c',
   'preferences/ephy-search-engine-row.c',
   'preferences/prefs-appearance-page.c',
+  'preferences/prefs-debugging-page.c',
   'preferences/prefs-extensions-page.c',
+  'preferences/prefs-web-apps-page.c',
   'preferences/prefs-features-page.c',
   'preferences/prefs-general-page.c',
   'preferences/prefs-privacy-page.c',
@@ -198,8 +212,8 @@ executable('epiphany-search-provider',
 )
 
 webapp_codegen = gnome.gdbus_codegen('ephy-webapp-provider-generated',
-  'webapp-provider/io.github.doromiert.Jupiter.WebAppProvider.xml',
-  interface_prefix: 'io.github.doromiert.Jupiter',
+  'webapp-provider/com.neg-zero.Gnosis.WebAppProvider.xml',
+  interface_prefix: 'com.neg_zero.Gnosis',
   namespace: 'Ephy'
 )
 

@@ -2,11 +2,11 @@
   "schema": 1,
   "brave_version": "1.97.56",
   "chromium_version": "155.0.8059.40",
-  "switch": "jupiter-native-ui",
+  "switch": "gnosis-native-ui",
   "patches": [
     {
       "file": "0001-native-zoom-feedback.patch",
-      "sha256": "57fe87b43c4e679a1835458c20b3ae72b11ce7622dea661ec626780755de20f3",
+      "sha256": "b3109590532248ee185fc7485e49e1b0272d514c47638d870f5763b8eb5f5f6e",
       "intent": "Disable native zoom feedback only when the GTK embedding shell opts in."
     }
   ],

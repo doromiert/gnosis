@@ -54,7 +54,7 @@ typedef enum
   EPHY_PREFS_WEB_HARDWARE_ACCELERATION_POLICY_NEVER
 } EphyPrefsWebHardwareAccelerationPolicy;
 
-#define EPHY_PREFS_UI_SCHEMA                     "io.github.doromiert.Jupiter.ui"
+#define EPHY_PREFS_UI_SCHEMA                     "com.neg-zero.Gnosis.ui"
 #define EPHY_PREFS_UI_EXPAND_TABS_BAR            "expand-tabs-bar"
 #define EPHY_PREFS_UI_TABS_BAR_VISIBILITY_POLICY "tabs-bar-visibility-policy"
 #define EPHY_PREFS_UI_KEEP_WINDOW_OPEN           "keep-window-open"
@@ -62,11 +62,11 @@ typedef enum
 #define EPHY_PREFS_UI_WEBKIT_FEATURES_PANEL      "webkit-features-page"
 #define EPHY_PREFS_UI_WEBKIT_INTERNAL_FEATURES   "webkit-features-page-show-internal"
 
-#define EPHY_PREFS_READER_SCHEMA                 "io.github.doromiert.Jupiter.reader"
+#define EPHY_PREFS_READER_SCHEMA                 "com.neg-zero.Gnosis.reader"
 #define EPHY_PREFS_READER_FONT_STYLE             "font-style"
 #define EPHY_PREFS_READER_COLOR_SCHEME           "color-scheme"
 
-#define EPHY_PREFS_STATE_SCHEMA                 "io.github.doromiert.Jupiter.state"
+#define EPHY_PREFS_STATE_SCHEMA                 "com.neg-zero.Gnosis.state"
 #define EPHY_PREFS_STATE_DOWNLOAD_DIR           "download-dir"
 #define EPHY_PREFS_STATE_RECENT_ENCODINGS       "recent-encodings"
 #define EPHY_PREFS_STATE_WINDOW_POSITION        "window-position"
@@ -81,7 +81,7 @@ static const char * const ephy_prefs_state_schema[] = {
   EPHY_PREFS_STATE_IS_MAXIMIZED
 };
 
-#define EPHY_PREFS_WEB_SCHEMA                       "io.github.doromiert.Jupiter.web"
+#define EPHY_PREFS_WEB_SCHEMA                       "com.neg-zero.Gnosis.web"
 #define EPHY_PREFS_WEB_FONT_MIN_SIZE                "min-font-size"
 #define EPHY_PREFS_WEB_LANGUAGE                     "language"
 #define EPHY_PREFS_WEB_USE_GNOME_FONTS              "use-gnome-fonts"
@@ -151,7 +151,7 @@ static const char * const ephy_prefs_web_schema[] = {
   EPHY_PREFS_WEB_READER_MODE_ZOOM_LEVEL,
 };
 
-#define EPHY_PREFS_SCHEMA                             "io.github.doromiert.Jupiter"
+#define EPHY_PREFS_SCHEMA                             "com.neg-zero.Gnosis"
 #define EPHY_PREFS_HOMEPAGE_URL                       "homepage-url"
 #define EPHY_PREFS_NEW_WINDOWS_IN_TABS                "new-windows-in-tabs"
 #define EPHY_PREFS_WARN_ON_CLOSE_UNSUBMITTED_DATA     "warn-on-close-unsubmitted-data"
@@ -168,7 +168,7 @@ static const char * const ephy_prefs_web_schema[] = {
 #define EPHY_PREFS_INCOGNITO_SEARCH_ENGINE            "incognito-search-engine"
 #define EPHY_PREFS_USE_SEARCH_SUGGESTIONS             "use-search-suggestions"
 
-#define EPHY_PREFS_LOCKDOWN_SCHEMA            "io.github.doromiert.Jupiter.lockdown"
+#define EPHY_PREFS_LOCKDOWN_SCHEMA            "com.neg-zero.Gnosis.lockdown"
 #define EPHY_PREFS_LOCKDOWN_FULLSCREEN        "disable-fullscreen"
 #define EPHY_PREFS_LOCKDOWN_ARBITRARY_URL     "disable-arbitrary-url"
 #define EPHY_PREFS_LOCKDOWN_BOOKMARK_EDITING  "disable-bookmark-editing"
@@ -178,7 +178,7 @@ static const char * const ephy_prefs_web_schema[] = {
 #define EPHY_PREFS_LOCKDOWN_QUIT              "disable-quit"
 #define EPHY_PREFS_LOCKDOWN_CONTEXT_MENU      "disable-context-menu"
 
-#define EPHY_PREFS_SYNC_SCHEMA            "io.github.doromiert.Jupiter.sync"
+#define EPHY_PREFS_SYNC_SCHEMA            "com.neg-zero.Gnosis.sync"
 #define EPHY_PREFS_SYNC_USER              "sync-user"
 #define EPHY_PREFS_SYNC_TIME              "sync-time"
 #define EPHY_PREFS_SYNC_DEVICE_ID         "sync-device-id"
@@ -203,7 +203,7 @@ static const char * const ephy_prefs_web_schema[] = {
 #define EPHY_PREFS_SYNC_ACCOUNTS_SERVER   "sync-accounts-server"
 #define EPHY_PREFS_SYNC_DEBUG_LOG_ENABLED "sync-debug-log-enabled"
 
-#define EPHY_PREFS_WEB_APP_SCHEMA                  "io.github.doromiert.Jupiter.webapp"
+#define EPHY_PREFS_WEB_APP_SCHEMA                  "com.neg-zero.Gnosis.webapp"
 #define EPHY_PREFS_WEB_APP_ADDITIONAL_URLS         "additional-urls"
 #define EPHY_PREFS_WEB_APP_SHOW_NAVIGATION_BUTTONS "show-navigation-buttons"
 #define EPHY_PREFS_WEB_APP_RUN_IN_BACKGROUND       "run-in-background"

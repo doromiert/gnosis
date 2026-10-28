@@ -3,7 +3,7 @@
 #include <dlfcn.h>
 #include <unistd.h>
 #include <cstring>
-static GtkWindow* window;static GtkWidget *toolbar,*entry;static std::shared_ptr<JupiterBrave::Page> page;
+static GtkWindow* window;static GtkWidget *toolbar,*entry;static std::shared_ptr<GnosisBrave::Page> page;
 static int stage;static bool busy;static guint first,second;static gint64 started,changed;
 static void fail(const char*s){g_printerr("FIND_GTK_FAIL stage=%d %s\n",stage,s);_exit(77);}
 static bool label(GtkWidget*w,const char*t){if(GTK_IS_LABEL(w)&&!g_strcmp0(gtk_label_get_text(GTK_LABEL(w)),t))return true;for(auto*c=gtk_widget_get_first_child(w);c;c=gtk_widget_get_next_sibling(c))if(label(c,t))return true;return false;}
@@ -22,5 +22,5 @@ else if(stage==7&&g_get_monotonic_time()-changed>500000){gboolean shown=true;g_o
 else if(stage==8&&g_get_monotonic_time()-changed>400000){gtk_widget_activate_action(GTK_WIDGET(window),"win.find",nullptr);gtk_editable_set_text(GTK_EDITABLE(entry),"поиск");stage=9;}
 else if(stage==9&&count==1&&current==1){g_print("FIND_GTK_PASS native counts/ordinal, next/previous, case, unsupported-option hiding, empty query, reopen and Unicode\n");page.reset();g_action_group_activate_action(G_ACTION_GROUP(g_application_get_default()),"quit",nullptr);return G_SOURCE_REMOVE;}
 return G_SOURCE_CONTINUE;}
-static gboolean start(gpointer){window=gtk_application_get_active_window(GTK_APPLICATION(g_application_get_default()));if(!window)return G_SOURCE_CONTINUE;auto e=reinterpret_cast<void*(*)(void*)>(dlsym(RTLD_DEFAULT,"ephy_window_get_active_embed"));auto v=reinterpret_cast<void*(*)(void*)>(dlsym(RTLD_DEFAULT,"ephy_embed_get_web_view"));auto p=reinterpret_cast<std::shared_ptr<JupiterBrave::Page>(*)(void*)>(dlsym(RTLD_DEFAULT,"_Z27ephy_engine_view_brave_pageP15_EphyEngineView"));if(!e(window))return G_SOURCE_CONTINUE;page=p(v(e(window)));started=g_get_monotonic_time();g_timeout_add(100,tick,nullptr);return G_SOURCE_REMOVE;}
+static gboolean start(gpointer){window=gtk_application_get_active_window(GTK_APPLICATION(g_application_get_default()));if(!window)return G_SOURCE_CONTINUE;auto e=reinterpret_cast<void*(*)(void*)>(dlsym(RTLD_DEFAULT,"ephy_window_get_active_embed"));auto v=reinterpret_cast<void*(*)(void*)>(dlsym(RTLD_DEFAULT,"ephy_embed_get_web_view"));auto p=reinterpret_cast<std::shared_ptr<GnosisBrave::Page>(*)(void*)>(dlsym(RTLD_DEFAULT,"_Z27ephy_engine_view_brave_pageP15_EphyEngineView"));if(!e(window))return G_SOURCE_CONTINUE;page=p(v(e(window)));started=g_get_monotonic_time();g_timeout_add(100,tick,nullptr);return G_SOURCE_REMOVE;}
 __attribute__((constructor))static void setup(){char exe[2048];auto n=readlink("/proc/self/exe",exe,sizeof(exe)-1);if(n<0)return;exe[n]=0;if(strstr(exe,"/.gnosis-wrapped"))g_timeout_add_seconds(5,start,nullptr);}

@@ -15,12 +15,12 @@ parser.add_argument('binary', type=Path)
 parser.add_argument('--schemas', type=Path, required=True)
 parser.add_argument('--incognito', action='store_true')
 args = parser.parse_args()
-root = Path(tempfile.mkdtemp(prefix='jupiter-script-ui-', dir='/tmp'))
+root = Path(tempfile.mkdtemp(prefix='gnosis-script-ui-', dir='/tmp'))
 env = dict(os.environ, XDG_CONFIG_HOME=str(root/'config'), XDG_DATA_HOME=str(root/'data'),
            XDG_CACHE_HOME=str(root/'cache'), GSETTINGS_BACKEND='keyfile',
            GSETTINGS_SCHEMA_DIR=str(args.schemas.resolve()))
-subprocess.run(['gsettings', 'set', 'io.github.doromiert.Jupiter', 'ask-for-default', 'false'], env=env, check=True)
-base = os.environ['JUPITER_TEST_URL']
+subprocess.run(['gsettings', 'set', 'com.neg-zero.Gnosis', 'ask-for-default', 'false'], env=env, check=True)
+base = os.environ['GNOSIS_TEST_URL']
 log = (root/'app.log').open('w')
 scope = 'private' if args.incognito else 'regular'
 command = [str(args.binary.resolve()), '--profile='+str(root/'profile')]
@@ -65,7 +65,7 @@ try:
     key('ctrl+a', 'ctrl+c', 'Escape')
     click(160, 180)
     key('ctrl+v')
-    wait_for(lambda: text() == 'Jupiter native results')
+    wait_for(lambda: text() == 'Gnosis native results')
     print('The actual GTK Find entry receives Chromium selection text; copying and pasting it returns the exact result: PASS', flush=True)
     time.sleep(2)
     key('ctrl+alt+r')

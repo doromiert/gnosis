@@ -54,7 +54,7 @@
             document.addEventListener('DOMContentLoaded', this.#initialize.bind(this), false);
             document.addEventListener('keypress', this.#onKeyPress.bind(this), false);
             window.addEventListener('pageshow', () => {
-                Jupiter.postMessage('overview', {action: 'ready'});
+                Gnosis.postMessage('overview', {action: 'ready'});
             }, false);
         }
 
@@ -181,12 +181,12 @@
                 anchor.remove();
                 this.#items = this.#items.filter(item => item.url() !== url);
                 this.#addPlaceholders();
-                Jupiter.postMessage('overview', {action: 'remove', url});
+                Gnosis.postMessage('overview', {action: 'remove', url});
             }, 500);
         }
 
         #togglePinItem(anchor) {
-            Jupiter.postMessage('overview', {
+            Gnosis.postMessage('overview', {
                 action: 'pin',
                 url: anchor.href,
                 pinned: !anchor.classList.contains('overview-item-pinned'),
@@ -304,7 +304,7 @@
 
     const model = new OverviewModel();
     new Overview(model);
-    Jupiter.addEventListener('overview', event => {
+    Gnosis.addEventListener('overview', event => {
         const data = event.detail;
         if (data?.type === 'urls' && Array.isArray(data.urls))
             model.setURLs(data.urls);

@@ -157,7 +157,7 @@ native_install_finished_cb (EphyEngineSession *session,
     show_native_install_result (self, _("Could Not Install Extension"), error->message);
   } else if (self && metadata) {
     const char *name = json_object_get_string_member_with_default (metadata, "name", _("Extension"));
-    g_autofree char *body = g_strdup_printf (_("%s will be installed after you restart Jupiter."), name);
+    g_autofree char *body = g_strdup_printf (_("%s will be installed after you restart Gnosis."), name);
 
     show_native_install_result (self, _("Restart Required"), body);
   }
