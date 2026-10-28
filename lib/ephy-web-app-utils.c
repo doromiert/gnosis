@@ -883,6 +883,7 @@ ephy_web_application_get_application_list (void)
     g_autofree char *id = NULL;
     g_autofree char *profile_dir = NULL;
     gboolean found = FALSE;
+    EphyWebApplication *app;
 
     if (!entry)
       break;
@@ -899,7 +900,7 @@ ephy_web_application_get_application_list (void)
     if (found)
       continue;
     profile_dir = ephy_web_application_get_profile_directory (id);
-    EphyWebApplication *app = ephy_web_application_for_profile_directory (profile_dir, EPHY_WEB_APP_NO_TMP_ICON);
+    app = ephy_web_application_for_profile_directory (profile_dir, EPHY_WEB_APP_NO_TMP_ICON);
     if (app)
       applications = g_list_prepend (applications, app);
   }
