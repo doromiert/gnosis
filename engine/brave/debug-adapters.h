@@ -16,7 +16,7 @@ static const GnosisBraveAdapter gnosis_brave_adapters[] = {
   {"extension-events", "Browser Services", "Extension and Zoom Events", "Forward extension inventory and page zoom changes to the shell."},
   {"network-events", "Browser Services", "Network Inspection", "Network response events, resource metadata and favicon resource access."},
   {"frame-sessions", "Page Adapters", "Cross-Origin Frame Sessions", "Attach native adapters to out-of-process frames."},
-  {"page-style", "Page Adapters", "Page Styling", "Selection and native overlay colors. DOM/CSS inspection is released after each batch of style updates."},
+  {"page-style", "Page Adapters", "Page Styling", "Selection colors, native overlay colors, and dropdown defaults. DOM/CSS inspection is released after each batch of style updates."},
   {"scrollbars", "Page Adapters", "Native Scrollbar Theme", "The compiled libadwaita theme, including thin scrollbars. Disable to use upstream Brave scrollbars."},
   {"context-menu", "Page Adapters", "Context Menus", "Injected hit testing and GTK page context menus."},
   {"document-metadata", "Page Adapters", "Document Metadata", "Title, icon and document-activity notifications. Vim requires this."},

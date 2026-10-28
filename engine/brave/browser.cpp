@@ -620,7 +620,7 @@ public:
       }
       // An existing profile can retain a worker from before the namespace
       // upgrade. Install only our packaged adapter into this verified worker.
-      integration_adapter = "(() => { if (typeof globalThis.gnosisNativeReady === 'undefined' && "
+      integration_adapter = "(() => { globalThis.gnosisControlThemeEnabled=" + std::string(adapter_enabled("page-style") ? "true" : "false") + "; if (typeof globalThis.gnosisNativeReady === 'undefined' && "
         "typeof globalThis.gnosisExtensions === 'undefined' && globalThis.chrome?.downloads?.setUiOptions && "
         "globalThis.chrome?.management) { (() => {" + std::string(source, length) + "})(); } "
         "return Promise.resolve(globalThis.gnosisNativeReady).then(value => value === true); })()";

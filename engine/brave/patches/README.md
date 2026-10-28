@@ -63,6 +63,14 @@ session and both agents are disabled after the batch. Inspector-owned styles
 survive disabling and can be updated after reenabling, including under strict
 CSP. Out-of-process frames follow the same lifecycle.
 
+HTML dropdown defaults use `native-integration/select.css` through Chromium's
+USER-origin stylesheet API, once per committed HTTP/HTTPS/file frame. Author
+styles override these defaults, including named CSS layers, and strict CSP
+does not block the browser-owned stylesheet. There are no page scripts or DOM
+observers. Page Styling disables these defaults on the next browser start.
+The compositor also configures and unconstrains real xdg popups, so a website
+that opts back into ordinary native select rendering still has a working menu.
+
 Settings → Debugging → Native Scrollbar Theme selects the original native-UI
 renderer on the next start when disabled. Its native GTK prompt hooks remain
 active. The shim accepts only the two exact manifest hashes. The former runtime

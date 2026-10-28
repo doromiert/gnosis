@@ -57,6 +57,10 @@ typedef struct {
   struct wl_listener commit, destroy;
 } Surface;
 typedef struct {
+  struct wlr_xdg_popup *popup;
+  struct wl_listener commit, reposition, unmap, destroy;
+} Popup;
+typedef struct {
   struct wlr_presentation_feedback *feedback;
   gint64 frame;
 } PresentedFrame;
@@ -77,7 +81,7 @@ struct _GnosisCompositor {
   struct wlr_keyboard keyboard;
   struct wl_list views;
   GPtrArray *hosts; /* weak pointers; each widget owns a server reference */
-  struct wl_listener new_constraint, new_toplevel, new_surface, decoration, request_drag;
+  struct wl_listener new_constraint, new_toplevel, new_popup, new_surface, decoration, request_drag;
   struct wl_listener request_cursor, request_cursor_shape;
   struct wlr_surface *cursor_surface;
   int cursor_hotspot_x, cursor_hotspot_y;
@@ -629,6 +633,50 @@ static void new_toplevel(struct wl_listener *listener, void *data) {
   listen(&toplevel->events.request_maximize, &v->maximize, maximize);
   listen(&toplevel->events.request_fullscreen, &v->fullscreen, fullscreen);
 }
+static View *popup_view(Popup *p) {
+  struct wlr_surface *parent = p->popup->parent;
+  for (guint depth = 0; parent && depth < 64; depth++) {
+    struct wlr_xdg_surface *xdg = wlr_xdg_surface_try_from_wlr_surface(wlr_surface_get_root_surface(parent));
+    if (!xdg) return NULL;
+    if (xdg->role == WLR_XDG_SURFACE_ROLE_TOPLEVEL) return xdg->data;
+    if (xdg->role != WLR_XDG_SURFACE_ROLE_POPUP) return NULL;
+    parent = xdg->popup->parent;
+  }
+  return NULL;
+}
+static void configure_popup(Popup *p) {
+  View *v = popup_view(p);
+  if (v) {
+    struct wlr_box bounds = v->toplevel->base->geometry;
+    wlr_xdg_popup_unconstrain_from_box(p->popup, &bounds);
+  }
+  wlr_xdg_surface_schedule_configure(p->popup->base);
+}
+static void popup_commit(struct wl_listener *listener, void *data) {
+  (void)data; Popup *p = wl_container_of(listener, p, commit);
+  if (p->popup->base->initial_commit) configure_popup(p);
+}
+static void popup_reposition(struct wl_listener *listener, void *data) {
+  (void)data; Popup *p = wl_container_of(listener, p, reposition);
+  configure_popup(p);
+}
+static void popup_unmap(struct wl_listener *listener, void *data) {
+  (void)data; Popup *p = wl_container_of(listener, p, unmap);
+  View *v = popup_view(p);
+  if (v && v->host) gtk_widget_queue_draw(GTK_WIDGET(v->host));
+}
+static void popup_destroy(struct wl_listener *listener, void *data) {
+  (void)data; Popup *p = wl_container_of(listener, p, destroy);
+  wl_list_remove(&p->commit.link); wl_list_remove(&p->reposition.link);
+  wl_list_remove(&p->unmap.link); wl_list_remove(&p->destroy.link); g_free(p);
+}
+static void new_popup(struct wl_listener *listener, void *data) {
+  (void)listener; Popup *p = g_new0(Popup, 1); p->popup = data;
+  listen(&p->popup->base->surface->events.commit, &p->commit, popup_commit);
+  listen(&p->popup->events.reposition, &p->reposition, popup_reposition);
+  listen(&p->popup->base->surface->events.unmap, &p->unmap, popup_unmap);
+  listen(&p->popup->events.destroy, &p->destroy, popup_destroy);
+}
 static void decoration_destroy(struct wl_listener *listener, void *data) {
   (void)data; View *v = wl_container_of(listener, v, decoration_destroy);
   v->decoration = NULL; wl_list_remove(&v->decoration_destroy.link); wl_list_init(&v->decoration_destroy.link);
@@ -777,7 +825,7 @@ static void server_dispose(GObject *object) {
     if (self->dispatch) { g_source_remove(self->dispatch); self->dispatch = 0; }
     // These listeners belong to this server, not to the wlroots globals.
     // wlroots requires its public event lists to be empty during destruction.
-    struct wl_listener *listeners[] = {&self->new_surface, &self->new_toplevel, &self->new_constraint, &self->decoration, &self->request_drag, &self->request_cursor, &self->request_cursor_shape};
+    struct wl_listener *listeners[] = {&self->new_surface, &self->new_toplevel, &self->new_popup, &self->new_constraint, &self->decoration, &self->request_drag, &self->request_cursor, &self->request_cursor_shape};
     for (guint i = 0; i < G_N_ELEMENTS(listeners); ++i) {
       if (listeners[i]->link.next) wl_list_remove(&listeners[i]->link);
       wl_list_init(&listeners[i]->link);
@@ -874,6 +922,7 @@ GnosisCompositor *gnosis_compositor_new(GError **error) {
   if (!wlr_linux_dmabuf_v1_create_with_renderer(self->display, 4, self->renderer)) goto failed;
   struct wlr_xdg_shell *shell = wlr_xdg_shell_create(self->display, 6);
   listen(&shell->events.new_toplevel, &self->new_toplevel, new_toplevel);
+  listen(&shell->events.new_popup, &self->new_popup, new_popup);
   struct wlr_xdg_decoration_manager_v1 *decorations = wlr_xdg_decoration_manager_v1_create(self->display);
   listen(&decorations->events.new_toplevel_decoration, &self->decoration, new_decoration);
   self->backend = wlr_headless_backend_create(wl_display_get_event_loop(self->display));

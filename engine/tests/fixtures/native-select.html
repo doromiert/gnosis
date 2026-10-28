@@ -1,0 +1,21 @@
+<!doctype html><meta charset="utf-8"><title>Dropdown regression</title>
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'nonce-select-fixture'; script-src 'unsafe-inline'">
+<style nonce="select-fixture">
+body { font: 15px sans-serif; padding: 32px; color-scheme: light dark; }
+select { margin: 12px; }
+#native { appearance: auto; }
+#authored { appearance: none; color: rgb(20, 40, 60); background: rgb(210, 220, 230); border-radius: 0; }
+#edge { position: fixed; right: 8px; bottom: 8px; }
+@layer site { #layered { background: rgb(180, 200, 220); } }
+</style>
+<label>Default <select id="default"><option>Standard (Arrows)</option><option>Vim-like (hjkl)</option><option>Emacs-like (pnbf)</option></select></label>
+<label>Native fallback <select id="native"><option>First</option><option>Second</option><option disabled>Disabled</option><optgroup label="Group"><option>Third</option></optgroup></select></label>
+<label>Authored <select id="authored"><option>Website styling</option><option>Another</option></select></label>
+<label>Listbox <select id="list" size="3" multiple><option>One</option><option>Two</option><option>Three</option></select></label>
+<select id="layered"><option>Layered author CSS</option><option>Another</option></select>
+<p><iframe title="Nested dropdown" src="native-select-child.html"></iframe></p>
+<select id="edge"><option>Edge menu</option><option>Second</option></select>
+<script>
+window.changes = [];
+document.addEventListener('change', e => changes.push({id:e.target.id, value:e.target.value, trusted:e.isTrusted}));
+</script>

@@ -20,6 +20,13 @@ they operate its actual GTK widgets and native browser backend. Use a disposable
 `--profile` and `GSETTINGS_BACKEND=memory`; never preload into a human profile.
 They are deliberately separate from the old CEF view tests.
 
+`native-select-gtk-probe.cpp` uses `native-select.html` and its child fixture.
+It asserts that the native Wayland popup actually paints (the previous compositor
+left it unconfigured), then checks trusted keyboard selection, themed dropdowns,
+nested frames, Escape cancellation, listbox preservation, and regular/layered
+author overrides under a nonce-only stylesheet CSP. It saves the native,
+themed, and viewport-edge menus to `/tmp/gnosis-select-{native,themed,edge}.png`.
+
 From the repository root, serve `engine/tests/fixtures` at 127.0.0.1:18473. The
 find fixture includes a same-process frame and an independently hosted localhost
 frame. Compile each probe inside the matching Nix development environment:

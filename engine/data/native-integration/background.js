@@ -44,3 +44,11 @@ for (const event of [chrome.management.onInstalled, chrome.management.onUninstal
             globalThis.__gnosisExtensionsChanged('changed');
     });
 }
+
+// A browser navigation event, once per document; no page scripts, DOM observers,
+// or persistent CSS inspector. USER origin also respects named author layers.
+chrome.webNavigation.onCommitted.addListener(({tabId, frameId, url}) => {
+    if (!globalThis.gnosisControlThemeEnabled || !/^(https?|file):/.test(url)) return;
+    chrome.scripting.insertCSS({target: {tabId, frameIds: [frameId]},
+        files: ['select.css'], origin: 'USER'}).catch(() => {}); // A frame may navigate away.
+});
