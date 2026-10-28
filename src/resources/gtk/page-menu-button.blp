@@ -102,6 +102,29 @@ menu page_menu {
   }
 
   section {
+    label: _("AI Browsing");
+
+    item {
+      label: _("Off");
+      action: "app.ai-browsing-mode";
+      target: "off";
+      hidden-when: "action-missing";
+    }
+    item {
+      label: _("Shared Tabs");
+      action: "app.ai-browsing-mode";
+      target: "shared";
+      hidden-when: "action-missing";
+    }
+    item {
+      label: _("Separate Window");
+      action: "app.ai-browsing-mode";
+      target: "separate";
+      hidden-when: "action-missing";
+    }
+  }
+
+  section {
     item {
       label: _("_Uninstall Web App");
       action: "app.uninstall-web-app";

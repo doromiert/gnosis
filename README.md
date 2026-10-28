@@ -44,6 +44,74 @@ unsaved-change safeguards. Field text stays inside the renderer.
 
 F3 and Shift+F3 use the native GTK find bar, including when Vim mode is off.
 
+## AI browsing (MCP)
+
+Open the **hamburger menu → AI Browsing** to control access for a connected MCP client:
+
+- **Off** disables control and cancels pending AI operations. This is the default
+  on every launch.
+- **Shared Tabs** lets the AI work in your normal browsing windows. A separate
+  native cursor labelled **AI** shows where it points and clicks, independently
+  of your mouse pointer.
+- **Separate Window** gives the AI its own native window and tabs in Gnosis's
+  connected browser process. It shares your normal website profile, cookies and
+  extensions. Its tabs stay in that window when you switch modes.
+
+Private tabs are excluded. Switching modes revokes the old controller's pending
+work; closing the AI window switches control off. One MCP client can control a
+session at a time. Disconnecting that client releases its session.
+
+Start Gnosis with `nix run .`, then add the stdio server to your MCP client. If
+Gnosis is installed, its executable is `gnosis-mcp`. From this checkout:
+
+```sh
+nix run .#mcp
+```
+
+For clients using `mcpServers` configuration, for example:
+
+```json
+{
+  "mcpServers": {
+    "gnosis": {
+      "command": "nix",
+      "args": ["run", "/absolute/path/to/gnosis#mcp"]
+    }
+  }
+}
+```
+
+Choose a mode in the browser to enable it. The AI cannot change that choice
+through the browser tools. The server provides tab listing/open/select/close,
+navigation/history, page text and viewport PNGs, element references, real mouse
+input, Unicode text insertion, scrolling and keys. Element references cover the
+top document and open shadow roots; use screenshot coordinates for frames,
+closed shadow roots and canvas content. Coordinates are viewport CSS pixels.
+Page text is website content, not trusted instructions.
+
+The transport connects to Gnosis through the user's session D-Bus. It does not
+open an HTTP or public debugging listener. In-flight calls have a 25-second
+deadline, and normal tab-close/unsaved-change prompts still apply.
+
+Protocol checks can run without a browser:
+
+```sh
+python3 engine/tests/mcp_protocol_test.py /path/to/gnosis-mcp
+```
+
+The native GTK/Brave integration check uses a disposable profile and local
+fixtures. Compile `engine/tests/mcp-gtk-probe.c` as a preload library following
+[the native probe instructions](engine/tests/NATIVE-GTK-TESTS.md), then run:
+
+```sh
+python3 engine/tools/check-mcp-ui.py --desktop --session-bus \
+  --browser /path/to/gnosis --mcp /path/to/gnosis-mcp \
+  --probe /path/to/mcp-gtk-probe.so
+```
+
+With `--session-bus`, the check targets only its disposable browser's unique
+D-Bus connection, identified by PID. It does not control a running human profile.
+
 The engine migration is **in progress**. Brave provides the active browser
 backend, extensions and native engine services. WebKitGTK/JavaScriptCore and the
 CEF compatibility layer remain linked for services still being migrated. See

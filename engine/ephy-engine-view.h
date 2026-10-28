@@ -18,6 +18,7 @@ G_BEGIN_DECLS
 #define EPHY_TYPE_ENGINE_VIEW (ephy_engine_web_view_get_type())
 G_DECLARE_DERIVABLE_TYPE(EphyEngineView, ephy_engine_web_view, EPHY, ENGINE_VIEW, GtkWidget)
 gboolean ephy_engine_web_view_handle_vim_key(EphyEngineView *view, guint key, GdkModifierType modifiers);
+guint64 ephy_engine_web_view_get_document_epoch(EphyEngineView *view);
 typedef struct _EphyEngineHistory EphyEngineHistory;
 typedef struct _EphyEngineHistoryItem EphyEngineHistoryItem;
 typedef struct _EphyEngineFind EphyEngineFind;

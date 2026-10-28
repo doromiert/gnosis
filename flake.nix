@@ -34,6 +34,7 @@
     packages.${system} = { default = package; gnosis = package; cef-sdk = package.cefSdk; brave-native-ui = nativeBrave; };
     apps.${system} = {
       default = { type = "app"; program = "${package}/bin/gnosis"; };
+      mcp = { type = "app"; program = "${package}/bin/gnosis-mcp"; };
       compositor-probe = { type = "app"; program = "${compositorProbe}/bin/gnosis-compositor-probe"; };
       check-brave-patches = { type = "app"; program = "${bravePatchChecker}/bin/check-brave-patches"; };
     };

@@ -24,6 +24,7 @@
 #include "ephy-engine-view.h"
 
 #include "ephy-shell.h"
+#include "gnosis-mcp.h"
 
 #include <glib/gi18n.h>
 #include <gtk/gtk.h>
@@ -652,6 +653,7 @@ ephy_shell_startup (GApplication *application)
   set_accel_for_action (shell, "app.clear-data-view", "<Primary><Shift>Delete");
   set_accel_for_action (shell, "app.preferences", "<Primary>comma");
   set_accel_for_action (shell, "app.quit", "<Primary>q");
+  gnosis_mcp_start (application);
 }
 
 static void
@@ -859,6 +861,7 @@ static void
 ephy_shell_shutdown (GApplication *app)
 {
   EphyShell *shell = EPHY_SHELL (app);
+  gnosis_mcp_stop ();
 
   /* Refusing to shut down when requested is perhaps controversial, but it's
    * important to ensure that no EphyWindows are leaked, so let's just keep
@@ -1123,6 +1126,16 @@ ephy_shell_new_tab (EphyShell       *shell,
 {
   return ephy_shell_new_tab_full (shell, NULL, NULL, parent_window,
                                   previous_embed, flags);
+}
+
+GtkWidget *
+gnosis_mcp_new_tab (GtkWindow *window, const char *url)
+{
+  EphyEmbed *embed = ephy_shell_new_tab (ephy_shell_get_default (), EPHY_WINDOW (window), NULL,
+                                        EPHY_NEW_TAB_JUMP);
+  EphyWebView *view = ephy_embed_get_web_view (embed);
+  ephy_web_view_load_url (view, url);
+  return GTK_WIDGET (view);
 }
 
 /**

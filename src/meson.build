@@ -12,7 +12,18 @@ enums = gnome.mkenums_simple('ephy-type-builtins',
 
 subdir('webextension')
 
+mcp_resources = gnome.compile_resources('gnosis-mcp-resources', 'gnosis-mcp.gresource.xml',
+  source_dir: meson.current_source_dir(), c_name: 'gnosis_mcp')
+mcp_server = executable('gnosis-mcp', ['gnosis-mcp-main.c', mcp_resources],
+  dependencies: [dependency('gio-2.0'), json_glib_dep], include_directories: include_directories('..'), install: true)
+if get_option('unit_tests').enabled()
+  test('Gnosis MCP protocol', find_program('python3'),
+    args: [files('../engine/tests/mcp_protocol_test.py'), mcp_server])
+endif
+
 libephymain_sources = [
+  'gnosis-mcp.cpp',
+  mcp_resources,
   'bookmarks/ephy-bookmark.c',
   'bookmarks/ephy-bookmark-properties.c',
   'bookmarks/ephy-bookmark-row.c',

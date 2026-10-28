@@ -208,6 +208,8 @@ Browser::Browser(std::string address, bool software) : url(std::move(address)), 
     thumbnail_source_ = gtk_widget_paintable_new(overlay_);
     error_page_ = adw_status_page_new();
     auto* retry = gtk_button_new_with_label("Try Again");
+    gtk_widget_add_css_class(retry, "pill");
+    gtk_widget_set_halign(retry, GTK_ALIGN_CENTER);
     adw_status_page_set_child(ADW_STATUS_PAGE(error_page_), retry);
     g_signal_connect_swapped(retry, "clicked", G_CALLBACK(+[](Browser* self) { self->reload(); }), this);
     gtk_overlay_add_overlay(GTK_OVERLAY(overlay_), error_page_); gtk_widget_set_visible(error_page_, false);
@@ -227,6 +229,7 @@ Browser::Browser(std::string address, bool software) : url(std::move(address)), 
   adw_status_page_set_icon_name(ADW_STATUS_PAGE(error_page_), "network-offline-symbolic");
   GtkWidget* retry = gtk_button_new_with_label("Try Again");
   gtk_widget_add_css_class(retry, "suggested-action");
+  gtk_widget_add_css_class(retry, "pill");
   gtk_widget_set_halign(retry, GTK_ALIGN_CENTER);
   adw_status_page_set_child(ADW_STATUS_PAGE(error_page_), retry);
   g_signal_connect_swapped(retry, "clicked", G_CALLBACK(+[](Browser* self) { self->reload(); }), this);
@@ -336,7 +339,8 @@ void Browser::changed() {
 
 void Browser::start() {
   if (GnosisBrave::enabled()) {
-    if (closing) return;
+    // Mapping an existing tab must not navigate it again.
+    if (loaded || closing) return;
     if (!brave_) {
       brave_ = GnosisBrave::Page::create(area_, host && host->private_mode);
       brave_->set_extension_popup(is_extension_popup);
@@ -611,7 +615,7 @@ void Browser::reload() {
   if (GnosisBrave::enabled()) {
     gtk_widget_set_visible(error_page_, false);
     if (brave_ && !brave_->is_closed()) brave_->reload();
-    else { brave_.reset(); start(); }
+    else { brave_.reset(); loaded = false; start(); }
     return;
   }
   page_message_context.clear();

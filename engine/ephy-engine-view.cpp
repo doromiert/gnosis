@@ -1773,3 +1773,4 @@ EphyEngineView* ephy_engine_view_for_browser(int id) {
 CefRefPtr<CefBrowser> ephy_engine_view_browser(EphyEngineView* view) {return data(view)->browser->cef_browser();}
 
 std::shared_ptr<GnosisBrave::Page> ephy_engine_view_brave_page(EphyEngineView* view) { return data(view)->browser->brave_page(); }
+guint64 ephy_engine_web_view_get_document_epoch(EphyEngineView* view) { return data(view)->protocol->document_epoch; }

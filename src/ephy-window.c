@@ -22,6 +22,7 @@
  */
 
 #include "config.h"
+#include "gnosis-mcp.h"
 
 #include "ephy-window.h"
 
@@ -184,6 +185,7 @@ struct _EphyWindow {
   guint64 uid;
   GtkWidget *toast_overlay;
   GtkWidget *content_overlay;
+  GtkWidget *ai_cursor;
   GtkWidget *zoom_osd;
   GtkWidget *zoom_osd_label;
   guint zoom_osd_timeout;
@@ -1324,8 +1326,12 @@ sync_tab_title (EphyEmbed  *embed,
   if (window->closing)
     return;
 
-  gtk_window_set_title (GTK_WINDOW (window),
-                        ephy_embed_get_title (embed));
+  if (g_object_get_data (G_OBJECT (window), "gnosis-ai-window")) {
+    g_autofree char *title = g_strdup_printf (_("AI — %s"), ephy_embed_get_title (embed));
+    gtk_window_set_title (GTK_WINDOW (window), title);
+  } else {
+    gtk_window_set_title (GTK_WINDOW (window), ephy_embed_get_title (embed));
+  }
 }
 
 static void
@@ -1649,6 +1655,7 @@ create_popup_cb (EphyEngineView                       *web_view,
             EPHY_NEW_TAB_APPEND_AFTER;
   } else {
     target_window = ephy_window_new ();
+    gnosis_mcp_inherit_window (GTK_WINDOW (target_window), GTK_WINDOW (window));
     flags = EPHY_NEW_TAB_DONT_SHOW_WINDOW;
   }
 
@@ -2138,6 +2145,8 @@ load_changed_cb (EphyWebView     *view,
                  WebKitLoadEvent  load_event,
                  EphyWindow      *window)
 {
+  if (load_event == WEBKIT_LOAD_STARTED && window->ai_cursor)
+    gtk_widget_set_visible (window->ai_cursor, FALSE);
   sync_tab_load_status (view, load_event, window);
   sync_tab_address (view, NULL, window);
 }
@@ -2485,6 +2494,8 @@ ephy_window_set_active_tab (EphyWindow *window,
   }
 
   window->active_embed = new_embed;
+  if (window->ai_cursor)
+    gtk_widget_set_visible (window->ai_cursor, FALSE);
 
   if (new_embed)
     ephy_window_connect_active_embed (window);
@@ -3498,6 +3509,63 @@ setup_tab_switcher (EphyWindow *window)
   g_signal_connect_object (window, "notify::is-active", G_CALLBACK (tab_switcher_window_active_cb), window, 0);
 }
 
+static void
+draw_ai_cursor (GtkDrawingArea *area, cairo_t *cr, int width, int height, gpointer data)
+{
+  (void)area; (void)width; (void)height; (void)data;
+  cairo_move_to (cr, 2, 2);
+  cairo_line_to (cr, 5, 23);
+  cairo_line_to (cr, 10, 16);
+  cairo_line_to (cr, 18, 15);
+  cairo_close_path (cr);
+  cairo_set_source_rgb (cr, .48, .25, .85);
+  cairo_fill_preserve (cr);
+  cairo_set_source_rgb (cr, 1, 1, 1);
+  cairo_set_line_width (cr, 1.5);
+  cairo_stroke (cr);
+}
+
+void
+ephy_window_set_ai_cursor (EphyWindow *window, EphyWebView *view,
+                           double x, double y, double viewport_width, double viewport_height)
+{
+  graphene_point_t point, position;
+
+  if (!view || !window->active_embed ||
+      ephy_embed_get_web_view (window->active_embed) != view ||
+      viewport_width <= 0 || viewport_height <= 0) {
+    if (window->ai_cursor)
+      gtk_widget_set_visible (window->ai_cursor, FALSE);
+    return;
+  }
+  point = GRAPHENE_POINT_INIT (x * gtk_widget_get_width (GTK_WIDGET (view)) / viewport_width,
+                              y * gtk_widget_get_height (GTK_WIDGET (view)) / viewport_height);
+  if (!gtk_widget_compute_point (GTK_WIDGET (view), window->content_overlay, &point, &position))
+    return;
+  if (!window->ai_cursor) {
+    GtkWidget *arrow = gtk_drawing_area_new ();
+    GtkWidget *label = gtk_label_new (_("AI"));
+    window->ai_cursor = gtk_box_new (GTK_ORIENTATION_HORIZONTAL, 2);
+    g_object_add_weak_pointer (G_OBJECT (window->ai_cursor), (gpointer *)&window->ai_cursor);
+    gtk_widget_set_name (window->ai_cursor, "gnosis-ai-cursor");
+    gtk_drawing_area_set_content_width (GTK_DRAWING_AREA (arrow), 20);
+    gtk_drawing_area_set_content_height (GTK_DRAWING_AREA (arrow), 26);
+    gtk_drawing_area_set_draw_func (GTK_DRAWING_AREA (arrow), draw_ai_cursor, NULL, NULL);
+    gtk_widget_add_css_class (label, "pill");
+    gtk_widget_add_css_class (label, "caption");
+    gtk_widget_add_css_class (label, "accent");
+    gtk_box_append (GTK_BOX (window->ai_cursor), arrow);
+    gtk_box_append (GTK_BOX (window->ai_cursor), label);
+    gtk_widget_set_halign (window->ai_cursor, GTK_ALIGN_START);
+    gtk_widget_set_valign (window->ai_cursor, GTK_ALIGN_START);
+    gtk_widget_set_can_target (window->ai_cursor, FALSE);
+    gtk_overlay_add_overlay (GTK_OVERLAY (window->content_overlay), window->ai_cursor);
+  }
+  gtk_widget_set_margin_start (window->ai_cursor, MAX (0, (int)position.x - 2));
+  gtk_widget_set_margin_top (window->ai_cursor, MAX (0, (int)position.y - 2));
+  gtk_widget_set_visible (window->ai_cursor, TRUE);
+}
+
 static void clear_download_feedback (EphyWindow *window);
 
 static void
@@ -3511,6 +3579,8 @@ ephy_window_dispose (GObject *object)
 
   /* Only do these once */
   if (!window->closing) {
+    gnosis_mcp_window_closed (GTK_WINDOW (window));
+    g_clear_weak_pointer (&window->ai_cursor);
     window->closing = TRUE;
 
     if (window->active_embed) {

@@ -1,0 +1,353 @@
+{
+  "tools": [
+    {
+      "name": "get_state",
+      "description": "Read the user-selected AI browsing mode and connection state.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "openWorldHint": true
+      }
+    },
+    {
+      "name": "list_tabs",
+      "description": "List tabs available in the user-selected mode. Private tabs are excluded.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "openWorldHint": true
+      }
+    },
+    {
+      "name": "open_tab",
+      "description": "Open a tab in the selected mode and wait for loading.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "url": {
+            "type": "string",
+            "description": "An http://, https:// or about:blank URL."
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "openWorldHint": true
+      }
+    },
+    {
+      "name": "activate_tab",
+      "description": "Select a tab available in the current mode.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "tab_id": {
+            "type": "string",
+            "description": "Tab ID from list_tabs. Omit to use the current tab in the selected browsing mode."
+          }
+        },
+        "required": [
+          "tab_id"
+        ],
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "openWorldHint": true
+      }
+    },
+    {
+      "name": "close_tab",
+      "description": "Request normal tab closure, including unsaved-change prompts.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "tab_id": {
+            "type": "string",
+            "description": "Tab ID from list_tabs. Omit to use the current tab in the selected browsing mode."
+          }
+        },
+        "required": [
+          "tab_id"
+        ],
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "openWorldHint": true
+      }
+    },
+    {
+      "name": "navigate",
+      "description": "Navigate a tab and wait for loading.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "tab_id": {
+            "type": "string",
+            "description": "Tab ID from list_tabs. Omit to use the current tab in the selected browsing mode."
+          },
+          "url": {
+            "type": "string",
+            "description": "An http:// or https:// URL, or about:blank."
+          }
+        },
+        "required": [
+          "url"
+        ],
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "openWorldHint": true
+      }
+    },
+    {
+      "name": "go_back",
+      "description": "Go back in this tab's history.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "tab_id": {
+            "type": "string",
+            "description": "Tab ID from list_tabs. Omit to use the current tab in the selected browsing mode."
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "openWorldHint": true
+      }
+    },
+    {
+      "name": "go_forward",
+      "description": "Go forward in this tab's history.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "tab_id": {
+            "type": "string",
+            "description": "Tab ID from list_tabs. Omit to use the current tab in the selected browsing mode."
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "openWorldHint": true
+      }
+    },
+    {
+      "name": "snapshot",
+      "description": "Read visible page text and element references, with a viewport PNG by default. Frame contents can be operated using screenshot coordinates.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "tab_id": {
+            "type": "string",
+            "description": "Tab ID from list_tabs. Omit to use the current tab in the selected browsing mode."
+          },
+          "screenshot": {
+            "type": "boolean",
+            "default": true
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "openWorldHint": true
+      }
+    },
+    {
+      "name": "move",
+      "description": "Move the distinct AI co-cursor to an element or viewport coordinate.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "tab_id": {
+            "type": "string",
+            "description": "Tab ID from list_tabs. Omit to use the current tab in the selected browsing mode."
+          },
+          "ref": {
+            "type": "string",
+            "description": "Element reference from the latest snapshot. Alternatively supply viewport x and y."
+          },
+          "x": {
+            "type": "number",
+            "minimum": 0
+          },
+          "y": {
+            "type": "number",
+            "minimum": 0
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "openWorldHint": true
+      }
+    },
+    {
+      "name": "click",
+      "description": "Send a real left click to an element or viewport coordinate.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "tab_id": {
+            "type": "string",
+            "description": "Tab ID from list_tabs. Omit to use the current tab in the selected browsing mode."
+          },
+          "ref": {
+            "type": "string",
+            "description": "Element reference from the latest snapshot. Alternatively supply viewport x and y."
+          },
+          "x": {
+            "type": "number",
+            "minimum": 0
+          },
+          "y": {
+            "type": "number",
+            "minimum": 0
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "openWorldHint": true
+      }
+    },
+    {
+      "name": "type_text",
+      "description": "Insert Unicode text using real browser input. Optionally click a referenced field first; replace selects existing field text first.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "tab_id": {
+            "type": "string",
+            "description": "Tab ID from list_tabs. Omit to use the current tab in the selected browsing mode."
+          },
+          "ref": {
+            "type": "string",
+            "description": "Element reference from the latest snapshot. Alternatively supply viewport x and y."
+          },
+          "text": {
+            "type": "string",
+            "maxLength": 65536
+          },
+          "replace": {
+            "type": "boolean",
+            "default": false
+          }
+        },
+        "required": [
+          "text"
+        ],
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "openWorldHint": true
+      }
+    },
+    {
+      "name": "scroll",
+      "description": "Scroll the page using a real wheel event. Optional viewport coordinates choose the scroll area.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "tab_id": {
+            "type": "string",
+            "description": "Tab ID from list_tabs. Omit to use the current tab in the selected browsing mode."
+          },
+          "x": {
+            "type": "number",
+            "minimum": 0
+          },
+          "y": {
+            "type": "number",
+            "minimum": 0
+          },
+          "delta_y": {
+            "type": "number",
+            "minimum": -10000,
+            "maximum": 10000
+          },
+          "delta_x": {
+            "type": "number",
+            "minimum": -10000,
+            "maximum": 10000,
+            "default": 0
+          }
+        },
+        "required": [
+          "delta_y"
+        ],
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "openWorldHint": true
+      }
+    },
+    {
+      "name": "press_key",
+      "description": "Press a key, optionally with Control, Shift, Alt or Meta, e.g. Enter, Tab, ArrowDown, Control+A.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "tab_id": {
+            "type": "string",
+            "description": "Tab ID from list_tabs. Omit to use the current tab in the selected browsing mode."
+          },
+          "key": {
+            "type": "string",
+            "description": "Named browser key or one ASCII letter/digit, with optional modifiers."
+          }
+        },
+        "required": [
+          "key"
+        ],
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "openWorldHint": true
+      }
+    }
+  ]
+}
