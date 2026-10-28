@@ -74,7 +74,7 @@ static void refresh (PrefsWebAppsPage *self) {
     GtkWidget *row = adw_action_row_new ();
     GtkWidget *image = gtk_image_new ();
     GtkWidget *launch = gtk_button_new_from_icon_name ("media-playback-start-symbolic");
-    GtkWidget *remove = gtk_button_new_from_icon_name ("user-trash-symbolic");
+    GtkWidget *remove = app->declarative ? NULL : gtk_button_new_from_icon_name ("user-trash-symbolic");
     adw_preferences_row_set_title (ADW_PREFERENCES_ROW (row), app->name);
     adw_preferences_row_set_use_markup (ADW_PREFERENCES_ROW (row), FALSE);
     adw_action_row_set_subtitle (ADW_ACTION_ROW (row), app->url);
@@ -84,19 +84,23 @@ static void refresh (PrefsWebAppsPage *self) {
     gtk_image_set_pixel_size (GTK_IMAGE (image), 40);
     adw_action_row_add_prefix (ADW_ACTION_ROW (row), image);
     gtk_widget_set_valign (launch, GTK_ALIGN_CENTER);
-    gtk_widget_set_valign (remove, GTK_ALIGN_CENTER);
+    if (remove) gtk_widget_set_valign (remove, GTK_ALIGN_CENTER);
     gtk_widget_set_tooltip_text (launch, _("Launch Web App"));
-    gtk_widget_set_tooltip_text (remove, _("Remove Web App"));
+    if (remove) gtk_widget_set_tooltip_text (remove, _("Remove Web App"));
     gtk_widget_add_css_class (launch, "flat");
-    gtk_widget_add_css_class (remove, "flat");
+    if (remove) gtk_widget_add_css_class (remove, "flat");
     adw_action_row_add_suffix (ADW_ACTION_ROW (row), launch);
-    adw_action_row_add_suffix (ADW_ACTION_ROW (row), remove);
+    if (remove)
+      adw_action_row_add_suffix (ADW_ACTION_ROW (row), remove);
     g_object_set_data_full (G_OBJECT (row), "app-id", g_strdup (app->id), g_free);
     g_object_set_data_full (G_OBJECT (launch), "app-id", g_strdup (app->id), g_free);
-    g_object_set_data_full (G_OBJECT (remove), "app-id", g_strdup (app->id), g_free);
-    g_signal_connect (row, "activated", G_CALLBACK (edit_app), self);
+    if (remove) g_object_set_data_full (G_OBJECT (remove), "app-id", g_strdup (app->id), g_free);
+    if (!app->declarative)
+      g_signal_connect (row, "activated", G_CALLBACK (edit_app), self);
+    else
+      gtk_list_box_row_set_activatable (GTK_LIST_BOX_ROW (row), FALSE);
     g_signal_connect (launch, "clicked", G_CALLBACK (launch_app), self);
-    g_signal_connect (remove, "clicked", G_CALLBACK (remove_app), self);
+    if (remove) g_signal_connect (remove, "clicked", G_CALLBACK (remove_app), self);
     gtk_list_box_append (GTK_LIST_BOX (self->list), row);
   }
   ephy_web_application_free_application_list (apps);
