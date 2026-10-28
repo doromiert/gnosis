@@ -43,6 +43,7 @@
     max-height: min(400px, 70vh);
   }
   :where(select:not([multiple]):not([size]), select[size="1"]:not([multiple])) option {
+    outline: none;
     font-weight: 400;
     border-radius: 6px;
     padding: 8px 10px;
