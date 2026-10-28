@@ -9,3 +9,22 @@ jobs:
       - uses: cachix/install-nix-action@v27
       - name: Build Gnosis
         run: nix build --no-link --show-trace .#gnosis --option max-jobs 2 --option cores 2
+      - name: Open ZenPkgs Search in Gnosis
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y xvfb xdotool
+          GNOSIS_PACKAGE=$(nix build --no-link --print-out-paths .#gnosis)
+          export GNOSIS_PACKAGE GNOSIS_SOFTWARE_RENDERING=1 GDK_BACKEND=x11 XDG_SESSION_TYPE=x11
+          unset WAYLAND_DISPLAY
+          xvfb-run -a dbus-run-session -- bash -c '
+            "$GNOSIS_PACKAGE/bin/gnosis" --private-instance https://search.zenos.neg-zero.com/ > /tmp/gnosis-browser.log 2>&1 &
+            browser_pid=$!
+            trap "kill $browser_pid 2>/dev/null || true" EXIT
+            for attempt in $(seq 1 40); do
+              if xdotool search --onlyvisible --name "ZenPkgs" >/dev/null 2>&1; then exit 0; fi
+              if ! kill -0 "$browser_pid" 2>/dev/null; then cat /tmp/gnosis-browser.log; exit 1; fi
+              sleep 1
+            done
+            cat /tmp/gnosis-browser.log
+            exit 1
+          '
