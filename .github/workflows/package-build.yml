@@ -1,0 +1,11 @@
+name: Build Gnosis package
+on:
+  workflow_dispatch:
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: cachix/install-nix-action@v27
+      - name: Build Gnosis
+        run: nix build --no-link --show-trace .#gnosis --option max-jobs 2 --option cores 2
