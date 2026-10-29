@@ -596,6 +596,16 @@ ephy_shell_startup (GApplication *application)
   /* We're not remoting; start our services */
 
   mode = ephy_embed_shell_get_mode (embed_shell);
+  if (mode == EPHY_EMBED_SHELL_MODE_BROWSER && !xdp_portal_running_under_sandbox ()) {
+    GList *apps = ephy_web_application_get_application_list ();
+    /* Owned launchers must follow Gnosis upgrades to receive engine services. */
+    for (GList *item = apps; item; item = item->next) {
+      EphyWebApplication *app = item->data;
+      if (!app->declarative)
+        ephy_web_application_save (app);
+    }
+    ephy_web_application_free_application_list (apps);
+  }
   if (mode != EPHY_EMBED_SHELL_MODE_APPLICATION) {
     g_action_map_add_action_entries (G_ACTION_MAP (application),
                                      app_entries, G_N_ELEMENTS (app_entries),

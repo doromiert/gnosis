@@ -97,6 +97,12 @@ install_data(cef_root / 'LICENSE.txt', cef_root / 'CREDITS.html', install_dir: d
 if get_option('unit_tests').enabled()
   test('Brave navigation target adapter', find_program('node'),
     args: [files('tests/native-navigation-target-test.js'), files('data/native-integration/navigation-target.js')])
+  test('KeePassXC shared associations', find_program('node'),
+    args: [files('tests/keepassxc-pairing-test.js'), files('data/keepassxc/pairing.js')])
+  pairing_store_test = executable('brave-keepassxc-pairing-store-test',
+    ['tests/keepassxc-pairing-store-test.c', 'brave/profile.c'],
+    include_directories: include_directories('.'), dependencies: [dependency('gio-2.0'), json_glib_dep], c_args: ['-UNDEBUG'])
+  test('KeePassXC association store', pairing_store_test)
   debug_adapters_test = executable('brave-debug-adapters-test',
     ['tests/brave-debug-adapters-test.cpp', 'brave/debug-adapters.cpp'],
     dependencies: [gtk_dep, json_glib_dep], include_directories: include_directories('.'))

@@ -84,6 +84,7 @@ let
     checkPhase = ''
       node ${./engine/tests/keepassxc-observer-test.js} .
       node ${./engine/tests/keepassxc-service-test.js} ${./engine/data/keepassxc/service.js} ${./engine/data/keepassxc/legacy-settings.js}
+      node ${./engine/tests/keepassxc-pairing-test.js} ${./engine/data/keepassxc/pairing.js}
     '';
     dontConfigure = true;
     dontBuild = true;

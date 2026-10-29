@@ -20,6 +20,14 @@ they operate its actual GTK widgets and native browser backend. Use a disposable
 `--profile` and `GSETTINGS_BACKEND=memory`; never preload into a human profile.
 They are deliberately separate from the old CEF view tests.
 
+`keepassxc-pairing-gtk-probe.cpp` is driven by
+`python3 engine/tools/check-keepassxc-pairing.py --browser "$GNOSIS" --probe "$PROBE"`.
+Compile it with the same preload flags and `-Iengine/brave`. The driver owns its
+profiles, display and fixtures. It blocks the real native host and uses public
+fixture keys to check association transfer through the actual extension workers,
+live re-pairing/removal, app storage isolation, excluded contexts and launcher
+upgrades. It does not establish a live database password/TOTP round trip.
+
 `native-select-gtk-probe.cpp` uses `native-select.html` and its child fixture.
 It asserts that the native Wayland popup actually paints (the previous compositor
 left it unconfigured), then checks trusted keyboard selection, themed dropdowns,

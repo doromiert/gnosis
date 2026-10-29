@@ -254,6 +254,7 @@ public:
   struct ParkedPage { std::string target, session; ::Window child; GtkWidget* surface = nullptr; };
   std::vector<ParkedPage> parked;
 #include "web-app-extensions.inc"
+#include "keepassxc-pairing.inc"
   explicit Process(bool ephemeral, const std::string& reuse_profile = "") : private_profile(ephemeral) {
     read_webapp_extensions();
     configure_debug_adapters(native_preferences);
@@ -307,6 +308,7 @@ public:
     g_slist_free_full(uris, reinterpret_cast<GDestroyNotify>(g_uri_unref));
   }
   ~Process() {
+    stop_keepassxc_pairing();
     if (keepassxc_poll) g_source_remove(keepassxc_poll);
     stop();
     for (auto& page : parked) if (page.surface) g_object_unref(page.surface);
@@ -815,6 +817,7 @@ public:
             const auto candidate = keepassxc_session;
             command("Runtime.enable", "{}", candidate);
             command("Runtime.addBinding", "{\"name\":\"__gnosisPasskeyProvider\"}", candidate);
+            command("Runtime.addBinding", "{\"name\":\"__gnosisKeePassXCPairingChanged\"}", candidate);
             command("Runtime.runIfWaitingForDebugger", "{}", candidate);
             // An existing profile can keep an older worker script after a
             // resource-only unpacked-extension update. Install only our trusted
@@ -833,11 +836,7 @@ public:
                 auto* remote = object(result, "result");
                 if (remote && json_object_get_boolean_member_with_default(remote, "value", false)) {
                   keepassxc_ready = true; g_message("Native KeePassXC service ready");
-                  // The first document can finish before an unpacked extension
-                  // loads. Recover its declared scripts once, as manual redetection does.
-                  for (auto& [token, weak] : pages) if (auto page = weak.lock(); page && !page->is_closed() &&
-                      page->state_->native_tab >= 0 && (page->uri.starts_with("https://") || page->uri.starts_with("http://")))
-                    keepassxc_call(page->state_->native_tab, "redetect", "null", [](JsonObject*, const std::string&) {});
+                  start_keepassxc_pairing();
                   return;
                 }
                 command("Target.detachFromTarget", "{\"sessionId\":" + quote(candidate) + "}", "");
@@ -971,6 +970,16 @@ public:
               if (state != "inProgress") downloads.erase(found);
               progress(static_cast<guint64>(std::max(0., json_object_get_double_member_with_default(params, "receivedBytes", 0))),
                        static_cast<guint64>(std::max(0., json_object_get_double_member_with_default(params, "totalBytes", 0))), state);
+            }
+          } else if (method == "Runtime.bindingCalled" && !private_profile && keepassxc_ready && keepassxc_pairing_publisher &&
+                     std::string(text(root,"sessionId")) == keepassxc_session &&
+                     std::string(text(params,"name")) == "__gnosisKeePassXCPairingChanged") {
+            const std::string json = text(params,"payload");
+            if (json != keepassxc_pairing_json) {
+              g_autoptr(GError) error = nullptr;
+              if (gnosis_brave_keepassxc_pairing_save(keepassxc_pairing_path.c_str(), json.c_str(), &error))
+                keepassxc_pairing_json = json;
+              else g_warning("KeePassXC association sharing: %s", error->message);
             }
           } else if (method == "Runtime.bindingCalled" && !private_profile && keepassxc_ready &&
                      std::string(text(root,"sessionId")) == keepassxc_session &&
@@ -1289,6 +1298,7 @@ public:
   }
   void stop() {
     if (closing) return;
+    stop_keepassxc_pairing();
     forget_frames();
     close_native_ui();
     if (output >= 0) command("Browser.close", "{}", "");

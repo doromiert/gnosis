@@ -36,7 +36,22 @@ Gnosis. Unlocking an already paired database is separate from association;
 KeePassXC must permit browser unlock requests for its password prompt to open.
 KeePassXC itself must be installed, with `keepassxc-proxy` in PATH.
 
-The bundled manifest uses an integration revision (`1.10.4.106`) and retains the
+Pairing the default Gnosis profile also connects web apps that have KeePassXC
+enabled. The verified extension worker publishes only database-association
+records to `gnosis/keepassxc-associations.json` in the user's data directory,
+using atomic writes and mode 0600. Web apps watch that file and merge associations
+into their own trusted extension worker; login entries, cookies and other
+extension settings stay in their original profiles. Already running apps receive
+new pairings and removals. Removing an inherited association restores a prior
+app-specific pairing, if present. Private browsing and explicitly selected
+non-default browser profiles do not participate, and disabling KeePassXC for an
+app keeps its integration disabled.
+
+Normal Gnosis startup refreshes owned web-app launchers to its current executable
+so existing apps receive service upgrades after restarting. Declarative launchers
+retain their managed executable and configuration.
+
+The bundled manifest uses an integration revision (`1.10.4.109`) and retains the
 upstream version in `version_name`. Existing Chromium profiles can retain older
 worker scripts after unpacked-resource changes. Gnosis resolves only the exact
 internal worker URL, waits for upstream initialization and installs its trusted
@@ -58,6 +73,14 @@ Run `node engine/tests/keepassxc-unlock-test.js` and
 GTK-panel, closed-shadow overlay and full native uBlock integration probes. Live database pairing and actual
 password/TOTP/passkey operations require a user-authorized test database; a
 successful host handshake alone does not establish those round trips.
+
+`keepassxc-pairing-test.js` checks inherited/local association preservation and
+revocation; `keepassxc-pairing-store-test.c` checks private file permissions and
+rejects symlinks, FIFOs, malformed records and oversized input. The native
+`check-keepassxc-pairing.py` workflow uses real packaged extension workers with
+public fixture association keys. It checks main-profile publication, live web-app
+updates, private/disabled/custom-profile isolation and launcher upgrades, while
+blocking discovery of the real KeePassXC host so it never touches a user database.
 
 The user confirmed passkey use on GitHub. Discord did not respond in their test;
 its cause is unconfirmed. A real host handshake alone does not validate every

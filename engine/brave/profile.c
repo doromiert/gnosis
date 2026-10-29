@@ -3,6 +3,9 @@
 #include <glib/gstdio.h>
 #include <json-glib/json-glib.h>
 #include <errno.h>
+#include <fcntl.h>
+#include <sys/stat.h>
+#include <unistd.h>
 
 static JsonObject *object_member(JsonObject *parent, const char *name, GError **error) {
   if (!json_object_has_member(parent, name)) {
@@ -118,4 +121,100 @@ gboolean gnosis_brave_profile_prepare_keepassxc(const char *directory, GError **
   g_autofree char *json = json_to_string(root, TRUE);
   g_autofree char *path = g_build_filename(hosts, "org.keepassxc.keepassxc_browser.json", NULL);
   return g_file_set_contents_full(path, json, -1, G_FILE_SET_CONTENTS_CONSISTENT, 0600, error);
+}
+
+#define PAIRING_LIMIT (1024 * 1024)
+static gboolean valid_pairing_data(const char *data, gsize length, GError **error) {
+  g_autoptr(JsonParser) parser = json_parser_new();
+  gboolean valid = length <= PAIRING_LIMIT && g_utf8_validate(data, length, NULL) &&
+    json_parser_load_from_data(parser, data, length, NULL) &&
+    JSON_NODE_HOLDS_OBJECT(json_parser_get_root(parser));
+  if (valid) {
+    JsonObject *ring = json_node_get_object(json_parser_get_root(parser));
+    g_autoptr(GList) hashes = json_object_get_members(ring);
+    valid = json_object_get_size(ring) <= 256;
+    for (GList *item = hashes; valid && item; item = item->next) {
+      const char *hash = item->data;
+      JsonNode *node = json_object_get_member(ring, hash);
+      valid = strlen(hash) >= 32 && strlen(hash) <= 128 && JSON_NODE_HOLDS_OBJECT(node);
+      for (const char *p = hash; valid && *p; p++) valid = g_ascii_isxdigit(*p);
+      if (!valid) break;
+      JsonObject *entry = json_node_get_object(node);
+      valid = json_object_get_size(entry) == 3;
+      const char *values[3] = {NULL, NULL, NULL};
+      const char *names[3] = {"hash", "id", "key"};
+      for (guint i = 0; valid && i < G_N_ELEMENTS(names); i++) {
+        node = json_object_get_member(entry, names[i]);
+        valid = node && JSON_NODE_HOLDS_VALUE(node) && json_node_get_value_type(node) == G_TYPE_STRING;
+        if (valid) values[i] = json_node_get_string(node);
+      }
+      if (!valid) break;
+      valid = !strcmp(values[0], hash) && *values[1] && strlen(values[1]) <= 4096 && strlen(values[2]) == 44;
+      if (!valid) break;
+      gsize size = 0;
+      g_autofree guchar *key = g_base64_decode(values[2], &size);
+      g_autofree char *encoded = g_base64_encode(key, size);
+      valid = size == 32 && !strcmp(encoded, values[2]);
+    }
+  }
+  if (!valid) g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA, "Invalid KeePassXC association data");
+  return valid;
+}
+
+char *gnosis_brave_keepassxc_pairing_load(const char *path, GError **error) {
+  int fd = open(path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK);
+  if (fd < 0) {
+    if (errno == ENOENT) return g_strdup("{}");
+    g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_FAILED, "Cannot read shared KeePassXC associations");
+    return NULL;
+  }
+  struct stat info;
+  if (fstat(fd, &info) || !S_ISREG(info.st_mode) || info.st_uid != getuid() || (info.st_mode & 077) || info.st_size > PAIRING_LIMIT) {
+    close(fd);
+    g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_PERMISSION_DENIED, "Unsafe shared KeePassXC association file");
+    return NULL;
+  }
+  g_autofree char *data = g_malloc(PAIRING_LIMIT + 2);
+  gsize length = 0;
+  while (length <= PAIRING_LIMIT) {
+    ssize_t size = read(fd, data + length, PAIRING_LIMIT + 1 - length);
+    if (size < 0 && errno == EINTR) continue;
+    if (size < 0) {
+      close(fd);
+      g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_FAILED, "Cannot read shared KeePassXC associations");
+      return NULL;
+    }
+    if (!size) break;
+    length += size;
+  }
+  close(fd);
+  data[length] = 0;
+  if (!valid_pairing_data(data, length, error)) return NULL;
+  return g_steal_pointer(&data);
+}
+
+gboolean gnosis_brave_keepassxc_pairing_save(const char *path, const char *json, GError **error) {
+  if (!valid_pairing_data(json, strlen(json), error)) return FALSE;
+  g_autofree char *directory = g_path_get_dirname(path);
+  struct stat info;
+  if (g_mkdir_with_parents(directory, 0700) || stat(directory, &info) ||
+      !S_ISDIR(info.st_mode) || info.st_uid != getuid() || (info.st_mode & 022)) {
+    g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_PERMISSION_DENIED, "Unsafe KeePassXC association directory");
+    return FALSE;
+  }
+  if (!lstat(path, &info)) {
+    if (!S_ISREG(info.st_mode) || info.st_uid != getuid()) {
+      g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_PERMISSION_DENIED, "Unsafe KeePassXC association file");
+      return FALSE;
+    }
+  } else if (errno != ENOENT) {
+    g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_FAILED, "Cannot inspect KeePassXC association file");
+    return FALSE;
+  }
+  if (!g_file_set_contents_full(path, json, -1, G_FILE_SET_CONTENTS_CONSISTENT | G_FILE_SET_CONTENTS_DURABLE, 0600, error)) return FALSE;
+  if (g_chmod(path, 0600)) {
+    g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_PERMISSION_DENIED, "Cannot protect KeePassXC associations");
+    return FALSE;
+  }
+  return TRUE;
 }
