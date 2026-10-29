@@ -253,7 +253,6 @@ public:
   std::string download_directory;
   struct ParkedPage { std::string target, session; ::Window child; GtkWidget* surface = nullptr; };
   std::vector<ParkedPage> parked;
-  std::map<std::string, gint64> routed_windows;
 #include "web-app-extensions.inc"
   explicit Process(bool ephemeral, const std::string& reuse_profile = "") : private_profile(ephemeral) {
     read_webapp_extensions();
@@ -330,7 +329,8 @@ public:
     if ((!adapter_enabled("page-style") && (method.starts_with("DOM.") || method.starts_with("CSS."))) ||
         (!adapter_enabled("network-events") && method == "Network.enable") ||
         (!adapter_enabled("extension-events") && method == "Runtime.addBinding" &&
-         (params.find("__gnosisZoomChanged") != std::string::npos || params.find("__gnosisExtensionsChanged") != std::string::npos))) {
+         (params.find("__gnosisZoomChanged") != std::string::npos || params.find("__gnosisExtensionsChanged") != std::string::npos ||
+          params.find("__gnosisNavigationTargetCreated") != std::string::npos))) {
       if (reply) reply(nullptr, "Adapter disabled in Debugging settings");
       return;
     }
@@ -500,6 +500,8 @@ public:
       // overlay theme so visibility, hit testing and fade timers agree.
       std::string("--enable-features=FileSystemAccessAPI,BraveWebBluetoothAPI,AcceleratedVideoDecodeLinuxGL,AcceleratedVideoEncoder,OverlayScrollbar:mode/overlay") + (composited() ? ",WaylandExternalBeginFrameSource" : ""),
       "--enable-blink-features=WebBluetooth,MiddleClickAutoscroll",
+      // The pinned Brave's GTK4 startup calls a missing toolkit entry point.
+      "--gtk-version=3",
       "--password-store=basic", "--window-size=1000,700", "--window-position=-16000,-16000"};
     if (!automation_mode) args.push_back("--disable-blink-features=AutomationControlled");
     // Consume the nested compositor's actual frame callbacks with upstream
@@ -514,6 +516,7 @@ public:
     g_subprocess_launcher_setenv(launcher, "XDG_CONFIG_HOME", (profile + "/native-config").c_str(), true);
     if (composited()) {
       g_subprocess_launcher_setenv(launcher, "WAYLAND_DISPLAY", gnosis_compositor_get_socket(compositor), true);
+      g_subprocess_launcher_setenv(launcher, "GDK_BACKEND", "wayland", true);
       g_subprocess_launcher_unsetenv(launcher, "WAYLAND_SOCKET");
       g_subprocess_launcher_unsetenv(launcher, "DISPLAY");
     }
@@ -614,15 +617,19 @@ public:
     if (closing || integration_ready) return;
     if (integration_adapter.empty()) {
       g_autofree char* path = g_build_filename(GNOSIS_NATIVE_INTEGRATION_DIR, "background.js", nullptr);
+      g_autofree char* navigation_path = g_build_filename(GNOSIS_NATIVE_INTEGRATION_DIR, "navigation-target.js", nullptr);
       g_autofree char* source = nullptr; gsize length = 0;
-      if (!g_file_get_contents(path, &source, &length, nullptr) || length > 64 * 1024) {
+      g_autofree char* navigation_source = nullptr; gsize navigation_length = 0;
+      if (!g_file_get_contents(path, &source, &length, nullptr) || length > 64 * 1024 ||
+          !g_file_get_contents(navigation_path, &navigation_source, &navigation_length, nullptr) || navigation_length > 64 * 1024) {
         integration_failed("The native integration adapter is missing"); return;
       }
       // An existing profile can retain a worker from before the namespace
       // upgrade. Install only our packaged adapter into this verified worker.
       integration_adapter = "(() => { globalThis.gnosisControlThemeEnabled=" + std::string(adapter_enabled("page-style") ? "true" : "false") + "; if (typeof globalThis.gnosisNativeReady === 'undefined' && "
         "typeof globalThis.gnosisExtensions === 'undefined' && globalThis.chrome?.downloads?.setUiOptions && "
-        "globalThis.chrome?.management) { (() => {" + std::string(source, length) + "})(); } "
+        "globalThis.chrome?.management) { (() => {" + std::string(source, length) + "})(); } " +
+        "if (globalThis.chrome?.webNavigation?.onCreatedNavigationTarget) { " + std::string(navigation_source, navigation_length) + " } " +
         "return Promise.resolve(globalThis.gnosisNativeReady).then(value => value === true); })()";
     }
     command("Runtime.evaluate", "{\"expression\":" + quote(integration_adapter) + ",\"awaitPromise\":true,\"returnByValue\":true}", integration_session,
@@ -893,6 +900,7 @@ public:
           integration_deadline = g_get_monotonic_time() + 5 * G_USEC_PER_SEC;
           command("Runtime.enable", "{}", integration_session);
           command("Runtime.addBinding", "{\"name\":\"__gnosisZoomChanged\"}",integration_session);
+          command("Runtime.addBinding", "{\"name\":\"__gnosisNavigationTargetCreated\"}", integration_session);
           command("Runtime.addBinding", "{\"name\":\"__gnosisExtensionsChanged\"}", integration_session);
           command("Runtime.runIfWaitingForDebugger", "{}", integration_session);
           poll_integration();
@@ -911,21 +919,6 @@ public:
         page->session = text(result, "sessionId"); sessions[page->session] = page; page->attach();
       });
       return;
-    }
-    const std::string id = text(info, "targetId");
-    if (targets.contains(id)) return;
-    const auto now = g_get_monotonic_time();
-    std::erase_if(routed_windows, [now](const auto& entry) { return entry.second < now; });
-    if (auto routed = routed_windows.find(uri); routed != routed_windows.end()) {
-      routed_windows.erase(routed);
-      command("Target.closeTarget", "{\"targetId\":" + quote(id) + "}", "");
-      return;
-    }
-    auto opener = targets.find(text(info, "openerId"));
-    if (opener != targets.end() && (uri.starts_with("https://") || uri.starts_with("http://"))) {
-      auto page = opener->second.lock();
-      if (page && page->open_uri && page->open_uri(uri))
-        command("Target.closeTarget", "{\"targetId\":" + quote(id) + "}", "");
     }
   }
   void read() {
@@ -1017,6 +1010,25 @@ public:
               auto found = zoom_tabs.find(json_object_get_int_member_with_default(change,"tabId",-1));
               if (found != zoom_tabs.end() && std::string(text(change,"scope")) == "per-tab") if (auto page = found->second.lock())
                 page->receive_zoom(json_object_get_double_member_with_default(change,"factor",0));
+            }
+          } else if (method == "Runtime.bindingCalled" && std::string(text(root,"sessionId")) == integration_session &&
+                     std::string(text(params,"name")) == "__gnosisNavigationTargetCreated") {
+            const std::string payload = text(params,"payload");
+            g_autoptr(JsonParser) event = json_parser_new();
+            if (payload.size() <= 65536 && json_parser_load_from_data(event,payload.data(),payload.size(),nullptr) &&
+                JSON_NODE_HOLDS_OBJECT(json_parser_get_root(event))) {
+              auto* created = json_node_get_object(json_parser_get_root(event));
+              const int source = json_object_get_int_member_with_default(created,"sourceTabId",-1);
+              const int tab = json_object_get_int_member_with_default(created,"tabId",-1);
+              const std::string uri = text(created,"url");
+              auto found = zoom_tabs.find(source);
+              if (tab >= 0 && tab != source && found != zoom_tabs.end() &&
+                  (uri.starts_with("http://") || uri.starts_with("https://"))) {
+                if (auto page = found->second.lock(); page && !page->is_closed() && page->open_uri && page->open_uri(uri)) {
+                  command("Runtime.evaluate", "{\"expression\":" + quote("chrome.tabs.remove(" + std::to_string(tab) + ").catch(()=>{})") + "}", integration_session);
+                  g_message("Brave link tab routed into the GTK shell");
+                }
+              }
             }
           } else if (method == "Target.targetCreated") discovered(object(params, "targetInfo"));
           else if (method == "Target.targetInfoChanged") {
@@ -2040,13 +2052,6 @@ void Page::handle(const std::string& method, JsonObject* params, bool frame_even
              std::string(text(params, "requestId")) == state_->document_request &&
              std::string(text(params, "errorText")) == "net::ERR_SSL_PROTOCOL_ERROR") {
     offer_http_retry(state_->document_request_url);
-  } else if (method == "Page.windowOpen") {
-    const std::string value = text(params, "url");
-    if ((value.starts_with("https://") || value.starts_with("http://")) &&
-        json_object_get_boolean_member_with_default(params, "userGesture", false) && open_uri && open_uri(value)) {
-      state_->process->routed_windows[value] = g_get_monotonic_time() + 5 * G_TIME_SPAN_SECOND;
-      g_message("Brave link window routed into the GTK shell");
-    }
   } else if (method == "Page.frameStartedLoading" && state_->attached &&
              std::string(text(params, "frameId")) == state_->main_frame) {
     loading = true; progress = 0.1; state_->response_status = 0;

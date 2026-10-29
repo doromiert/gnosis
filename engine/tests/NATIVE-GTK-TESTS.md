@@ -53,6 +53,18 @@ The find probe checks counts/ordinals, next/previous, case sensitivity, hidden
 unsupported options, empty queries, reopening and Unicode. It saves only the
 GTK toolbar to `/tmp/gnosis-find-toolbar.png`.
 
+`native-cursor-gtk-probe.cpp` needs an HTTP fixture (any local document). It
+checks text/link/autoscroll cursors and actual middle-click scrolling, then
+opens real GTK tabs through middle-click, noopener and target-blank links.
+Repeated links to the same URL must each open exactly one tab, while the source
+page stays in place. Run it with both a regular disposable profile and
+`--incognito-mode` to check routing within the private browser process.
+On an isolated X11 display, set `GNOSIS_XDOTOOL` to exercise actual GTK input
+instead of injecting mouse events into Brave. To check upgrades, first run the
+probe against the previous package with `GNOSIS_SEED_PROFILE=1`, then run the
+current package with the same disposable profile. Cached workers must acquire
+the new navigation listener without registering it twice.
+
 `keyboard-navigation-gtk-probe.cpp` uses actual XTest events through xdotool;
 set `GNOSIS_XDOTOOL` to its executable and run on an isolated X11 display with
 `keyboard-navigation.html` and `keyboard-child.html` served on localhost:18473.

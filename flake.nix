@@ -48,7 +48,7 @@
       '';
     devShells.${system}.default = pkgs.mkShell {
       inputsFrom = [ package ];
-      packages = with pkgs; [ cmake ninja meson pkg-config python3 xorg-server imagemagick gdb xdotool ];
+      packages = with pkgs; [ cmake ninja meson pkg-config python3 nodejs xorg-server imagemagick gdb xdotool ];
       CEF_ROOT = package.cefSdk;
       UBLOCK_DIR = package.ublock;
       KEEPASSXC_DIR = package.keepassxcBrowser;

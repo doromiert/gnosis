@@ -95,6 +95,8 @@ install_subdir('data/extension-manager', install_dir: pkgdatadir)
 install_subdir('data/native-integration', install_dir: pkgdatadir)
 install_data(cef_root / 'LICENSE.txt', cef_root / 'CREDITS.html', install_dir: datadir / 'licenses/gnosis-cef')
 if get_option('unit_tests').enabled()
+  test('Brave navigation target adapter', find_program('node'),
+    args: [files('tests/native-navigation-target-test.js'), files('data/native-integration/navigation-target.js')])
   debug_adapters_test = executable('brave-debug-adapters-test',
     ['tests/brave-debug-adapters-test.cpp', 'brave/debug-adapters.cpp'],
     dependencies: [gtk_dep, json_glib_dep], include_directories: include_directories('.'))

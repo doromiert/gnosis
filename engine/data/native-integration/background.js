@@ -35,6 +35,8 @@ chrome.tabs.onZoomChange.addListener(change => {
         send(JSON.stringify({tabId: change.tabId, factor: change.newZoomFactor, scope: change.zoomSettings.scope}));
 });
 
+importScripts('navigation-target.js');
+
 // This API is reachable only through the shell's private worker session. No
 // content script, externally_connectable endpoint or runtime message handler.
 for (const event of [chrome.management.onInstalled, chrome.management.onUninstalled,
