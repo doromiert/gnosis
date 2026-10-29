@@ -61,7 +61,10 @@
   }
   void attach_frames(const std::string& source) {
     if (!adapter_enabled("frame-sessions")) return;
-    command("Target.setAutoAttach",R"({"autoAttach":true,"waitForDebuggerOnStart":true,"flatten":true,"filter":[{"type":"iframe","exclude":false},{"exclude":true}]})",source,
+    // Native menus/metadata can be installed with runImmediately below. Pausing
+    // every cross-origin frame puts normal site startup behind adapter replies
+    // (or the five-second fallback), which breaks time-sensitive embeds.
+    command("Target.setAutoAttach",R"({"autoAttach":true,"waitForDebuggerOnStart":false,"flatten":true,"filter":[{"type":"iframe","exclude":false},{"exclude":true}]})",source,
       [](JsonObject*,const std::string& error){if(!error.empty())g_warning("Native iframe adapters could not attach: %s",error.c_str());});
   }
   bool frame_event(const std::string& source,const std::string& method,JsonObject* params) {
@@ -74,9 +77,18 @@
       std::shared_ptr<Page> page;
       if (auto main = sessions.find(source); main != sessions.end()) page = main->second.lock();
       else if (auto parent = frame_sessions.find(source); parent != frame_sessions.end()) page = parent->second.owner.lock();
-      if (!page) return false;
       const std::string child = text(params,"sessionId");
       auto* info = object(params,"targetInfo");
+      if (std::string(text(info,"type")) != "iframe") return false;
+      if (!page) {
+        // An attachment can outlive its owning tab during close/reuse. Never
+        // leave a target waiting for a debugger that no longer owns it.
+        if (!child.empty()) {
+          command("Runtime.runIfWaitingForDebugger","{}",child);
+          command("Target.detachFromTarget","{\"sessionId\":"+quote(child)+"}",source);
+        }
+        return true;
+      }
       if (child.empty()) return true;
       if (page->is_closed() || std::string(text(info,"type")) != "iframe" || frame_sessions.size() >= 512) {
         command("Runtime.runIfWaitingForDebugger","{}",child);
@@ -122,8 +134,10 @@
         if (g_file_get_contents(path,&script,nullptr,nullptr))
           command("Page.addScriptToEvaluateOnNewDocument","{\"worldName\":"+quote(item.first)+",\"source\":"+quote(script)+",\"runImmediately\":true}",child);
       }
-      if (adapter_enabled("document-metadata")) command("Page.addScriptToEvaluateOnNewDocument","{\"worldName\":\"GnosisDocumentMetadata\",\"source\":"+quote(document_adapter_source())+",\"runImmediately\":true}",child,
-        [this,child](JsonObject*,const std::string&){resume_frame(child);});
+      if (adapter_enabled("document-metadata")) command("Page.addScriptToEvaluateOnNewDocument","{\"worldName\":\"GnosisDocumentMetadata\",\"source\":"+quote(document_adapter_source())+",\"runImmediately\":true}",child);
+      // Release old paused attachments as well, without waiting on a renderer
+      // reply or depending on the document-metadata adapter being enabled.
+      resume_frame(child);
       return true;
     }
     auto found = frame_sessions.find(source);
