@@ -67,7 +67,8 @@ static void activate_icon (GtkGridView *grid, guint position, EphyWebAppDialog *
 static int compare_icons (const void *a, const void *b) {
   return g_strcmp0 (*(const char *const *)a, *(const char *const *)b);
 }
-static void choose_theme_icon (GtkButton *button, EphyWebAppDialog *self) {
+static void choose_theme_icon (GtkWidget *widget, const char *action_name, GVariant *parameter) {
+  EphyWebAppDialog *self = EPHY_WEB_APP_DIALOG (widget);
   GtkIconTheme *theme = gtk_icon_theme_get_for_display (gtk_widget_get_display (GTK_WIDGET (self)));
   g_auto (GStrv) names = gtk_icon_theme_get_icon_names (theme);
   AdwDialog *chooser = adw_dialog_new ();
@@ -82,7 +83,6 @@ static void choose_theme_icon (GtkButton *button, EphyWebAppDialog *self) {
   GtkListItemFactory *factory;
   GtkWidget *grid;
 
-  gtk_popover_popdown (GTK_POPOVER (gtk_widget_get_ancestor (GTK_WIDGET (button), GTK_TYPE_POPOVER)));
   qsort (names, g_strv_length (names), sizeof (char *), compare_icons);
   strings = gtk_string_list_new ((const char *const *)names);
   filter = gtk_custom_filter_new (filter_icon, g_object_ref (search), g_object_unref);
@@ -125,11 +125,11 @@ static void file_chosen (GtkFileDialog *dialog, GAsyncResult *result, EphyWebApp
   }
   g_object_unref (self);
 }
-static void choose_file_icon (GtkButton *button, EphyWebAppDialog *self) {
+static void choose_file_icon (GtkWidget *widget, const char *action_name, GVariant *parameter) {
+  EphyWebAppDialog *self = EPHY_WEB_APP_DIALOG (widget);
   g_autoptr (GtkFileDialog) dialog = gtk_file_dialog_new ();
   g_autoptr (GtkFileFilter) filter = gtk_file_filter_new ();
   g_autoptr (GListStore) filters = g_list_store_new (GTK_TYPE_FILE_FILTER);
-  gtk_popover_popdown (GTK_POPOVER (gtk_widget_get_ancestor (GTK_WIDGET (button), GTK_TYPE_POPOVER)));
   gtk_file_filter_set_name (filter, _("Images"));
   gtk_file_filter_add_mime_type (filter, "image/*");
   g_list_store_append (filters, filter);
@@ -138,9 +138,9 @@ static void choose_file_icon (GtkButton *button, EphyWebAppDialog *self) {
   gtk_file_dialog_open (dialog, GTK_WINDOW (gtk_widget_get_root (GTK_WIDGET (self))),
                         self->cancellable, (GAsyncReadyCallback)file_chosen, g_object_ref (self));
 }
-static void restore_site_icon (GtkButton *button, EphyWebAppDialog *self) {
+static void restore_site_icon (GtkWidget *widget, const char *action_name, GVariant *parameter) {
+  EphyWebAppDialog *self = EPHY_WEB_APP_DIALOG (widget);
   set_icon (self, self->site_icon);
-  gtk_popover_popdown (GTK_POPOVER (gtk_widget_get_ancestor (GTK_WIDGET (button), GTK_TYPE_POPOVER)));
 }
 
 GBytes *ephy_web_app_dialog_dup_icon_bytes (EphyWebAppDialog *self, GError **error) {
@@ -195,6 +195,9 @@ static void dispose (GObject *object) {
 }
 static void ephy_web_app_dialog_class_init (EphyWebAppDialogClass *klass) {
   G_OBJECT_CLASS (klass)->dispose = dispose;
+  gtk_widget_class_install_action (GTK_WIDGET_CLASS (klass), "webapp.choose-theme-icon", NULL, choose_theme_icon);
+  gtk_widget_class_install_action (GTK_WIDGET_CLASS (klass), "webapp.choose-file-icon", NULL, choose_file_icon);
+  gtk_widget_class_install_action (GTK_WIDGET_CLASS (klass), "webapp.restore-site-icon", NULL, restore_site_icon);
   g_signal_new ("accepted", G_TYPE_FROM_CLASS (klass), G_SIGNAL_RUN_LAST, 0, NULL, NULL, NULL, G_TYPE_NONE, 0);
 }
 static void ephy_web_app_dialog_init (EphyWebAppDialog *self) {
@@ -226,11 +229,7 @@ GtkWidget *ephy_web_app_dialog_new (const char *name, const char *url, GIcon *ic
   AdwPreferencesGroup *extensions = ADW_PREFERENCES_GROUP (adw_preferences_group_new ());
   GtkWidget *row = adw_action_row_new ();
   GtkWidget *menu = gtk_menu_button_new ();
-  GtkWidget *popover = gtk_popover_new ();
-  GtkWidget *choices = gtk_box_new (GTK_ORIENTATION_VERTICAL, 0);
-  GtkWidget *theme = gtk_button_new_with_label (_("Choose from Icon Theme…"));
-  GtkWidget *file = gtk_button_new_with_label (_("Choose Image…"));
-  GtkWidget *site = gtk_button_new_with_label (installing ? _("Use Website Icon") : _("Reset Icon"));
+  g_autoptr (GMenu) choices = g_menu_new ();
   AdwPreferencesGroup *actions = ADW_PREFERENCES_GROUP (adw_preferences_group_new ());
   g_autoptr (JsonArray) inventory = ephy_engine_extensions_dup_native_snapshot ();
   g_autoptr (GHashTable) ids = g_hash_table_new_full (g_str_hash, g_str_equal, g_free, NULL);
@@ -254,15 +253,10 @@ GtkWidget *ephy_web_app_dialog_new (const char *name, const char *url, GIcon *ic
   gtk_menu_button_set_label (GTK_MENU_BUTTON (menu), _("Choose…"));
   gtk_widget_set_valign (menu, GTK_ALIGN_CENTER);
   adw_action_row_add_suffix (ADW_ACTION_ROW (row), menu);
-  gtk_widget_add_css_class (popover, "menu");
-  gtk_box_append (GTK_BOX (choices), theme);
-  gtk_box_append (GTK_BOX (choices), file);
-  gtk_box_append (GTK_BOX (choices), site);
-  gtk_popover_set_child (GTK_POPOVER (popover), choices);
-  gtk_menu_button_set_popover (GTK_MENU_BUTTON (menu), popover);
-  g_signal_connect (theme, "clicked", G_CALLBACK (choose_theme_icon), self);
-  g_signal_connect (file, "clicked", G_CALLBACK (choose_file_icon), self);
-  g_signal_connect (site, "clicked", G_CALLBACK (restore_site_icon), self);
+  g_menu_append (choices, _("Choose from Icon Theme…"), "webapp.choose-theme-icon");
+  g_menu_append (choices, _("Choose Image…"), "webapp.choose-file-icon");
+  g_menu_append (choices, installing ? _("Use Website Icon") : _("Reset Icon"), "webapp.restore-site-icon");
+  gtk_menu_button_set_menu_model (GTK_MENU_BUTTON (menu), G_MENU_MODEL (choices));
   set_icon (self, icon);
   adw_preferences_group_add (details, row);
   adw_preferences_group_add (details, self->name);

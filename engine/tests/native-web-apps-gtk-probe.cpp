@@ -9,6 +9,7 @@ static GtkWindow *window;
 static std::shared_ptr<GnosisBrave::Page> page;
 static EphyWebAppDialog *setup;
 static GtkWidget *grid;
+static GtkWidget *icon_menu;
 static gint64 started, changed;
 static int stage;
 static bool busy;
@@ -18,12 +19,24 @@ static GtkWidget *find(GtkWidget *widget,const char *type) {
  for(auto* child=gtk_widget_get_first_child(widget);child;child=gtk_widget_get_next_sibling(child))if(auto* found=find(child,type))return found;
  return nullptr;
 }
-static GtkWidget *button(GtkWidget*widget,const char*label) {
- if(GTK_IS_BUTTON(widget)&&!g_strcmp0(gtk_button_get_label(GTK_BUTTON(widget)),label))return widget;
- for(auto* child=gtk_widget_get_first_child(widget);child;child=gtk_widget_get_next_sibling(child))if(auto* found=button(child,label))return found;
+static GtkWidget *menu_item(GtkWidget*widget,const char*label) {
+ if(GTK_IS_LABEL(widget)&&!g_strcmp0(gtk_label_get_text(GTK_LABEL(widget)),label)) {
+  for(auto* parent=gtk_widget_get_parent(widget);parent;parent=gtk_widget_get_parent(parent))
+   if(!strcmp(G_OBJECT_TYPE_NAME(parent),"GtkModelButton"))return parent;
+ }
+ for(auto* child=gtk_widget_get_first_child(widget);child;child=gtk_widget_get_next_sibling(child))if(auto* found=menu_item(child,label))return found;
  return nullptr;
 }
 static void fail(const char *message){g_printerr("WEBAPPS_FAIL stage=%d %s\n",stage,message);_exit(77);}
+static void capture_menu(GtkWidget* widget) {
+ auto* paintable=gtk_widget_paintable_new(widget);auto* snapshot=gtk_snapshot_new();
+ gdk_paintable_snapshot(paintable,GDK_SNAPSHOT(snapshot),gtk_widget_get_width(widget),gtk_widget_get_height(widget));
+ auto* node=gtk_snapshot_free_to_node(snapshot);if(!node)fail("icon menu did not paint");
+ auto* renderer=gsk_renderer_new_for_surface(gtk_native_get_surface(gtk_widget_get_native(widget)));
+ auto* texture=gsk_renderer_render_texture(renderer,node,nullptr);
+ gdk_texture_save_to_png(texture,"/tmp/gnosis-web-app-icon-menu.png");
+ g_object_unref(texture);gsk_renderer_unrealize(renderer);g_object_unref(renderer);gsk_render_node_unref(node);g_object_unref(paintable);
+}
 static void check_launcher() {
  auto* app=g_new0(EphyWebApplication,1);app->id=g_compute_checksum_for_string(G_CHECKSUM_SHA1,"gnosis-owned-launcher-check",-1);
  auto* profile=ephy_web_application_get_profile_directory(app->id);g_mkdir_with_parents(profile,0700);
@@ -74,20 +87,25 @@ static gboolean tick(gpointer) {
   auto* icon=g_themed_icon_new("folder");setup=EPHY_WEB_APP_DIALOG(ephy_web_app_dialog_new("Fixture Web App","http://localhost:5173",icon,config,TRUE));g_object_unref(icon);g_key_file_unref(config);
   adw_dialog_present(ADW_DIALOG(setup),GTK_WIDGET(window));
  } else if(stage==1) {
-  auto* choice=button(GTK_WIDGET(setup),"Choose from Icon Theme…");if(!choice)fail("theme choice absent");
-  auto* popover=gtk_widget_get_ancestor(choice,GTK_TYPE_POPOVER);
-  auto* menu=gtk_widget_get_parent(popover);gtk_menu_button_popup(GTK_MENU_BUTTON(menu));g_signal_emit_by_name(choice,"clicked");
+  auto* menu=find(GTK_WIDGET(setup),"GtkMenuButton");if(!menu)fail("icon menu absent");
+  icon_menu=GTK_WIDGET(gtk_menu_button_get_popover(GTK_MENU_BUTTON(menu)));
+  if(!GTK_IS_POPOVER_MENU(icon_menu))fail("icon choices are not a native menu");
+  gtk_menu_button_popup(GTK_MENU_BUTTON(menu));
  } else if(stage==2) {
+  capture_menu(icon_menu);
+  auto* choice=menu_item(icon_menu,"Choose from Icon Theme…");
+  if(!choice||!gtk_widget_activate(choice))fail("theme choice could not be activated");
+ } else if(stage==3) {
   grid=find(GTK_WIDGET(window),"GtkGridView");if(!grid)return G_SOURCE_CONTINUE;
   auto* entry=find(gtk_widget_get_ancestor(grid,ADW_TYPE_DIALOG),"GtkSearchEntry");if(!entry)fail("theme search absent");
   icon_count=g_list_model_get_n_items(G_LIST_MODEL(gtk_grid_view_get_model(GTK_GRID_VIEW(grid))));
   if(!icon_count)fail("theme has no icons");gtk_editable_set_text(GTK_EDITABLE(entry),"folder");
- } else if(stage==3) {
+ } else if(stage==4) {
   auto* model=G_LIST_MODEL(gtk_grid_view_get_model(GTK_GRID_VIEW(grid)));auto count=g_list_model_get_n_items(model);
   g_print("WEBAPP_ICON_SEARCH total=%u filtered=%u\n",icon_count,count);
   if(!count||count>=icon_count)fail("theme search did not filter");
   g_signal_emit_by_name(grid,"activate",0);
- } else if(stage==4) {
+ } else if(stage==5) {
   GError* error=nullptr;auto* bytes=ephy_web_app_dialog_dup_icon_bytes(setup,&error);
   if(!bytes)fail(error?error->message:"no icon bytes");gsize size=0;auto* png=(const char*)g_bytes_get_data(bytes,&size);
   if(size<8||memcmp(png,"\211PNG\r\n\032\n",8))fail("selected theme icon did not produce a portal-compatible PNG");
@@ -96,9 +114,9 @@ static gboolean tick(gpointer) {
   if(selected!=0)fail("empty per-app extension choice lost");g_strfreev(list);g_key_file_unref(config);g_bytes_unref(bytes);
   g_print("WEBAPP_THEME_ICON_PASS searchable XDG theme, PNG export, explicit no extensions\n");
   adw_dialog_force_close(ADW_DIALOG(setup));
- } else if(stage==5) {
-  if(!gtk_widget_activate_action(GTK_WIDGET(window),"win.open-application-manager",nullptr))fail("manager action missing");
  } else if(stage==6) {
+  if(!gtk_widget_activate_action(GTK_WIDGET(window),"win.open-application-manager",nullptr))fail("manager action missing");
+ } else if(stage==7) {
   if(!find(GTK_WIDGET(window),"PrefsWebAppsPage"))fail("native management page missing");
   auto* dialog=adw_application_window_get_visible_dialog(ADW_APPLICATION_WINDOW(window));
   if(!ADW_IS_PREFERENCES_DIALOG(dialog)||g_strcmp0(adw_preferences_dialog_get_visible_page_name(ADW_PREFERENCES_DIALOG(dialog)),"web-apps-page"))fail("manager did not open Settings Web Apps");
