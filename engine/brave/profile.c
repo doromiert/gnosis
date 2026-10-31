@@ -83,10 +83,44 @@ gboolean gnosis_brave_profile_prepare(const char *directory, GError **error) {
 }
 
 
-gboolean gnosis_brave_profile_prepare_keepassxc(const char *directory, GError **error) {
-  g_autofree char *proxy = g_find_program_in_path("keepassxc-proxy");
+char *gnosis_brave_password_manager(const char *directory) {
+  g_autofree char *path = g_build_filename(directory, "password-manager", NULL);
+  char *value = NULL;
+  if (g_file_get_contents(path, &value, NULL, NULL) &&
+      (g_str_equal(value, "keyslot") || g_str_equal(value, "keepassxc"))) return value;
+  g_free(value); return g_strdup("auto");
+}
+
+static char *keyslot_proxy(void) {
+  /* Keyslot's browser setup also works when its trial install is outside PATH. */
+  g_autofree char *path = g_build_filename(g_get_user_config_dir(), "gnosis", "NativeMessagingHosts",
+    "org.keepassxc.keepassxc_browser.json", NULL);
+  g_autoptr(JsonParser) parser = json_parser_new();
+  if (json_parser_load_from_file(parser, path, NULL)) {
+    JsonNode *root = json_parser_get_root(parser);
+    if (JSON_NODE_HOLDS_OBJECT(root)) {
+      JsonObject *host = json_node_get_object(root);
+      JsonNode *node = json_object_get_member(host, "path");
+      JsonNode *description = json_object_get_member(host, "description");
+      if (node && JSON_NODE_HOLDS_VALUE(node) && json_node_get_value_type(node) == G_TYPE_STRING &&
+          description && JSON_NODE_HOLDS_VALUE(description) && json_node_get_value_type(description) == G_TYPE_STRING &&
+          g_str_equal(json_node_get_string(description), "Keyslot password manager")) {
+        const char *proxy = json_node_get_string(node);
+        if (g_path_is_absolute(proxy) && g_file_test(proxy, G_FILE_TEST_IS_EXECUTABLE) &&
+            g_file_test(proxy, G_FILE_TEST_IS_REGULAR)) return g_strdup(proxy);
+      }
+    }
+  }
+  return g_find_program_in_path("keyslot-browser-proxy");
+}
+
+static gboolean prepare_password_manager(const char *directory, const char *manager, GError **error) {
+  g_autofree char *proxy = NULL;
+  if (!g_str_equal(manager, "keepassxc")) proxy = keyslot_proxy();
+  if (!proxy && !g_str_equal(manager, "keyslot")) proxy = g_find_program_in_path("keepassxc-proxy");
   if (!proxy) {
-    g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_NOT_FOUND, "Install KeePassXC to connect its browser integration");
+    g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_NOT_FOUND,
+      g_str_equal(manager, "keyslot") ? "Enable Gnosis in Keyslot’s Browser Setup first" : "Install a password manager to connect browser integration");
     return FALSE;
   }
   g_autofree char *hosts = g_build_filename(directory, "native-config", "BraveSoftware", "Brave-Browser", "NativeMessagingHosts", NULL);
@@ -121,6 +155,23 @@ gboolean gnosis_brave_profile_prepare_keepassxc(const char *directory, GError **
   g_autofree char *json = json_to_string(root, TRUE);
   g_autofree char *path = g_build_filename(hosts, "org.keepassxc.keepassxc_browser.json", NULL);
   return g_file_set_contents_full(path, json, -1, G_FILE_SET_CONTENTS_CONSISTENT, 0600, error);
+}
+
+gboolean gnosis_brave_profile_prepare_keepassxc(const char *directory, GError **error) {
+  g_autofree char *manager = gnosis_brave_password_manager(directory);
+  return prepare_password_manager(directory, manager, error);
+}
+
+gboolean gnosis_brave_password_manager_set(const char *directory, const char *manager, GError **error) {
+  if (!g_str_equal(manager, "auto") && !g_str_equal(manager, "keyslot") && !g_str_equal(manager, "keepassxc")) {
+    g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT, "Choose a supported password manager"); return FALSE;
+  }
+  g_autofree char *previous = gnosis_brave_password_manager(directory);
+  if (!prepare_password_manager(directory, manager, error)) return FALSE;
+  g_autofree char *path = g_build_filename(directory, "password-manager", NULL);
+  if (g_file_set_contents_full(path, manager, -1, G_FILE_SET_CONTENTS_CONSISTENT, 0600, error)) return TRUE;
+  prepare_password_manager(directory, previous, NULL);
+  return FALSE;
 }
 
 #define PAIRING_LIMIT (1024 * 1024)

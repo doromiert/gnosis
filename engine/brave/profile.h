@@ -6,6 +6,8 @@ gboolean gnosis_brave_profile_prepare(const char *directory, GError **error);
 
 /* Own profile only: never change another browser's native host registration. */
 gboolean gnosis_brave_profile_prepare_keepassxc(const char *directory, GError **error);
+char *gnosis_brave_password_manager(const char *directory);
+gboolean gnosis_brave_password_manager_set(const char *directory, const char *manager, GError **error);
 
 /* Association records only; no credentials or unrelated extension storage. */
 char *gnosis_brave_keepassxc_pairing_load(const char *path, GError **error);

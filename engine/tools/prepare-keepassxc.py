@@ -14,8 +14,8 @@ manifest_path = root / 'manifest.json'
 manifest = json.loads(manifest_path.read_text())
 assert manifest['version'] == '1.10.4.1', 'Review the integration when upgrading'
 # Separate integration revision forces Chromium to retire cached worker code.
-manifest['version'] = '1.10.4.109'
-manifest['version_name'] = '1.10.4.1 (Gnosis integration 9)'
+manifest['version'] = '1.10.4.110'
+manifest['version_name'] = '1.10.4.1 (Gnosis integration 10)'
 manifest['permissions'].append('scripting')
 manifest['key'] = (assets / 'public-key.txt').read_text().strip()
 manifest.pop('update_url', None)

@@ -15,9 +15,14 @@ anchors before making these adaptations:
   with a 30-second cooldown after cancellation. No master password enters Gnosis.
 - Remove the extension action/options UI and exclude the backend from Gnosis's
   extension list. All Gnosis controls live in the native libadwaita panel at
-  **hamburger menu → KeePassXC**: pairing, unlock/lock, login selection, TOTP,
+  **hamburger menu → Password Manager**: pairing, unlock/lock, login selection, TOTP,
   passkeys and automatic-unlock settings. Only labels and entry IDs leave the
   backend; password/code values are filled by upstream content scripts.
+- Select **Keyslot**, **KeePassXC**, or **Automatic** in that panel. Enable Gnosis
+  in Keyslot's Browser Setup when its proxy is outside PATH. Keyslot's dedicated
+  endpoint lets both managers run concurrently. **Forget Browser Connections…**
+  clears this profile's saved pairing keys and login caches after confirmation,
+  preserving vault entries. Pair again through **Connect Database…**.
 - Style the closed-shadow page overlays using libadwaita popover/list geometry,
   live GTK palette/font variables and GNOME symbolic icons. Preserve upstream
   keyboard, origin, positioning and filling behavior.

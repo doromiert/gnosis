@@ -112,6 +112,7 @@ struct PasswordUI {
   AdwActionRow* status = nullptr;
   AdwPreferencesGroup* entries = nullptr;
   GtkWidget *connect = nullptr, *unlock = nullptr, *lock = nullptr, *list = nullptr, *totp = nullptr, *reconnect = nullptr, *redetect = nullptr;
+  AdwComboRow* manager = nullptr;
   AdwSwitchRow *passkeys = nullptr, *auto_unlock = nullptr;
   GtkSpinner* spinner = nullptr;
   std::vector<GtkWidget*> rows;
@@ -2822,6 +2823,12 @@ void Page::update_password_manager(JsonObject* message, const std::string& error
   if (!state_->passwords) return;
   auto& ui = *state_->passwords;
   ui.busy = false; gtk_spinner_stop(ui.spinner); gtk_widget_set_visible(GTK_WIDGET(ui.spinner), false);
+  if (state_->process) {
+    g_autofree char* manager = gnosis_brave_password_manager(state_->process->profile.c_str());
+    ui.updating = true;
+    adw_combo_row_set_selected(ui.manager, !strcmp(manager, "keyslot") ? 1 : !strcmp(manager, "keepassxc") ? 2 : 0);
+    ui.updating = false;
+  }
   if (!error.empty() || !message) {
     adw_action_row_set_subtitle(ui.status, error.empty() ? _("KeePassXC did not respond") : error.c_str());
     gtk_widget_set_visible(ui.reconnect, true);
@@ -2857,8 +2864,8 @@ void Page::update_password_manager(JsonObject* message, const std::string& error
   const bool locked = json_object_get_boolean_member_with_default(message, "locked", true);
   const bool associated = json_object_get_boolean_member_with_default(message, "associated", false);
   const bool website = json_object_get_boolean_member_with_default(message, "website", false);
-  adw_action_row_set_subtitle(ui.status, !available ? _("Open KeePassXC and enable Browser Integration") :
-    locked ? _("Database locked — unlock it in KeePassXC") : !associated ? _("Authorize Gnosis to access this database") : _("Connected to your database"));
+  adw_action_row_set_subtitle(ui.status, !available ? _("Open your password manager and enable Browser Integration") :
+    locked ? _("Database locked — unlock it in your password manager") : !associated ? _("Authorize Gnosis to access this database") : _("Connected to your database"));
   gtk_widget_set_visible(ui.reconnect, !available);
   gtk_widget_set_visible(ui.unlock, available && locked);
   gtk_widget_set_visible(ui.connect, available && !associated);
@@ -2882,6 +2889,13 @@ void Page::update_password_manager(JsonObject* message, const std::string& error
 }
 void Page::password_manager_operation(std::string operation, std::string argument) {
   if (!state_->passwords || state_->passwords->busy) return;
+  if (operation == "manager") {
+    g_autoptr(GError) error = nullptr;
+    if (!state_->process || !gnosis_brave_password_manager_set(state_->process->profile.c_str(), argument.c_str(), &error)) {
+      update_password_manager(nullptr, error ? error->message : _("The browser connection is unavailable")); return;
+    }
+    operation = "reconnect"; argument = "null";
+  }
   const bool fill = operation == "fill" || operation == "totp";
   const auto identity = state_->passwords->identity;
   if (fill) { dismiss_password_manager(); focus(); }
@@ -2889,7 +2903,7 @@ void Page::password_manager_operation(std::string operation, std::string argumen
     auto& ui = *state_->passwords; ui.busy = true;
     gtk_widget_set_visible(GTK_WIDGET(ui.spinner), true); gtk_spinner_start(ui.spinner);
     if (operation != "status") adw_action_row_set_subtitle(ui.status,
-      operation == "unlock" || operation == "associate" ? _("Continue in KeePassXC…") : _("Working…"));
+      operation == "unlock" || operation == "associate" ? _("Continue in your password manager…") : _("Working…"));
   }
   keepassxc_request(operation, argument,
     [weak = weak_from_this(), identity, fill](JsonObject* result, const std::string& error) {
@@ -2921,18 +2935,33 @@ void Page::show_password_manager() {
   }
   state_->passwords = std::make_unique<PasswordUI>(); auto& ui = *state_->passwords;
   ui.dialog = ADW_DIALOG(g_object_ref_sink(adw_preferences_dialog_new()));
-  adw_dialog_set_title(ui.dialog, _("KeePassXC"));
+  adw_dialog_set_title(ui.dialog, _("Password Manager"));
   adw_dialog_set_content_width(ui.dialog, 480); adw_dialog_set_content_height(ui.dialog, 540);
   auto* page = ADW_PREFERENCES_PAGE(adw_preferences_page_new());
   adw_preferences_dialog_add(ADW_PREFERENCES_DIALOG(ui.dialog), page);
   auto* connection = ADW_PREFERENCES_GROUP(adw_preferences_group_new());
-  adw_preferences_group_set_description(connection, _("Your database password is entered only in KeePassXC."));
+  adw_preferences_group_set_description(connection, _("Your database password is entered only in your password manager."));
   adw_preferences_page_add(page, connection);
+  ui.manager = ADW_COMBO_ROW(adw_combo_row_new());
+  adw_preferences_row_set_title(ADW_PREFERENCES_ROW(ui.manager), _("Password Manager"));
+  const char* managers[] = {_("Automatic"), "Keyslot", "KeePassXC", nullptr};
+  g_autoptr(GtkStringList) manager_names = gtk_string_list_new(managers);
+  adw_combo_row_set_model(ui.manager, G_LIST_MODEL(manager_names));
+  g_autofree char* selected_manager = gnosis_brave_password_manager(state_->process->profile.c_str());
+  adw_combo_row_set_selected(ui.manager, !strcmp(selected_manager, "keyslot") ? 1 : !strcmp(selected_manager, "keepassxc") ? 2 : 0);
+  auto* manager_page = new std::weak_ptr<Page>(weak_from_this());
+  g_signal_connect_data(ui.manager, "notify::selected", G_CALLBACK(+[](AdwComboRow* row, GParamSpec*, gpointer data) {
+    auto page = static_cast<std::weak_ptr<Page>*>(data)->lock();
+    if (!page || !page->state_->passwords || page->state_->passwords->updating) return;
+    const auto selected = adw_combo_row_get_selected(row);
+    if (selected < 3) page->password_manager_operation("manager", selected == 1 ? "keyslot" : selected == 2 ? "keepassxc" : "auto");
+  }), manager_page, +[](gpointer data, GClosure*) { delete static_cast<std::weak_ptr<Page>*>(data); }, G_CONNECT_DEFAULT);
+  adw_preferences_group_add(connection, GTK_WIDGET(ui.manager));
   ui.status = ADW_ACTION_ROW(adw_action_row_new());
   adw_action_row_set_subtitle_selectable(ui.status, true);
   adw_preferences_row_set_use_markup(ADW_PREFERENCES_ROW(ui.status), false);
   adw_preferences_row_set_title(ADW_PREFERENCES_ROW(ui.status), _("Database Connection"));
-  adw_action_row_set_subtitle(ui.status, _("Connecting to KeePassXC…"));
+  adw_action_row_set_subtitle(ui.status, _("Connecting to your password manager…"));
   ui.spinner = GTK_SPINNER(gtk_spinner_new()); adw_action_row_add_suffix(ui.status, GTK_WIDGET(ui.spinner));
   adw_preferences_group_add(connection, GTK_WIDGET(ui.status));
   auto* actions = ADW_PREFERENCES_GROUP(adw_preferences_group_new());
@@ -2953,6 +2982,27 @@ void Page::show_password_manager() {
   ui.unlock = row(connection, _("Unlock Database…"), "changes-allow-symbolic", "unlock");
   ui.lock = row(connection, _("Lock Database"), "changes-prevent-symbolic", "lock");
   ui.reconnect = row(connection, _("Reconnect"), "view-refresh-symbolic", "reconnect");
+  auto* forget = adw_button_row_new();
+  adw_preferences_row_set_title(ADW_PREFERENCES_ROW(forget), _("Forget Browser Connections…"));
+  adw_button_row_set_start_icon_name(ADW_BUTTON_ROW(forget), "edit-delete-symbolic");
+  auto* forget_page = new std::weak_ptr<Page>(weak_from_this());
+  g_signal_connect_data(forget, "activated", G_CALLBACK(+[](AdwButtonRow*, gpointer data) {
+    auto page = static_cast<std::weak_ptr<Page>*>(data)->lock();
+    if (!page || !page->state_->passwords || page->state_->passwords->busy) return;
+    auto* alert = ADW_ALERT_DIALOG(adw_alert_dialog_new(_("Forget Browser Connections?"),
+      _("Remove saved database connections from this Gnosis profile. Your vault entries will be kept. You can connect again in your password manager.")));
+    adw_alert_dialog_add_responses(alert, "cancel", _("Cancel"), "forget", _("Forget Connections"), nullptr);
+    adw_alert_dialog_set_response_appearance(alert, "forget", ADW_RESPONSE_DESTRUCTIVE);
+    adw_alert_dialog_set_default_response(alert, "cancel");
+    adw_alert_dialog_set_close_response(alert, "cancel");
+    auto* weak = new std::weak_ptr<Page>(page);
+    g_signal_connect_data(alert, "response", G_CALLBACK(+[](AdwAlertDialog*, const char* response, gpointer data) {
+      if (!strcmp(response, "forget")) if (auto page = static_cast<std::weak_ptr<Page>*>(data)->lock())
+        page->password_manager_operation("forget");
+    }), weak, +[](gpointer data, GClosure*) { delete static_cast<std::weak_ptr<Page>*>(data); }, G_CONNECT_DEFAULT);
+    adw_dialog_present(ADW_DIALOG(alert), GTK_WIDGET(page->state_->passwords->dialog));
+  }), forget_page, +[](gpointer data, GClosure*) { delete static_cast<std::weak_ptr<Page>*>(data); }, G_CONNECT_DEFAULT);
+  adw_preferences_group_add(connection, forget);
   ui.list = row(actions, _("Choose a Login…"), "dialog-password-symbolic", "entries");
   ui.totp = row(actions, _("Fill One-Time Code"), "document-edit-symbolic", "totp");
   ui.redetect = row(actions, _("Redetect Login Fields"), "view-refresh-symbolic", "redetect");
@@ -2963,11 +3013,11 @@ void Page::show_password_manager() {
   auto* settings = ADW_PREFERENCES_GROUP(adw_preferences_group_new()); adw_preferences_page_add(page, settings);
   adw_preferences_group_set_title(settings, _("Browser Integration"));
   ui.passkeys = ADW_SWITCH_ROW(adw_switch_row_new());
-  adw_preferences_row_set_title(ADW_PREFERENCES_ROW(ui.passkeys), _("Use KeePassXC for Passkeys"));
+  adw_preferences_row_set_title(ADW_PREFERENCES_ROW(ui.passkeys), _("Use Password Manager for Passkeys"));
   adw_action_row_set_subtitle(ADW_ACTION_ROW(ui.passkeys), _("Store and use passkeys in your database"));
   ui.auto_unlock = ADW_SWITCH_ROW(adw_switch_row_new());
   adw_preferences_row_set_title(ADW_PREFERENCES_ROW(ui.auto_unlock), _("Ask to Unlock When Filling"));
-  adw_action_row_set_subtitle(ADW_ACTION_ROW(ui.auto_unlock), _("Show KeePassXC when you interact with a login field"));
+  adw_action_row_set_subtitle(ADW_ACTION_ROW(ui.auto_unlock), _("Show your password manager when you interact with a login field"));
   for (auto* setting : {ui.passkeys, ui.auto_unlock}) {
     adw_preferences_group_add(settings, GTK_WIDGET(setting));
     auto* weak = new std::weak_ptr<Page>(weak_from_this());
@@ -3086,7 +3136,6 @@ void Page::receive_zoom(double factor) {
 void Page::apply_zoom() {
   auto& s = *state_;
   if (s.disposed || loading || s.zoom_busy || !s.zoom_pending || !s.attached || s.window < 0 || !s.process->integration_ready) return;
-  if (uri == "about:blank" && s.zoom_requested == 1) { s.zoom_pending = false; return; }
   s.zoom_pending = false; s.zoom_busy = true;
   auto weak = weak_from_this();
   const guint64 revision = s.zoom_revision;

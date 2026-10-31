@@ -51,7 +51,15 @@ globalThis.gnosisKeePassXC = Object.freeze({
             }
         };
         if (!tabs.getTabFromId(tab.id)) await tabs.createTabEntry(tab.id);
-        if (operation === 'reconnect') await kpxcEvent.onReconnect(tab);
+        if (operation === 'forget') {
+            // Commit before dropping memory state; an I/O failure preserves pairing.
+            await browser.storage.local.set({keyRing: {}, gnosisInheritedAssociations: {}});
+            keepass.keyRing = {};
+            keepass.associated.value = false;
+            keepass.associated.hash = null;
+            page.clearAllLogins();
+            if (website) await sendToPage({action: 'clear_credentials'}).catch(() => {});
+        } else if (operation === 'reconnect') await kpxcEvent.onReconnect(tab);
         else if (operation === 'unlock') {
             if (!keepass.isConnected) await kpxcEvent.onReconnect(tab);
             await keepass.getDatabaseHash(tab, [false, true]);
